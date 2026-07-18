@@ -8,7 +8,7 @@ These are stable responsibilities, not a requirement that every row remain a sep
 | `CodexAgentClient` | Implement `AgentClient` with app-server and a supplied process launcher | Process-local; starts as one coherent class |
 | `AgentEvent` | Represent authentication, session, text, tool, completion, and failure events | Transient stream |
 | `SessionId` | Opaque provider session correlation | Persist only if Step 01 proves resumption works |
-| `SessionController` | Coordinate client events, tool execution, and UI intent if a ViewModel alone becomes insufficient | Conditional; wiring starts in the app |
+| Session coordination | Coordinate client events, tool execution, and UI intent | Starts in the ViewModel; extract `SessionController` only if Step 01 proves it useful |
 | `ToolCall` / `ToolResult` | Correlate a requested operation with Android's observed outcome | Transient; `callId` is not an idempotency guarantee |
 | `DeviceTool` | Describe and execute one Android-owned capability | Registered locally; default deny |
 | `ToolExecutor` | Validate registration, scope, approval, and dispatch | Core policy boundary |
