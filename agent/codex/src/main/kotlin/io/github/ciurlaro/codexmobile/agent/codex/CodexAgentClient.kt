@@ -9,6 +9,9 @@ import kotlinx.coroutines.flow.Flow
 class CodexAgentClient(
     private val launchProcess: (command: List<String>, environment: Map<String, String>) -> Process,
 ) : AgentClient {
+    // TODO Step 01: keep process, JSON-RPC, authentication, and event translation here first.
+    // Extract a collaborator only when it gains an independent state machine or test boundary.
+
     override val events: Flow<AgentEvent>
         get() = TODO("Step 01: expose translated app-server notifications and terminal failures")
 
