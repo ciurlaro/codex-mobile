@@ -1,11 +1,15 @@
 package io.github.ciurlaro.codexmobile.app
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.SessionId
+import io.github.ciurlaro.codexmobile.core.ToolRejectedException
+import io.github.ciurlaro.codexmobile.core.ToolResult
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,12 +24,15 @@ data class MainUiState(
     val verificationUrl: String? = null,
     val userCode: String? = null,
     val turnActive: Boolean = false,
+    val scopeSelected: Boolean = false,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as CodexMobileApplication).graph
     private val agentClient = graph.newAgentClient()
-    private val mutableState = MutableStateFlow(MainUiState())
+    private val mutableState = MutableStateFlow(
+        MainUiState(scopeSelected = graph.platform.currentScopeId() != null),
+    )
     private val openingSession = AtomicBoolean(false)
 
     val state: StateFlow<MainUiState> = mutableState.asStateFlow()
@@ -51,6 +58,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 mutableState.update {
                     it.copy(status = "Ready to sign in", verificationUrl = null, userCode = null)
                 }
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
                 showFailure(error)
             }
@@ -79,6 +88,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val sessionId = state.value.sessionId ?: return
         mutableState.update { it.copy(status = "Cancelling…") }
         launchVisibleFailure { agentClient.cancelTurn(sessionId) }
+    }
+
+    fun selectScope(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                graph.platform.persistScope(uri)
+                mutableState.update {
+                    it.copy(status = "Read-only document folder selected", scopeSelected = true)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                mutableState.update {
+                    it.copy(
+                        status = "Document folder selection failed",
+                        scopeSelected = graph.platform.currentScopeId() != null,
+                    )
+                }
+            }
+        }
+    }
+
+    fun scopeSelectionCancelled() {
+        mutableState.update { it.copy(status = "Document folder selection cancelled") }
+    }
+
+    fun revokeScope() {
+        val scopeId = graph.platform.currentScopeId() ?: return
+        viewModelScope.launch {
+            try {
+                graph.platform.revokeScope(scopeId)
+                mutableState.update {
+                    it.copy(status = "Document folder access revoked", scopeSelected = false)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                mutableState.update {
+                    it.copy(
+                        status = "Document folder revocation failed",
+                        scopeSelected = graph.platform.currentScopeId() != null,
+                    )
+                }
+            }
+        }
+    }
+
+    fun refreshScope() {
+        mutableState.update {
+            it.copy(scopeSelected = graph.platform.currentScopeId() != null)
+        }
     }
 
     override fun onCleared() {
@@ -125,9 +185,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
             }
 
-            is AgentEvent.ToolRequested -> mutableState.update {
-                it.copy(status = "Device tools are disabled in Step 01", turnActive = false)
+            is AgentEvent.ToolRequested -> executeTool(event)
+        }
+    }
+
+    private suspend fun executeTool(event: AgentEvent.ToolRequested) {
+        mutableState.update { it.copy(status = "Reading selected documents…") }
+        val scopeId = graph.platform.currentScopeId()
+        val result = if (scopeId == null) {
+            ToolResult.Rejected(event.call.id, "No document folder is selected")
+        } else {
+            try {
+                graph.toolExecutor.execute(graph.toolExecutor.prepare(event.call, scopeId))
+            } catch (error: ToolRejectedException) {
+                ToolResult.Rejected(event.call.id, error.message ?: "Document request was rejected")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                ToolResult.Failed(event.call.id, "tool_failure", "Android document tool failed")
             }
+        }
+        try {
+            agentClient.submitToolResult(event.sessionId, result)
+            mutableState.update { it.copy(status = "Codex is responding…") }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            showFailure(error)
         }
     }
 
@@ -136,6 +220,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 agentClient.openSession()
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
                 showFailure(error)
             } finally {
@@ -148,6 +234,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             try {
                 block()
+            } catch (error: CancellationException) {
+                throw error
             } catch (error: Exception) {
                 showFailure(error)
             }

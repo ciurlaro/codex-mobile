@@ -2,6 +2,8 @@ package io.github.ciurlaro.codexmobile.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
@@ -34,6 +36,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             val state by viewModel.state.collectAsState()
             var prompt by rememberSaveable { mutableStateOf("") }
+            val scopePicker = rememberLauncherForActivityResult(
+                ActivityResultContracts.OpenDocumentTree(),
+            ) { uri ->
+                if (uri == null) viewModel.scopeSelectionCancelled() else viewModel.selectScope(uri)
+            }
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     Column(
@@ -44,6 +51,16 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Text("Codex Mobile", style = MaterialTheme.typography.headlineMedium)
                         Text(state.status)
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Button(onClick = { scopePicker.launch(null) }) {
+                                Text(if (state.scopeSelected) "Change document folder" else "Select document folder")
+                            }
+                            if (state.scopeSelected) {
+                                Button(onClick = viewModel::revokeScope) { Text("Revoke access") }
+                            }
+                        }
+                        if (state.scopeSelected) Text("Read-only document access enabled")
 
                         if (state.sessionId == null && state.verificationUrl == null) {
                             Button(onClick = viewModel::authenticate) { Text("Sign in with ChatGPT") }
@@ -92,6 +109,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.refreshScope()
     }
 
 }

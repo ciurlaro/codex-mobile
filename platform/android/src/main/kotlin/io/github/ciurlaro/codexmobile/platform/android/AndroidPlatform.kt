@@ -1,28 +1,58 @@
 package io.github.ciurlaro.codexmobile.platform.android
 
+import android.content.ContentResolver
 import android.content.Context
+import android.content.Intent
+import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteException
 import android.net.Uri
+import android.os.Build
+import android.os.Bundle
 import android.os.SystemClock
+import android.provider.DocumentsContract
+import android.provider.DocumentsContract.Document
 import io.github.ciurlaro.codexmobile.core.DeviceTool
 import io.github.ciurlaro.codexmobile.core.MutationJournal
 import io.github.ciurlaro.codexmobile.core.ResourceScopeId
+import io.github.ciurlaro.codexmobile.core.ToolCall
+import io.github.ciurlaro.codexmobile.core.ToolDefinition
+import io.github.ciurlaro.codexmobile.core.ToolEffect
+import io.github.ciurlaro.codexmobile.core.ToolPlan
+import io.github.ciurlaro.codexmobile.core.ToolRejectedException
+import io.github.ciurlaro.codexmobile.core.ToolResult
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.InputStream
+import java.io.IOException
 import java.io.OutputStream
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URI
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
 
 class AndroidPlatform internal constructor(
     context: Context,
@@ -31,6 +61,7 @@ class AndroidPlatform internal constructor(
     constructor(context: Context) : this(context, null)
 
     private val appContext = context.applicationContext
+    private val readAuthority = SafReadAuthority(appContext)
 
     fun launchProcess(command: List<String>, environment: Map<String, String>): Process {
         require(command == listOf(CODEX_APP_SERVER)) { "Only the bundled Codex app-server may run" }
@@ -71,15 +102,17 @@ class AndroidPlatform internal constructor(
         }
     }
 
-    fun persistScope(treeUri: Uri): ResourceScopeId =
-        TODO("Step 02: persist a validated SAF read grant and return an opaque scope ID")
-
-    fun revokeScope(scopeId: ResourceScopeId) {
-        TODO("Step 02: release the matching persisted grant and local metadata")
+    suspend fun persistScope(treeUri: Uri): ResourceScopeId = withContext(Dispatchers.IO) {
+        readAuthority.persist(treeUri)
     }
 
-    fun deviceTools(): List<DeviceTool> =
-        TODO("Steps 02–03: return only locally registered, scope-validating Android tools")
+    suspend fun revokeScope(scopeId: ResourceScopeId) = withContext(Dispatchers.IO) {
+        readAuthority.revoke(scopeId)
+    }
+
+    fun currentScopeId(): ResourceScopeId? = readAuthority.currentScopeId()
+
+    fun deviceTools(): List<DeviceTool> = readAuthority.tools
 
     fun mutationJournal(): MutationJournal =
         TODO("Step 04: create the durable Android journal only when recovery work begins")
@@ -149,6 +182,511 @@ class AndroidPlatform internal constructor(
         const val LOG_DATABASE_RETRY_MILLIS = 25L
         const val SYSTEM_CERTIFICATE_DIRECTORY = "/system/etc/security/cacerts"
         val CERTIFICATE_LOCK = Any()
+    }
+}
+
+private class SafReadAuthority(context: Context) {
+    private val resolver = context.contentResolver
+    private val preferences = context.getSharedPreferences(SCOPE_PREFERENCES, Context.MODE_PRIVATE)
+    private val lock = Any()
+
+    val tools: List<DeviceTool> = listOf(ListDocumentsTool(), ReadDocumentTool())
+
+    fun persist(treeUri: Uri): ResourceScopeId {
+        require(
+            treeUri.scheme == ContentResolver.SCHEME_CONTENT &&
+                treeUri.authority?.isNotBlank() == true &&
+                DocumentsContract.isTreeUri(treeUri),
+        ) { "Select a document-provider folder" }
+        val rootId = runCatching { DocumentsContract.getTreeDocumentId(treeUri) }
+            .getOrNull()
+            ?.takeIf(String::isNotBlank)
+            ?: throw ToolRejectedException("Selected folder is invalid")
+        val root = querySingleDocument(
+            DocumentsContract.buildDocumentUriUsingTree(treeUri, rootId),
+            rootId,
+        )
+        if (!root.isDirectory) throw ToolRejectedException("Select a folder, not a document")
+
+        synchronized(lock) {
+            val previous = scopeOrNullLocked()
+            resolver.takePersistableUriPermission(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (!hasReadGrant(treeUri)) {
+                throw SecurityException("The selected provider did not persist read access")
+            }
+            releasePersistedWriteGrant(treeUri)
+
+            val id = ResourceScopeId(UUID.randomUUID().toString())
+            val secret = ByteArray(SCOPE_SECRET_BYTES).also(SECURE_RANDOM::nextBytes)
+            val saved = preferences.edit()
+                .putString(SCOPE_ID_KEY, id.value)
+                .putString(SCOPE_URI_KEY, treeUri.toString())
+                .putString(SCOPE_SECRET_KEY, Base64.getEncoder().encodeToString(secret))
+                .commit()
+            if (!saved) {
+                if (previous?.treeUri != treeUri) releasePersistedGrant(treeUri)
+                error("Unable to save document scope")
+            }
+            if (previous != null && previous.treeUri != treeUri) {
+                releasePersistedGrant(previous.treeUri)
+            }
+            return id
+        }
+    }
+
+    fun revoke(scopeId: ResourceScopeId) = synchronized(lock) {
+        val scope = scopeOrNullLocked()
+            ?: throw ToolRejectedException("Document scope is unavailable")
+        if (scope.id != scopeId) throw ToolRejectedException("Document scope does not match")
+        preferences.edit().clear().commit()
+        releasePersistedGrant(scope.treeUri)
+    }
+
+    fun currentScopeId(): ResourceScopeId? = synchronized(lock) { scopeOrNullLocked()?.id }
+
+    private fun scopeOrNullLocked(): Scope? {
+        val id = preferences.getString(SCOPE_ID_KEY, null)?.takeIf(String::isNotBlank)
+        val uri = preferences.getString(SCOPE_URI_KEY, null)
+            ?.let { runCatching { Uri.parse(it) }.getOrNull() }
+        val secret = preferences.getString(SCOPE_SECRET_KEY, null)
+            ?.let { runCatching { Base64.getDecoder().decode(it) }.getOrNull() }
+        if (id == null || uri == null || secret?.size != SCOPE_SECRET_BYTES || !hasReadGrant(uri)) {
+            if (preferences.all.isNotEmpty()) preferences.edit().clear().commit()
+            return null
+        }
+        return Scope(ResourceScopeId(id), uri, secret)
+    }
+
+    private fun requireScope(scopeId: ResourceScopeId): Scope = synchronized(lock) {
+        scopeOrNullLocked()?.takeIf { it.id == scopeId }
+            ?: throw ToolRejectedException("Document scope is unavailable or does not match")
+    }
+
+    private fun hasReadGrant(uri: Uri): Boolean = resolver.persistedUriPermissions.any {
+        it.uri == uri && it.isReadPermission
+    }
+
+    private fun releasePersistedWriteGrant(uri: Uri) {
+        if (resolver.persistedUriPermissions.any { it.uri == uri && it.isWritePermission }) {
+            runCatching {
+                resolver.releasePersistableUriPermission(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            }
+        }
+    }
+
+    private fun releasePersistedGrant(uri: Uri) {
+        val permission = resolver.persistedUriPermissions.firstOrNull { it.uri == uri } ?: return
+        var flags = 0
+        if (permission.isReadPermission) flags = flags or Intent.FLAG_GRANT_READ_URI_PERMISSION
+        if (permission.isWritePermission) flags = flags or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+        if (flags != 0) runCatching { resolver.releasePersistableUriPermission(uri, flags) }
+    }
+
+    private inner class ListDocumentsTool : DeviceTool {
+        override val definition = ToolDefinition(
+            name = LIST_TOOL_NAME,
+            description = "List entries in the selected Android document folder or an opaque child folder ID.",
+            inputSchemaJson = LIST_SCHEMA,
+        )
+        override val effect = ToolEffect.READ
+
+        override suspend fun prepare(call: ToolCall, scopeId: ResourceScopeId): ToolPlan {
+            val scope = requireScope(scopeId)
+            val arguments = strictArguments(call.argumentsJson, setOf(DIRECTORY_ID_ARGUMENT))
+            arguments.optionalString(DIRECTORY_ID_ARGUMENT)?.let { decodePath(it, scope) }
+            return readPlan(call, scopeId, "List selected documents")
+        }
+
+        override suspend fun execute(plan: ToolPlan): ToolResult = withContext(Dispatchers.IO) {
+            observedResult(plan) { scope ->
+                val arguments = strictArguments(plan.call.argumentsJson, setOf(DIRECTORY_ID_ARGUMENT))
+                val path = arguments.optionalString(DIRECTORY_ID_ARGUMENT)
+                    ?.let { decodePath(it, scope) }
+                    .orEmpty()
+                val directory = resolvePath(scope, path)
+                if (!directory.isDirectory) throw ToolRejectedException("Document ID is not a folder")
+                val children = queryChildren(scope.treeUri, directory.id)
+                    .sortedWith(compareBy<DocumentMetadata> { it.name }.thenBy { it.id })
+                val entries = JSONArray()
+                var estimatedBytes = 0
+                children.forEach { child ->
+                    if (child.id == directory.id || child.id in path) {
+                        throw SafFailure("provider_cycle", "Document provider returned a cycle")
+                    }
+                    val token = encodePath(path + child.id, scope)
+                    val entry = JSONObject()
+                        .put("id", token)
+                        .put("name", child.name)
+                        .put("type", if (child.isDirectory) "directory" else "document")
+                        .apply { child.size?.let { put("sizeBytes", it) } }
+                    estimatedBytes += entry.toString().toByteArray(StandardCharsets.UTF_8).size + 1
+                    if (estimatedBytes > MAX_LIST_OUTPUT_BYTES) {
+                        throw SafFailure("directory_too_large", "Directory metadata exceeds the output limit")
+                    }
+                    entries.put(entry)
+                }
+                JSONObject().put("entries", entries).put("count", children.size).toString()
+            }
+        }
+    }
+
+    private inner class ReadDocumentTool : DeviceTool {
+        override val definition = ToolDefinition(
+            name = READ_TOOL_NAME,
+            description = "Read one bounded UTF-8 text document by its opaque ID from the selected folder.",
+            inputSchemaJson = READ_SCHEMA,
+        )
+        override val effect = ToolEffect.READ
+
+        override suspend fun prepare(call: ToolCall, scopeId: ResourceScopeId): ToolPlan {
+            val scope = requireScope(scopeId)
+            val arguments = strictArguments(call.argumentsJson, setOf(DOCUMENT_ID_ARGUMENT), requireAll = true)
+            val path = decodePath(arguments.requiredString(DOCUMENT_ID_ARGUMENT), scope)
+            if (path.isEmpty()) throw ToolRejectedException("A document ID is required")
+            return readPlan(call, scopeId, "Read selected document")
+        }
+
+        override suspend fun execute(plan: ToolPlan): ToolResult = withContext(Dispatchers.IO) {
+            observedResult(plan) { scope ->
+                val arguments = strictArguments(
+                    plan.call.argumentsJson,
+                    setOf(DOCUMENT_ID_ARGUMENT),
+                    requireAll = true,
+                )
+                val path = decodePath(arguments.requiredString(DOCUMENT_ID_ARGUMENT), scope)
+                if (path.isEmpty()) throw ToolRejectedException("A document ID is required")
+                val resolved = resolvePath(scope, path)
+                if (resolved.isDirectory) throw ToolRejectedException("Document ID refers to a folder")
+                if (!resolved.mimeType.isSupportedText()) {
+                    throw SafFailure("unsupported_binary", "Only UTF-8 text documents can be read")
+                }
+                if (resolved.size != null && resolved.size > MAX_DOCUMENT_BYTES) {
+                    throw SafFailure("document_too_large", "Document exceeds the read limit")
+                }
+
+                val uri = DocumentsContract.buildDocumentUriUsingTree(scope.treeUri, resolved.id)
+                val current = querySingleDocument(uri, resolved.id)
+                if (current != resolved) {
+                    throw SafFailure("document_changed", "Document changed before it could be opened")
+                }
+                val bytes = resolver.openInputStream(uri)?.use(::readBounded)
+                    ?: throw SafFailure("open_failed", "Document provider did not open the document")
+                if (resolved.size != null && resolved.size != bytes.size.toLong()) {
+                    throw SafFailure("size_mismatch", "Document ended before its declared size")
+                }
+                val text = runCatching {
+                    StandardCharsets.UTF_8.newDecoder()
+                        .onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT)
+                        .decode(ByteBuffer.wrap(bytes))
+                        .toString()
+                }.getOrElse {
+                    throw SafFailure("invalid_utf8", "Document is not valid UTF-8 text")
+                }
+                JSONObject().put("text", text).put("byteCount", bytes.size).toString()
+            }
+        }
+    }
+
+    private inline fun observedResult(plan: ToolPlan, operation: (Scope) -> String): ToolResult {
+        return try {
+            ToolResult.Success(plan.call.id, operation(requireScope(plan.scopeId)))
+        } catch (error: ToolRejectedException) {
+            ToolResult.Rejected(plan.call.id, error.message ?: "Document request was rejected")
+        } catch (error: SafFailure) {
+            ToolResult.Failed(plan.call.id, error.code, error.publicMessage)
+        } catch (_: SecurityException) {
+            ToolResult.Failed(plan.call.id, "permission_denied", "Document permission is unavailable")
+        } catch (_: FileNotFoundException) {
+            ToolResult.Failed(plan.call.id, "not_found", "Document is unavailable")
+        } catch (_: IOException) {
+            ToolResult.Failed(plan.call.id, "io_failure", "Document stream failed")
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            ToolResult.Failed(plan.call.id, "provider_failure", "Document provider failed")
+        }
+    }
+
+    private fun readPlan(call: ToolCall, scopeId: ResourceScopeId, summary: String): ToolPlan {
+        val fingerprint = MessageDigest.getInstance("SHA-256")
+            .digest("${scopeId.value}\u0000${call.name}\u0000${call.argumentsJson}".toByteArray())
+            .joinToString("") { "%02x".format(it) }
+        return ToolPlan(call, scopeId, ToolEffect.READ, summary, fingerprint)
+    }
+
+    private fun strictArguments(
+        json: String,
+        allowed: Set<String>,
+        requireAll: Boolean = false,
+    ): JSONObject {
+        if (json.length > MAX_TOOL_ARGUMENT_CHARS) {
+            throw ToolRejectedException("Tool arguments are too large")
+        }
+        val tokener = JSONTokener(json)
+        val value = runCatching { tokener.nextValue() }.getOrNull()
+        if (value !is JSONObject || tokener.nextClean() != '\u0000') {
+            throw ToolRejectedException("Tool arguments must be one JSON object")
+        }
+        val keys = value.keys().asSequence().toSet()
+        if (!allowed.containsAll(keys) || requireAll && keys != allowed) {
+            throw ToolRejectedException("Tool arguments do not match the registered schema")
+        }
+        keys.forEach { key ->
+            if (value.opt(key) !is String || (value.opt(key) as String).isBlank()) {
+                throw ToolRejectedException("Tool argument $key must be a non-empty string")
+            }
+        }
+        return value
+    }
+
+    private fun JSONObject.optionalString(name: String): String? =
+        if (has(name)) opt(name) as? String else null
+
+    private fun JSONObject.requiredString(name: String): String =
+        optionalString(name) ?: throw ToolRejectedException("Tool argument $name is required")
+
+    private fun resolvePath(scope: Scope, path: List<String>): DocumentMetadata {
+        val rootId = DocumentsContract.getTreeDocumentId(scope.treeUri)
+        var current = querySingleDocument(
+            DocumentsContract.buildDocumentUriUsingTree(scope.treeUri, rootId),
+            rootId,
+        )
+        path.forEach { childId ->
+            if (!current.isDirectory) throw ToolRejectedException("Document path crosses a non-folder")
+            current = queryChildren(scope.treeUri, current.id)
+                .singleOrNull { it.id == childId }
+                ?: throw ToolRejectedException("Document ID is outside the selected folder or unavailable")
+        }
+        return current
+    }
+
+    private fun querySingleDocument(uri: Uri, expectedId: String): DocumentMetadata {
+        val cursor = resolver.query(uri, DOCUMENT_PROJECTION, null, null, null)
+            ?: throw SafFailure("provider_null", "Document provider returned no metadata")
+        cursor.use {
+            if (!it.moveToFirst()) throw SafFailure("not_found", "Document is unavailable")
+            val metadata = it.documentMetadata()
+            if (metadata.id != expectedId) {
+                throw SafFailure("provider_redirect", "Document provider redirected the requested ID")
+            }
+            if (it.moveToNext()) throw SafFailure("provider_duplicate", "Document provider returned duplicates")
+            return metadata
+        }
+    }
+
+    private fun queryChildren(treeUri: Uri, parentId: String): List<DocumentMetadata> {
+        val uri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentId)
+        val cursor = resolver.query(uri, DOCUMENT_PROJECTION, null, null, null)
+            ?: throw SafFailure("provider_null", "Document provider returned no directory rows")
+        return cursor.use {
+            val rows = ArrayList<DocumentMetadata>()
+            val ids = HashSet<String>()
+            while (it.moveToNext()) {
+                if (rows.size >= MAX_DIRECTORY_ENTRIES) {
+                    throw SafFailure("directory_too_large", "Directory contains too many entries")
+                }
+                val metadata = it.documentMetadata()
+                if (!ids.add(metadata.id)) {
+                    throw SafFailure("provider_duplicate", "Document provider returned duplicate IDs")
+                }
+                if (!isDescendant(treeUri, metadata.id)) {
+                    throw SafFailure("provider_escape", "Document provider returned an out-of-scope ID")
+                }
+                rows += metadata
+            }
+            rows
+        }
+    }
+
+    private fun Cursor.documentMetadata(): DocumentMetadata {
+        val id = requiredString(Document.COLUMN_DOCUMENT_ID, MAX_DOCUMENT_ID_BYTES)
+        val name = requiredString(Document.COLUMN_DISPLAY_NAME, MAX_DISPLAY_NAME_CHARS)
+        val mimeType = requiredString(Document.COLUMN_MIME_TYPE, MAX_MIME_TYPE_CHARS)
+        val sizeIndex = getColumnIndex(Document.COLUMN_SIZE)
+        val modifiedIndex = getColumnIndex(Document.COLUMN_LAST_MODIFIED)
+        val size = sizeIndex.takeIf { it >= 0 && !isNull(it) }?.let(::getLong)?.takeIf { it >= 0 }
+        val modified = modifiedIndex.takeIf { it >= 0 && !isNull(it) }?.let(::getLong)?.takeIf { it >= 0 }
+        return DocumentMetadata(id, name, mimeType, size, modified)
+    }
+
+    private fun Cursor.requiredString(column: String, maxLength: Int): String {
+        val index = getColumnIndex(column)
+        val value = index.takeIf { it >= 0 && !isNull(it) }?.let(::getString)
+        if (value.isNullOrEmpty() || value.length > maxLength) {
+            throw SafFailure("provider_metadata", "Document provider returned invalid metadata")
+        }
+        return value
+    }
+
+    private fun readBounded(input: InputStream): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8 * 1024)
+        var emptyReads = 0
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (count == 0) {
+                if (++emptyReads > MAX_EMPTY_READS) {
+                    throw SafFailure("stream_stalled", "Document stream stopped making progress")
+                }
+                continue
+            }
+            emptyReads = 0
+            if (output.size() + count > MAX_DOCUMENT_BYTES) {
+                throw SafFailure("document_too_large", "Document exceeds the read limit")
+            }
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+
+    private fun isDescendant(treeUri: Uri, documentId: String): Boolean {
+        val rootId = DocumentsContract.getTreeDocumentId(treeUri)
+        if (documentId == rootId) return true
+        val rootUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, rootId)
+        val documentUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+        return try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                DocumentsContract.isChildDocument(resolver, rootUri, documentUri)
+            } else {
+                val extras = Bundle().apply {
+                    putParcelable(COMPAT_EXTRA_URI, rootUri)
+                    putParcelable(COMPAT_EXTRA_TARGET_URI, documentUri)
+                }
+                resolver.call(
+                    rootUri,
+                    COMPAT_METHOD_IS_CHILD_DOCUMENT,
+                    null,
+                    extras,
+                )?.getBoolean(COMPAT_EXTRA_RESULT, false) == true
+            }
+        } catch (_: SecurityException) {
+            false
+        }
+    }
+
+    private fun encodePath(path: List<String>, scope: Scope): String {
+        require(path.size <= MAX_DOCUMENT_DEPTH)
+        val payload = ByteArrayOutputStream().also { bytes ->
+            DataOutputStream(bytes).use { output ->
+                output.writeInt(path.size)
+                path.forEach { id ->
+                    val encoded = id.toByteArray(StandardCharsets.UTF_8)
+                    require(encoded.isNotEmpty() && encoded.size <= MAX_DOCUMENT_ID_BYTES)
+                    output.writeInt(encoded.size)
+                    output.write(encoded)
+                }
+            }
+        }.toByteArray()
+        check(payload.size <= MAX_TOKEN_PAYLOAD_BYTES)
+        val signature = hmac(payload, scope.secret)
+        return BASE64_URL.encodeToString(payload) + "." + BASE64_URL.encodeToString(signature)
+    }
+
+    private fun decodePath(token: String, scope: Scope): List<String> {
+        if (token.length > MAX_TOKEN_CHARS) throw ToolRejectedException("Document ID is invalid")
+        val parts = token.split('.', limit = 3)
+        if (parts.size != 2) throw ToolRejectedException("Document ID is invalid")
+        val payload = runCatching { BASE64_URL_DECODER.decode(parts[0]) }.getOrNull()
+            ?: throw ToolRejectedException("Document ID is invalid")
+        val supplied = runCatching { BASE64_URL_DECODER.decode(parts[1]) }.getOrNull()
+            ?: throw ToolRejectedException("Document ID is invalid")
+        if (
+            payload.size > MAX_TOKEN_PAYLOAD_BYTES || supplied.size != SCOPE_SECRET_BYTES ||
+            !MessageDigest.isEqual(hmac(payload, scope.secret), supplied)
+        ) {
+            throw ToolRejectedException("Document ID does not belong to the current scope")
+        }
+        return runCatching {
+            DataInputStream(ByteArrayInputStream(payload)).use { input ->
+                val count = input.readInt()
+                require(count in 0..MAX_DOCUMENT_DEPTH)
+                buildList(count) {
+                    repeat(count) {
+                        val size = input.readInt()
+                        require(size in 1..MAX_DOCUMENT_ID_BYTES)
+                        val encoded = ByteArray(size)
+                        input.readFully(encoded)
+                        add(String(encoded, StandardCharsets.UTF_8))
+                    }
+                    require(input.read() == -1)
+                }
+            }
+        }.getOrElse { throw ToolRejectedException("Document ID is invalid") }
+    }
+
+    private fun hmac(payload: ByteArray, secret: ByteArray): ByteArray =
+        Mac.getInstance(HMAC_ALGORITHM).run {
+            init(SecretKeySpec(secret, HMAC_ALGORITHM))
+            doFinal(payload)
+        }
+
+    private fun String.isSupportedText(): Boolean {
+        val normalized = lowercase()
+        return normalized.startsWith("text/") || normalized == "application/json" ||
+            normalized == "application/xml" || normalized.endsWith("+json") ||
+            normalized.endsWith("+xml")
+    }
+
+    private data class Scope(
+        val id: ResourceScopeId,
+        val treeUri: Uri,
+        val secret: ByteArray,
+    )
+
+    private data class DocumentMetadata(
+        val id: String,
+        val name: String,
+        val mimeType: String,
+        val size: Long?,
+        val lastModified: Long?,
+    ) {
+        val isDirectory: Boolean get() = mimeType == Document.MIME_TYPE_DIR
+    }
+
+    private class SafFailure(val code: String, val publicMessage: String) : Exception(publicMessage)
+
+    private companion object {
+        const val SCOPE_PREFERENCES = "resource_scope"
+        const val SCOPE_ID_KEY = "id"
+        const val SCOPE_URI_KEY = "uri"
+        const val SCOPE_SECRET_KEY = "secret"
+        const val SCOPE_SECRET_BYTES = 32
+        const val LIST_TOOL_NAME = "list_documents"
+        const val READ_TOOL_NAME = "read_document"
+        const val DIRECTORY_ID_ARGUMENT = "directoryId"
+        const val DOCUMENT_ID_ARGUMENT = "documentId"
+        const val MAX_DOCUMENT_BYTES = 64 * 1024
+        const val MAX_DIRECTORY_ENTRIES = 2_048
+        const val MAX_LIST_OUTPUT_BYTES = 512 * 1024
+        const val MAX_DOCUMENT_DEPTH = 64
+        const val MAX_DOCUMENT_ID_BYTES = 4 * 1024
+        const val MAX_DISPLAY_NAME_CHARS = 4 * 1024
+        const val MAX_MIME_TYPE_CHARS = 512
+        const val MAX_TOKEN_PAYLOAD_BYTES = 32 * 1024
+        const val MAX_TOKEN_CHARS = 64 * 1024
+        const val MAX_TOOL_ARGUMENT_CHARS = 72 * 1024
+        const val MAX_EMPTY_READS = 16
+        const val HMAC_ALGORITHM = "HmacSHA256"
+        const val COMPAT_METHOD_IS_CHILD_DOCUMENT = "android:isChildDocument"
+        const val COMPAT_EXTRA_URI = "uri"
+        const val COMPAT_EXTRA_TARGET_URI = "android.content.extra.TARGET_URI"
+        const val COMPAT_EXTRA_RESULT = "result"
+        const val LIST_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{\"directoryId\":{\"type\":\"string\"}},\"additionalProperties\":false}"
+        const val READ_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{\"documentId\":{\"type\":\"string\"}},\"required\":[\"documentId\"],\"additionalProperties\":false}"
+        val DOCUMENT_PROJECTION = arrayOf(
+            Document.COLUMN_DOCUMENT_ID,
+            Document.COLUMN_DISPLAY_NAME,
+            Document.COLUMN_MIME_TYPE,
+            Document.COLUMN_SIZE,
+            Document.COLUMN_LAST_MODIFIED,
+        )
+        val SECURE_RANDOM = SecureRandom()
+        val BASE64_URL = Base64.getUrlEncoder().withoutPadding()
+        val BASE64_URL_DECODER = Base64.getUrlDecoder()
     }
 }
 

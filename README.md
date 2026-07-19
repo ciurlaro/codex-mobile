@@ -2,7 +2,7 @@
 
 An Android feasibility project for running Codex locally, while Android keeps final authority over device data and side effects.
 
-**Status:** [Step 01](docs/roadmap/01-runtime-premise.md) is complete; [Step 02](docs/roadmap/02-read-only-authority.md) is the active experiment.
+**Status:** [Steps 01–02](docs/roadmap/README.md) are complete; [Step 03](docs/roadmap/03-controlled-mutation.md) is the active experiment.
 
 ## Ownership
 

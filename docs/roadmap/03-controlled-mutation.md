@@ -1,6 +1,6 @@
 # Step 03 — Controlled mutation
 
-**Status:** Blocked by Step 02
+**Status:** In progress
 
 ## Question
 

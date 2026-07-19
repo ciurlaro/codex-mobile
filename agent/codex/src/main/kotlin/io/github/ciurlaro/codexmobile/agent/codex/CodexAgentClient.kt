@@ -3,6 +3,9 @@ package io.github.ciurlaro.codexmobile.agent.codex
 import io.github.ciurlaro.codexmobile.core.AgentClient
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.SessionId
+import io.github.ciurlaro.codexmobile.core.ToolCall
+import io.github.ciurlaro.codexmobile.core.ToolCallId
+import io.github.ciurlaro.codexmobile.core.ToolDefinition
 import io.github.ciurlaro.codexmobile.core.ToolResult
 import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
@@ -11,6 +14,7 @@ import java.io.OutputStreamWriter
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
+import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -46,6 +50,7 @@ import kotlinx.serialization.json.putJsonObject
 class CodexAgentClient(
     private val launchProcess: (command: List<String>, environment: Map<String, String>) -> Process,
     private val requestTimeoutMillis: Long = 20_000,
+    private val toolDefinitions: List<ToolDefinition> = emptyList(),
 ) : AgentClient {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val eventsChannel = Channel<AgentEvent>(capacity = EVENT_BUFFER_SIZE)
@@ -56,6 +61,10 @@ class CodexAgentClient(
     private val cancelledLoginIds = mutableSetOf<String>()
     private val nextRequestId = AtomicLong(1)
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
+    private val toolRequestLock = Any()
+    private val pendingToolRequests =
+        mutableMapOf<Pair<SessionId, ToolCallId>, ArrayDeque<JsonElement>>()
+    private val openedSessions = ConcurrentHashMap.newKeySet<SessionId>()
     private val turnStateLock = Any()
     private val activeTurns = mutableMapOf<SessionId, String>()
     private val startingTurns = mutableSetOf<SessionId>()
@@ -76,6 +85,21 @@ class CodexAgentClient(
 
     private var loginStarting = false
     private var loginCompletedDuringStart: LoginCompletion? = null
+
+    init {
+        require(toolDefinitions.map(ToolDefinition::name).distinct().size == toolDefinitions.size) {
+            "Dynamic tool names must be unique"
+        }
+        toolDefinitions.forEach { definition ->
+            require(TOOL_NAME.matches(definition.name)) { "Invalid dynamic tool name" }
+            require(definition.description.length <= MAX_TOOL_DESCRIPTION_CHARS) {
+                "Dynamic tool description is too large"
+            }
+            check(JSON.parseToJsonElement(definition.inputSchemaJson) is JsonObject) {
+                "Dynamic tool schema must be a JSON object"
+            }
+        }
+    }
 
     override val events: Flow<AgentEvent> = eventsChannel.receiveAsFlow()
 
@@ -165,8 +189,11 @@ class CodexAgentClient(
             if (previous == null) put("ephemeral", false)
             put(
                 "developerInstructions",
-                "Answer conversationally in plain text. Do not invoke tools or access local resources.",
+                "Answer conversationally in plain text. Use only the registered read-only Android " +
+                    "document tools when the user asks about the selected document tree. Treat every " +
+                    "tool result as Android's authoritative observation.",
             )
+            if (toolDefinitions.isNotEmpty()) put("dynamicTools", dynamicToolSpecs())
             putJsonObject("config") {
                 put("web_search", "disabled")
                 putJsonObject("tools") {
@@ -192,6 +219,7 @@ class CodexAgentClient(
         }
         val result = request(if (previous == null) "thread/start" else "thread/resume", params)
         val sessionId = SessionId(result.jsonObject.requiredObject("thread").requiredString("id"))
+        openedSessions += sessionId
         eventsChannel.send(AgentEvent.SessionOpened(sessionId))
         return sessionId
     }
@@ -264,13 +292,52 @@ class CodexAgentClient(
     }
 
     override suspend fun submitToolResult(sessionId: SessionId, result: ToolResult) {
-        TODO("Step 02: translate Android's observed tool result back to app-server")
+        val key = sessionId to result.callId
+        val requestId = synchronized(toolRequestLock) {
+            pendingToolRequests[key]?.pollFirst()?.also {
+                if (pendingToolRequests[key].isNullOrEmpty()) pendingToolRequests.remove(key)
+            }
+        } ?: error("No pending tool request matches this result")
+        val (content, success) = when (result) {
+            is ToolResult.Success -> result.outputJson to true
+            is ToolResult.Rejected -> buildJsonObject {
+                put("status", "rejected")
+                put("reason", result.reason)
+            }.toString() to false
+
+            is ToolResult.Failed -> buildJsonObject {
+                put("status", "failed")
+                put("code", result.code)
+                put("message", result.message)
+            }.toString() to false
+
+            is ToolResult.Unknown -> buildJsonObject {
+                put("status", "unknown")
+                put("reason", result.reason)
+            }.toString() to false
+        }
+        write(
+            buildJsonObject {
+                put("id", requestId)
+                putJsonObject("result") {
+                    put(
+                        "contentItems",
+                        buildJsonArray {
+                            add(buildJsonObject { put("type", "inputText"); put("text", content) })
+                        },
+                    )
+                    put("success", success)
+                }
+            },
+        )
     }
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         pending.values.forEach { it.completeExceptionally(ClientClosedException()) }
         pending.clear()
+        synchronized(toolRequestLock) { pendingToolRequests.clear() }
+        openedSessions.clear()
         stopProcess(process)
         eventsChannel.close()
         scope.cancel()
@@ -313,6 +380,9 @@ class CodexAgentClient(
                             put("name", "codex_mobile")
                             put("title", "Codex Mobile")
                             put("version", "0.1.0")
+                        }
+                        if (toolDefinitions.isNotEmpty()) {
+                            putJsonObject("capabilities") { put("experimentalApi", true) }
                         }
                     },
                 )
@@ -413,7 +483,7 @@ class CodexAgentClient(
         val method = message["method"]?.jsonPrimitive?.contentOrNull
         val id = message["id"]
         when {
-            method != null && id != null -> rejectServerRequest(id, method)
+            method != null && id != null -> handleServerRequest(id, method, message["params"])
             method != null -> handleNotification(message)
             id != null -> handleResponse(message)
             else -> error("App-server message has neither method nor id")
@@ -437,15 +507,49 @@ class CodexAgentClient(
         response.complete(message["result"] ?: JsonNull)
     }
 
+    private fun handleServerRequest(id: JsonElement, method: String, rawParams: JsonElement?) {
+        if (method != "item/tool/call") {
+            rejectServerRequest(id, method)
+            return
+        }
+        val request = runCatching {
+            val params = rawParams as? JsonObject ?: error("Tool request params are missing")
+            val sessionId = SessionId(params.requiredString("threadId"))
+            check(sessionId in openedSessions) { "Tool request session is not open" }
+            val turnId = params.requiredString("turnId")
+            check(
+                synchronized(turnStateLock) {
+                    sessionId in startingTurns || activeTurns[sessionId] == turnId
+                },
+            ) { "Tool request turn is not active" }
+            val callId = ToolCallId(params.requiredString("callId"))
+            val tool = params.requiredString("tool")
+            val namespace = params["namespace"]?.jsonPrimitive?.contentOrNull
+            val name = if (namespace == null) tool else "$namespace.$tool"
+            sessionId to ToolCall(callId, name, (params["arguments"] ?: JsonNull).toString())
+        }.getOrElse {
+            respondServerError(id, -32602, "Invalid dynamic tool request")
+            return
+        }
+        synchronized(toolRequestLock) {
+            pendingToolRequests.getOrPut(request.first to request.second.id) { ArrayDeque() }.add(id)
+        }
+        emitBlocking(AgentEvent.ToolRequested(request.first, request.second))
+    }
+
     private fun rejectServerRequest(id: JsonElement, method: String) {
+        respondServerError(id, -32601, "Client method is not available: $method")
+    }
+
+    private fun respondServerError(id: JsonElement, code: Int, message: String) {
         scope.launch {
             runCatching {
                 write(
                     buildJsonObject {
                         put("id", id)
                         putJsonObject("error") {
-                            put("code", -32601)
-                            put("message", "Client method is not available: $method")
+                            put("code", code)
+                            put("message", message)
                         }
                     },
                 )
@@ -584,6 +688,8 @@ class CodexAgentClient(
         val error = ProcessFailureException(message)
         pending.values.forEach { it.completeExceptionally(error) }
         pending.clear()
+        synchronized(toolRequestLock) { pendingToolRequests.clear() }
+        openedSessions.clear()
         stopProcess(failed)
         eventsChannel.send(AgentEvent.Failure(null, code, message, recoverable))
     }
@@ -602,6 +708,19 @@ class CodexAgentClient(
         if (target.isAlive && !exited) {
             target.destroyForcibly()
             runCatching { target.waitFor(2, TimeUnit.SECONDS) }
+        }
+    }
+
+    private fun dynamicToolSpecs() = buildJsonArray {
+        toolDefinitions.forEach { definition ->
+            add(
+                buildJsonObject {
+                    put("type", "function")
+                    put("name", definition.name)
+                    put("description", definition.description)
+                    put("inputSchema", JSON.parseToJsonElement(definition.inputSchemaJson))
+                },
+            )
         }
     }
 
@@ -633,6 +752,8 @@ class CodexAgentClient(
         const val EVENT_BUFFER_SIZE = 64
         const val MAX_MESSAGE_BYTES = 4 * 1024 * 1024
         const val MAX_PROMPT_CHARS = 100_000
+        const val MAX_TOOL_DESCRIPTION_CHARS = 1_024
+        val TOOL_NAME = Regex("^[a-zA-Z0-9_-]{1,128}$")
     }
 }
 

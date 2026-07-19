@@ -46,6 +46,8 @@ sequenceDiagram
 
 Only the platform result can establish whether an Android operation succeeded. A provider request, response, timeout, or repeated call ID is correlation—not proof of exactly-once execution.
 
+The pinned app-server registers Android capabilities as dynamic tools on the existing session. Read-only plans are allowed by core policy and dispatched directly; mutating plans follow the explicit UI approval path shown above. The app-server receives only the `ToolResult` produced from Android's observed provider outcome.
+
 ## Dependency rules
 
 - Core may use JVM/Kotlin libraries, but no `android.*` or `androidx.*` API.

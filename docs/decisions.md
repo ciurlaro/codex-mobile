@@ -15,10 +15,10 @@
 | Package a pinned app-server as an ARM64 native library | The verified musl executable runs from the APK native-library directory; app-private state, Android CAs, and an allowlisted loopback proxy supply the Android environment it needs | Codex ships an Android-native runtime or networking path |
 | Use device-code authentication from another device while execution is Activity-bound | Android blocks this app UID's network while a same-device browser is foregrounded | Step 05 provides foreground execution or Android changes the restriction |
 | Reject app-server diagnostic SQLite rows at the private database boundary | The upstream diagnostic layer records prompt and response material and has no supported disable switch | Upstream provides a supported privacy-safe logging mode |
+| Bridge Android capabilities with app-server dynamic tools | On pinned Codex 0.144.6, two dynamic tools fit the existing JSON-RPC session: one registration array and one `item/tool/call` request/result path. MCP would add server configuration, transport lifecycle, and another failure boundary without sharing pressure. Duplicate call IDs remain correlation only, and scripted plus live-runtime tests cross the same bridge | The pinned app-server removes the experimental dynamic-tool API or another client must share the Android tools |
 
 ## Deliberately unsettled
 
-- Dynamic tools versus MCP.
 - Whether coordination belongs in the initial ViewModel or a `SessionController`.
 - Room schema/module shape.
 - Foreground-service details.

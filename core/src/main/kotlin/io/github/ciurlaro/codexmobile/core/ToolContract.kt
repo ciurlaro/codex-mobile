@@ -12,6 +12,12 @@ data class ToolCall(
     val argumentsJson: String,
 )
 
+data class ToolDefinition(
+    val name: String,
+    val description: String,
+    val inputSchemaJson: String,
+)
+
 enum class ToolEffect {
     READ,
     MUTATION,
@@ -51,13 +57,16 @@ sealed interface ToolResult {
 }
 
 interface DeviceTool {
-    val name: String
+    val definition: ToolDefinition
+    val name: String get() = definition.name
     val effect: ToolEffect
 
     suspend fun prepare(call: ToolCall, scopeId: ResourceScopeId): ToolPlan
 
     suspend fun execute(plan: ToolPlan): ToolResult
 }
+
+class ToolRejectedException(message: String) : IllegalArgumentException(message)
 
 enum class ApprovalRequirement {
     DENY,

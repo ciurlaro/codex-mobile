@@ -722,7 +722,7 @@ private class ChunkedInputStream(
         super.read(buffer, offset, minOf(length, chunkSize))
 }
 
-private class ScriptedProcess(
+internal class ScriptedProcess(
     handler: (ClientMessage, ScriptedProcess) -> Unit,
 ) : Process() {
     private val serverInput = PipedInputStream()
@@ -774,6 +774,16 @@ private class ScriptedProcess(
 
     fun notify(method: String, params: JsonObject) {
         sendRaw(buildJsonObject { put("method", method); put("params", params) }.toString())
+    }
+
+    fun request(id: Long, method: String, params: JsonObject) {
+        sendRaw(
+            buildJsonObject {
+                put("id", id)
+                put("method", method)
+                put("params", params)
+            }.toString(),
+        )
     }
 
     @Synchronized
@@ -835,7 +845,7 @@ private class ScriptedProcess(
     override fun isAlive(): Boolean = alive.get()
 }
 
-private data class ClientMessage(val objectValue: JsonObject) {
+internal data class ClientMessage(val objectValue: JsonObject) {
     val id: Long? = objectValue["id"]?.jsonPrimitive?.content?.toLongOrNull()
     val method: String? = objectValue["method"]?.jsonPrimitive?.content
 }

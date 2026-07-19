@@ -1,6 +1,6 @@
 # Step 02 — Read-only Android authority
 
-**Status:** Blocked by Step 01
+**Status:** Complete
 
 ## Question
 
@@ -47,3 +47,13 @@ Add the smallest read-only tool surface: select/revoke one tree, list entries, a
 ## Required decision
 
 Record dynamic tools versus MCP using only implementation size, protocol fit, failure behavior, and testability observed here.
+
+## Result record
+
+- **Tool bridge:** Pinned Codex 0.144.6 dynamic tools register `list_documents` and `read_document` on the existing app-server session. Scripted JSON-RPC tests cover malformed requests and duplicate call-ID correlation; a physical-device run exercised both tools through the bundled app-server and returned only Android-observed results.
+- **Authority:** One read-only `ACTION_OPEN_DOCUMENT_TREE` grant maps to a random `ResourceScopeId`. Signed opaque document IDs are bound to the current scope secret, rewalked through provider children, and revalidated against the selected tree before every list or read.
+- **Bounds and failures:** Lists stop at 2,048 entries or 512 KiB of serialized entry metadata. Reads accept bounded UTF-8 text only and stop at 64 KiB. Revocation, malformed input, redirects, cycles, stale metadata, binary/invalid text, provider exceptions, short reads, and stream errors return sanitized rejected/failed results.
+- **Compatibility:** The cross-Binder provider suite runs on API 26, a physical API 36 device, and API 37. API 26 evidence required the URI form of `ContentResolver.call` and `DataInputStream.readFully`; both newer-overload defects were found and corrected by the minimum-API run.
+- **Lifecycle/privacy:** The persisted grant survived force-stop, Activity recreation, foreground/background transitions, and app-server shutdown. URI/content markers were absent from app and provider log checks; the UI exposes only a boolean read-access state.
+- **Provider samples:** Isolated local-storage, Downloads, and Google Drive scopes passed real-picker bounded-metadata tests. The Drive sample used a nested folder, discarded names and contents, and was revoked afterward; no cloud mutation occurred. No removable-storage root was present on the test targets.
+- **Dynamic tools versus MCP:** Dynamic tools won on measured size and fit: they add registration plus one existing JSON-RPC request/result path, preserve app-server request correlation, clear pending work on process failure, and are testable with both the scripted process seam and bundled runtime. MCP would add configuration, transport lifecycle, and another failure boundary for two app-local tools.

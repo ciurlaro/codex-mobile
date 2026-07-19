@@ -10,6 +10,7 @@ These are stable responsibilities, not a requirement that every row remain a sep
 | `SessionId` | Opaque provider session correlation | Persist only if Step 01 proves resumption works |
 | Session coordination | Coordinate client events, tool execution, and UI intent | Starts in the ViewModel; extract `SessionController` only if Step 01 proves it useful |
 | `ToolCall` / `ToolResult` | Correlate a requested operation with Android's observed outcome | Transient; `callId` is not an idempotency guarantee |
+| `ToolDefinition` | Publish a bounded name, description, and input schema to app-server dynamic tools | Static registration; carries no Android authority |
 | `DeviceTool` | Describe and execute one Android-owned capability | Registered locally; default deny |
 | `ToolExecutor` | Validate registration, scope, approval, and dispatch | Core policy boundary |
 | `ApprovalPolicy` | Decide deny, allow, or require a user decision | Core policy; mutation defaults to user approval |
