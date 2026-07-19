@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -21,12 +22,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
+import io.github.ciurlaro.codexmobile.core.ApprovalPreview
 
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<MainViewModel>()
@@ -40,6 +43,11 @@ class MainActivity : ComponentActivity() {
                 ActivityResultContracts.OpenDocumentTree(),
             ) { uri ->
                 if (uri == null) viewModel.scopeSelectionCancelled() else viewModel.selectScope(uri)
+            }
+            val mutationScopePicker = rememberLauncherForActivityResult(
+                ActivityResultContracts.OpenDocumentTree(),
+            ) { uri ->
+                if (uri == null) viewModel.scopeSelectionCancelled() else viewModel.selectMutationScope(uri)
             }
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -60,7 +68,18 @@ class MainActivity : ComponentActivity() {
                                 Button(onClick = viewModel::revokeScope) { Text("Revoke access") }
                             }
                         }
-                        if (state.scopeSelected) Text("Read-only document access enabled")
+                        Button(onClick = { mutationScopePicker.launch(null) }) {
+                            Text(
+                                if (state.mutationScopeSelected) "Change disposable mutation folder"
+                                else "Select disposable mutation folder",
+                            )
+                        }
+                        Text("Use mutation access only with a dedicated disposable test folder.")
+                        if (state.mutationScopeSelected) {
+                            Text("Disposable mutation access enabled")
+                        } else if (state.scopeSelected) {
+                            Text("Read-only document access enabled")
+                        }
 
                         if (state.sessionId == null && state.verificationUrl == null) {
                             Button(onClick = viewModel::authenticate) { Text("Sign in with ChatGPT") }
@@ -107,6 +126,13 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
+                state.approvalPreview?.let { preview ->
+                    MutationApprovalDialog(
+                        preview = preview,
+                        onApprove = viewModel::approveMutation,
+                        onDeny = viewModel::denyMutation,
+                    )
+                }
             }
         }
     }
@@ -116,4 +142,62 @@ class MainActivity : ComponentActivity() {
         viewModel.refreshScope()
     }
 
+}
+
+@androidx.compose.runtime.Composable
+internal fun MutationApprovalDialog(
+    preview: ApprovalPreview,
+    onApprove: () -> Unit,
+    onDeny: () -> Unit,
+) {
+    var decided by remember(preview) { mutableStateOf(false) }
+    fun decide(action: () -> Unit) {
+        if (decided) return
+        decided = true
+        action()
+    }
+    AlertDialog(
+        onDismissRequest = { decide(onDeny) },
+        title = { Text("Approve Android change?") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                ApprovalField("Operation", preview.operation)
+                ApprovalField("Source", preview.source)
+                ApprovalField("Destination", preview.destination)
+                ApprovalField("Scope", preview.scope)
+                ApprovalField("Conflict behavior", preview.conflictBehavior)
+            }
+        },
+        confirmButton = {
+            Button(onClick = { decide(onApprove) }, enabled = !decided) { Text("Approve once") }
+        },
+        dismissButton = {
+            Button(onClick = { decide(onDeny) }, enabled = !decided) { Text("Deny") }
+        },
+    )
+}
+
+@androidx.compose.runtime.Composable
+private fun ApprovalField(label: String, value: String) {
+    Text("$label: ${value.toApprovalDisplayText()}")
+}
+
+internal fun String.toApprovalDisplayText(): String = buildString {
+    var offset = 0
+    while (offset < this@toApprovalDisplayText.length) {
+        val codePoint = this@toApprovalDisplayText.codePointAt(offset)
+        val type = Character.getType(codePoint)
+        if (
+            Character.isISOControl(codePoint) || type == Character.FORMAT.toInt() ||
+            type == Character.LINE_SEPARATOR.toInt() || type == Character.PARAGRAPH_SEPARATOR.toInt()
+        ) {
+            append("\\u{").append(codePoint.toString(16).uppercase()).append('}')
+        } else {
+            appendCodePoint(codePoint)
+        }
+        offset += Character.charCount(codePoint)
+    }
 }

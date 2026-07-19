@@ -38,7 +38,7 @@ sequenceDiagram
     Agent->>Core: Request tool call
     Core-->>UI: Resolved approval request
     User->>UI: Approve or deny
-    UI->>Core: Decision bound to call ID
+    UI->>Core: Decision bound to exact resolved plan
     Core->>Platform: Execute within scope
     Platform-->>Core: Observed result
     Core-->>Agent: Tool result
@@ -46,7 +46,7 @@ sequenceDiagram
 
 Only the platform result can establish whether an Android operation succeeded. A provider request, response, timeout, or repeated call ID is correlation—not proof of exactly-once execution.
 
-The pinned app-server registers Android capabilities as dynamic tools on the existing session. Read-only plans are allowed by core policy and dispatched directly; mutating plans follow the explicit UI approval path shown above. The app-server receives only the `ToolResult` produced from Android's observed provider outcome.
+The pinned app-server registers Android capabilities as dynamic tools on the existing session. Read-only plans are allowed by core policy and dispatched directly; mutating plans require an explicit, one-use UI decision bound to the exact resolved plan. The app-server receives only the `ToolResult` produced from Android's observed provider outcome.
 
 ## Dependency rules
 

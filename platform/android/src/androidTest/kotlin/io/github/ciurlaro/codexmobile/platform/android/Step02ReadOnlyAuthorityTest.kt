@@ -234,8 +234,15 @@ class Step02ReadOnlyAuthorityTest {
         val platform = AndroidPlatform(context)
         val scope = platform.persistScope(grantTree())
         val tools = platform.deviceTools()
-        assertEquals(setOf("list_documents", "read_document"), tools.map { it.name }.toSet())
-        assertTrue(tools.all { it.effect == ToolEffect.READ })
+        assertEquals(
+            setOf("list_documents", "read_document"),
+            tools.filter { it.effect == ToolEffect.READ }.map { it.name }.toSet(),
+        )
+        val rename = tools.single { it.name == "rename_document" }
+        assertEquals(ToolEffect.MUTATION, rename.effect)
+        assertSuspendFails<ToolRejectedException> {
+            rename.prepare(call(rename.name, "{}"), scope)
+        }
 
         val executor = ToolExecutor(tools) { plan ->
             if (plan.effect == ToolEffect.READ) ApprovalRequirement.ALLOW else ApprovalRequirement.DENY

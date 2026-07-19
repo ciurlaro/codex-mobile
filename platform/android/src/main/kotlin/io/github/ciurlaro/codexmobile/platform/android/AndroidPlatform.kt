@@ -49,6 +49,11 @@ import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -106,11 +111,17 @@ class AndroidPlatform internal constructor(
         readAuthority.persist(treeUri)
     }
 
+    suspend fun persistMutationScope(treeUri: Uri): ResourceScopeId = withContext(Dispatchers.IO) {
+        readAuthority.persistMutation(treeUri)
+    }
+
     suspend fun revokeScope(scopeId: ResourceScopeId) = withContext(Dispatchers.IO) {
         readAuthority.revoke(scopeId)
     }
 
     fun currentScopeId(): ResourceScopeId? = readAuthority.currentScopeId()
+
+    fun currentScopeAllowsMutations(): Boolean = readAuthority.currentScopeAllowsMutations()
 
     fun deviceTools(): List<DeviceTool> = readAuthority.tools
 
@@ -190,9 +201,13 @@ private class SafReadAuthority(context: Context) {
     private val preferences = context.getSharedPreferences(SCOPE_PREFERENCES, Context.MODE_PRIVATE)
     private val lock = Any()
 
-    val tools: List<DeviceTool> = listOf(ListDocumentsTool(), ReadDocumentTool())
+    val tools: List<DeviceTool> = listOf(ListDocumentsTool(), ReadDocumentTool(), RenameDocumentTool())
 
-    fun persist(treeUri: Uri): ResourceScopeId {
+    fun persist(treeUri: Uri): ResourceScopeId = persist(treeUri, allowMutations = false)
+
+    fun persistMutation(treeUri: Uri): ResourceScopeId = persist(treeUri, allowMutations = true)
+
+    private fun persist(treeUri: Uri, allowMutations: Boolean): ResourceScopeId {
         require(
             treeUri.scheme == ContentResolver.SCHEME_CONTENT &&
                 treeUri.authority?.isNotBlank() == true &&
@@ -210,11 +225,12 @@ private class SafReadAuthority(context: Context) {
 
         synchronized(lock) {
             val previous = scopeOrNullLocked()
-            resolver.takePersistableUriPermission(treeUri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            if (!hasReadGrant(treeUri)) {
-                throw SecurityException("The selected provider did not persist read access")
+            val grantFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                if (allowMutations) Intent.FLAG_GRANT_WRITE_URI_PERMISSION else 0
+            resolver.takePersistableUriPermission(treeUri, grantFlags)
+            if (!hasReadGrant(treeUri) || allowMutations && !hasWriteGrant(treeUri)) {
+                throw SecurityException("The selected provider did not persist required access")
             }
-            releasePersistedWriteGrant(treeUri)
 
             val id = ResourceScopeId(UUID.randomUUID().toString())
             val secret = ByteArray(SCOPE_SECRET_BYTES).also(SECURE_RANDOM::nextBytes)
@@ -222,11 +238,14 @@ private class SafReadAuthority(context: Context) {
                 .putString(SCOPE_ID_KEY, id.value)
                 .putString(SCOPE_URI_KEY, treeUri.toString())
                 .putString(SCOPE_SECRET_KEY, Base64.getEncoder().encodeToString(secret))
+                .putBoolean(SCOPE_MUTATION_KEY, allowMutations)
                 .commit()
             if (!saved) {
                 if (previous?.treeUri != treeUri) releasePersistedGrant(treeUri)
+                else if (previous.allowsMutations != true) releasePersistedWriteGrant(treeUri)
                 error("Unable to save document scope")
             }
+            if (!allowMutations) releasePersistedWriteGrant(treeUri)
             if (previous != null && previous.treeUri != treeUri) {
                 releasePersistedGrant(previous.treeUri)
             }
@@ -244,6 +263,10 @@ private class SafReadAuthority(context: Context) {
 
     fun currentScopeId(): ResourceScopeId? = synchronized(lock) { scopeOrNullLocked()?.id }
 
+    fun currentScopeAllowsMutations(): Boolean = synchronized(lock) {
+        scopeOrNullLocked()?.let { it.allowsMutations && hasWriteGrant(it.treeUri) } == true
+    }
+
     private fun scopeOrNullLocked(): Scope? {
         val id = preferences.getString(SCOPE_ID_KEY, null)?.takeIf(String::isNotBlank)
         val uri = preferences.getString(SCOPE_URI_KEY, null)
@@ -254,7 +277,12 @@ private class SafReadAuthority(context: Context) {
             if (preferences.all.isNotEmpty()) preferences.edit().clear().commit()
             return null
         }
-        return Scope(ResourceScopeId(id), uri, secret)
+        return Scope(
+            id = ResourceScopeId(id),
+            treeUri = uri,
+            secret = secret,
+            allowsMutations = preferences.getBoolean(SCOPE_MUTATION_KEY, false),
+        )
     }
 
     private fun requireScope(scopeId: ResourceScopeId): Scope = synchronized(lock) {
@@ -262,8 +290,18 @@ private class SafReadAuthority(context: Context) {
             ?: throw ToolRejectedException("Document scope is unavailable or does not match")
     }
 
+    private fun requireMutationScope(scopeId: ResourceScopeId): Scope = synchronized(lock) {
+        scopeOrNullLocked()?.takeIf {
+            it.id == scopeId && it.allowsMutations && hasWriteGrant(it.treeUri)
+        } ?: throw ToolRejectedException("Writable disposable document scope is unavailable")
+    }
+
     private fun hasReadGrant(uri: Uri): Boolean = resolver.persistedUriPermissions.any {
         it.uri == uri && it.isReadPermission
+    }
+
+    private fun hasWriteGrant(uri: Uri): Boolean = resolver.persistedUriPermissions.any {
+        it.uri == uri && it.isWritePermission
     }
 
     private fun releasePersistedWriteGrant(uri: Uri) {
@@ -388,6 +426,192 @@ private class SafReadAuthority(context: Context) {
         }
     }
 
+    private inner class RenameDocumentTool : DeviceTool {
+        private val pending = ConcurrentHashMap<String, ResolvedRename>()
+        // ponytail: one global mutation lane; split by scope only if measured throughput needs it.
+        private val mutationMutex = Mutex()
+
+        override val definition = ToolDefinition(
+            name = RENAME_TOOL_NAME,
+            description = "Preview and rename one document inside the selected disposable Android folder.",
+            inputSchemaJson = RENAME_SCHEMA,
+        )
+        override val effect = ToolEffect.MUTATION
+
+        override suspend fun prepare(call: ToolCall, scopeId: ResourceScopeId): ToolPlan =
+            withContext(Dispatchers.IO) {
+                val scope = requireMutationScope(scopeId)
+                val arguments = strictArguments(
+                    call.argumentsJson,
+                    setOf(DOCUMENT_ID_ARGUMENT, NEW_NAME_ARGUMENT),
+                    requireAll = true,
+                )
+                val path = decodePath(arguments.requiredString(DOCUMENT_ID_ARGUMENT), scope)
+                if (path.isEmpty()) throw ToolRejectedException("A document ID is required")
+                val newName = arguments.requiredString(NEW_NAME_ARGUMENT)
+                if (newName.length > MAX_DISPLAY_NAME_CHARS) {
+                    throw ToolRejectedException("Destination name is too long")
+                }
+
+                val source = resolvePath(scope, path)
+                if (source.isDirectory) throw ToolRejectedException("Only a disposable document can be renamed")
+                if (source.flags and Document.FLAG_SUPPORTS_RENAME == 0) {
+                    throw ToolRejectedException("Document provider does not support rename")
+                }
+                if (source.name == newName) throw ToolRejectedException("Document already has that name")
+
+                val parentPath = path.dropLast(1)
+                val parent = resolvePath(scope, parentPath)
+                if (!parent.isDirectory) throw ToolRejectedException("Document parent is unavailable")
+                if (queryChildren(scope.treeUri, parent.id).any {
+                        it.id != source.id && it.name == newName
+                    }
+                ) {
+                    throw ToolRejectedException("Destination name already exists")
+                }
+
+                val fingerprint = mutationFingerprint(call, scopeId, path, parent, source, newName)
+                val snapshot = ResolvedRename(call, scopeId, path, parentPath, parent, source, newName)
+                synchronized(pending) {
+                    if (pending.size >= MAX_PENDING_RENAMES || pending.putIfAbsent(fingerprint, snapshot) != null) {
+                        throw ToolRejectedException("A matching rename preview is already pending")
+                    }
+                }
+                ToolPlan(
+                    call = call,
+                    scopeId = scopeId,
+                    effect = effect,
+                    summary = "Rename one disposable document",
+                    fingerprint = fingerprint,
+                    approvalPreview = io.github.ciurlaro.codexmobile.core.ApprovalPreview(
+                        operation = "Rename document",
+                        source = source.name,
+                        destination = "${parent.name} / $newName",
+                        scope = "Selected disposable folder",
+                        conflictBehavior = CONFLICT_BEHAVIOR,
+                    ),
+                )
+            }
+
+        override suspend fun execute(plan: ToolPlan): ToolResult {
+            val snapshot = pending.remove(plan.fingerprint)
+                ?: return ToolResult.Rejected(plan.call.id, "Rename preview is unavailable or already used")
+            if (
+                snapshot.call != plan.call || snapshot.scopeId != plan.scopeId ||
+                plan.effect != effect || plan.approvalPreview == null
+            ) {
+                return ToolResult.Rejected(plan.call.id, "Rename plan does not match its preview")
+            }
+
+            val dispatched = AtomicBoolean()
+            return try {
+                withContext(Dispatchers.IO) {
+                    mutationMutex.withLock {
+                        executeRename(plan, snapshot, dispatched)
+                    }
+                }
+            } catch (error: CancellationException) {
+                if (!dispatched.get()) throw error
+                withContext(NonCancellable) {
+                    withContext(Dispatchers.IO) {
+                        mutationMutex.withLock { observeRename(plan, snapshot, null, error) }
+                    }
+                }
+            } catch (error: ToolRejectedException) {
+                ToolResult.Rejected(plan.call.id, error.message ?: "Rename request became stale")
+            } catch (_: SecurityException) {
+                ToolResult.Failed(plan.call.id, "permission_denied", "Writable document permission is unavailable")
+            } catch (_: FileNotFoundException) {
+                ToolResult.Failed(plan.call.id, "not_found", "Disposable document is unavailable")
+            } catch (_: Exception) {
+                ToolResult.Failed(plan.call.id, "provider_failure", "Document provider failed before rename")
+            }
+        }
+
+        override fun abandon(plan: ToolPlan) {
+            pending.remove(plan.fingerprint)?.takeIf {
+                it.call == plan.call && it.scopeId == plan.scopeId
+            } ?: return
+        }
+
+        private suspend fun executeRename(
+            plan: ToolPlan,
+            snapshot: ResolvedRename,
+            dispatched: AtomicBoolean,
+        ): ToolResult {
+            currentCoroutineContext().ensureActive()
+            val scope = requireMutationScope(plan.scopeId)
+            val source = resolvePath(scope, snapshot.path)
+            val parent = resolvePath(scope, snapshot.parentPath)
+            if (source != snapshot.source || parent != snapshot.parent) {
+                throw ToolRejectedException("Rename preview is stale")
+            }
+            if (queryChildren(scope.treeUri, parent.id).any {
+                    it.id != source.id && it.name == snapshot.newName
+                }
+            ) {
+                throw ToolRejectedException("Destination name now exists")
+            }
+            currentCoroutineContext().ensureActive()
+
+            val sourceUri = DocumentsContract.buildDocumentUriUsingTree(scope.treeUri, source.id)
+            var returnedUri: Uri? = null
+            var providerFailure: Exception? = null
+            dispatched.set(true)
+            try {
+                returnedUri = DocumentsContract.renameDocument(resolver, sourceUri, snapshot.newName)
+            } catch (error: Exception) {
+                providerFailure = error
+            }
+            return observeRename(plan, snapshot, returnedUri, providerFailure)
+        }
+
+        private fun observeRename(
+            plan: ToolPlan,
+            snapshot: ResolvedRename,
+            returnedUri: Uri?,
+            providerFailure: Exception?,
+        ): ToolResult {
+            return try {
+                val scope = requireMutationScope(plan.scopeId)
+                val children = queryChildren(scope.treeUri, snapshot.parent.id)
+                val oldObserved = children.any {
+                    it.id == snapshot.source.id && it.name == snapshot.source.name
+                }
+                val destinations = children.filter { it.name == snapshot.newName }
+                val destination = destinations.singleOrNull()
+
+                when {
+                    destination != null && !oldObserved -> ToolResult.Success(
+                        plan.call.id,
+                        JSONObject()
+                            .put("status", "renamed")
+                            .put("documentId", encodePath(snapshot.parentPath + destination.id, scope))
+                            .put("name", destination.name)
+                            .put("providerReturnedDocument", returnedUri != null)
+                            .toString(),
+                    )
+
+                    oldObserved && destinations.isEmpty() -> ToolResult.Failed(
+                        plan.call.id,
+                        if (providerFailure == null) "rename_refused" else "rename_failed",
+                        "Provider state proves the source remained unchanged",
+                    )
+
+                    else -> ToolResult.Unknown(
+                        plan.call.id,
+                        "Rename was dispatched; observed provider state is partial or unexpected",
+                    )
+                }
+            } catch (_: Exception) {
+                ToolResult.Unknown(
+                    plan.call.id,
+                    "Rename was dispatched; provider state could not be re-observed",
+                )
+            }
+        }
+    }
+
     private inline fun observedResult(plan: ToolPlan, operation: (Scope) -> String): ToolResult {
         return try {
             ToolResult.Success(plan.call.id, operation(requireScope(plan.scopeId)))
@@ -413,6 +637,43 @@ private class SafReadAuthority(context: Context) {
             .digest("${scopeId.value}\u0000${call.name}\u0000${call.argumentsJson}".toByteArray())
             .joinToString("") { "%02x".format(it) }
         return ToolPlan(call, scopeId, ToolEffect.READ, summary, fingerprint)
+    }
+
+    private fun mutationFingerprint(
+        call: ToolCall,
+        scopeId: ResourceScopeId,
+        path: List<String>,
+        parent: DocumentMetadata,
+        source: DocumentMetadata,
+        newName: String,
+    ): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val values = listOf(
+            call.id.value,
+            call.name,
+            call.argumentsJson,
+            scopeId.value,
+            *path.toTypedArray(),
+            parent.id,
+            parent.name,
+            parent.mimeType,
+            parent.size?.toString().orEmpty(),
+            parent.lastModified?.toString().orEmpty(),
+            parent.flags.toString(),
+            source.id,
+            source.name,
+            source.mimeType,
+            source.size?.toString().orEmpty(),
+            source.lastModified?.toString().orEmpty(),
+            source.flags.toString(),
+            newName,
+        )
+        values.forEach { value ->
+            val bytes = value.toByteArray(StandardCharsets.UTF_8)
+            digest.update(ByteBuffer.allocate(Int.SIZE_BYTES).putInt(bytes.size).array())
+            digest.update(bytes)
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun strictArguments(
@@ -503,11 +764,14 @@ private class SafReadAuthority(context: Context) {
         val id = requiredString(Document.COLUMN_DOCUMENT_ID, MAX_DOCUMENT_ID_BYTES)
         val name = requiredString(Document.COLUMN_DISPLAY_NAME, MAX_DISPLAY_NAME_CHARS)
         val mimeType = requiredString(Document.COLUMN_MIME_TYPE, MAX_MIME_TYPE_CHARS)
+        val flagsIndex = getColumnIndex(Document.COLUMN_FLAGS)
+        val flags = flagsIndex.takeIf { it >= 0 && !isNull(it) }?.let(::getInt)
+            ?: throw SafFailure("provider_metadata", "Document provider returned invalid metadata")
         val sizeIndex = getColumnIndex(Document.COLUMN_SIZE)
         val modifiedIndex = getColumnIndex(Document.COLUMN_LAST_MODIFIED)
         val size = sizeIndex.takeIf { it >= 0 && !isNull(it) }?.let(::getLong)?.takeIf { it >= 0 }
         val modified = modifiedIndex.takeIf { it >= 0 && !isNull(it) }?.let(::getLong)?.takeIf { it >= 0 }
-        return DocumentMetadata(id, name, mimeType, size, modified)
+        return DocumentMetadata(id, name, mimeType, size, modified, flags)
     }
 
     private fun Cursor.requiredString(column: String, maxLength: Int): String {
@@ -633,6 +897,7 @@ private class SafReadAuthority(context: Context) {
         val id: ResourceScopeId,
         val treeUri: Uri,
         val secret: ByteArray,
+        val allowsMutations: Boolean,
     )
 
     private data class DocumentMetadata(
@@ -641,9 +906,20 @@ private class SafReadAuthority(context: Context) {
         val mimeType: String,
         val size: Long?,
         val lastModified: Long?,
+        val flags: Int,
     ) {
         val isDirectory: Boolean get() = mimeType == Document.MIME_TYPE_DIR
     }
+
+    private data class ResolvedRename(
+        val call: ToolCall,
+        val scopeId: ResourceScopeId,
+        val path: List<String>,
+        val parentPath: List<String>,
+        val parent: DocumentMetadata,
+        val source: DocumentMetadata,
+        val newName: String,
+    )
 
     private class SafFailure(val code: String, val publicMessage: String) : Exception(publicMessage)
 
@@ -652,11 +928,14 @@ private class SafReadAuthority(context: Context) {
         const val SCOPE_ID_KEY = "id"
         const val SCOPE_URI_KEY = "uri"
         const val SCOPE_SECRET_KEY = "secret"
+        const val SCOPE_MUTATION_KEY = "mutations"
         const val SCOPE_SECRET_BYTES = 32
         const val LIST_TOOL_NAME = "list_documents"
         const val READ_TOOL_NAME = "read_document"
+        const val RENAME_TOOL_NAME = "rename_document"
         const val DIRECTORY_ID_ARGUMENT = "directoryId"
         const val DOCUMENT_ID_ARGUMENT = "documentId"
+        const val NEW_NAME_ARGUMENT = "newName"
         const val MAX_DOCUMENT_BYTES = 64 * 1024
         const val MAX_DIRECTORY_ENTRIES = 2_048
         const val MAX_LIST_OUTPUT_BYTES = 512 * 1024
@@ -668,7 +947,10 @@ private class SafReadAuthority(context: Context) {
         const val MAX_TOKEN_CHARS = 64 * 1024
         const val MAX_TOOL_ARGUMENT_CHARS = 72 * 1024
         const val MAX_EMPTY_READS = 16
+        const val MAX_PENDING_RENAMES = 64
         const val HMAC_ALGORITHM = "HmacSHA256"
+        const val CONFLICT_BEHAVIOR =
+            "Reject if the destination name is already listed; the provider may reject additional names"
         const val COMPAT_METHOD_IS_CHILD_DOCUMENT = "android:isChildDocument"
         const val COMPAT_EXTRA_URI = "uri"
         const val COMPAT_EXTRA_TARGET_URI = "android.content.extra.TARGET_URI"
@@ -677,12 +959,15 @@ private class SafReadAuthority(context: Context) {
             "{\"type\":\"object\",\"properties\":{\"directoryId\":{\"type\":\"string\"}},\"additionalProperties\":false}"
         const val READ_SCHEMA =
             "{\"type\":\"object\",\"properties\":{\"documentId\":{\"type\":\"string\"}},\"required\":[\"documentId\"],\"additionalProperties\":false}"
+        const val RENAME_SCHEMA =
+            "{\"type\":\"object\",\"properties\":{\"documentId\":{\"type\":\"string\"},\"newName\":{\"type\":\"string\"}},\"required\":[\"documentId\",\"newName\"],\"additionalProperties\":false}"
         val DOCUMENT_PROJECTION = arrayOf(
             Document.COLUMN_DOCUMENT_ID,
             Document.COLUMN_DISPLAY_NAME,
             Document.COLUMN_MIME_TYPE,
             Document.COLUMN_SIZE,
             Document.COLUMN_LAST_MODIFIED,
+            Document.COLUMN_FLAGS,
         )
         val SECURE_RANDOM = SecureRandom()
         val BASE64_URL = Base64.getUrlEncoder().withoutPadding()

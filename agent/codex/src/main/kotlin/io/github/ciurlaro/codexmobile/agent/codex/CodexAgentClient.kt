@@ -190,8 +190,9 @@ class CodexAgentClient(
             put(
                 "developerInstructions",
                 "Answer conversationally in plain text. Use only the registered read-only Android " +
-                    "document tools when the user asks about the selected document tree. Treat every " +
-                    "tool result as Android's authoritative observation.",
+                    "document tools, plus rename_document when the user explicitly asks to rename a " +
+                    "disposable document. Android and the user's approval decide whether any change " +
+                    "occurs. Treat every tool result as Android's authoritative observation.",
             )
             if (toolDefinitions.isNotEmpty()) put("dynamicTools", dynamicToolSpecs())
             putJsonObject("config") {

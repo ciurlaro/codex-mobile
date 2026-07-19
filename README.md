@@ -2,7 +2,7 @@
 
 An Android feasibility project for running Codex locally, while Android keeps final authority over device data and side effects.
 
-**Status:** [Steps 01–02](docs/roadmap/README.md) are complete; [Step 03](docs/roadmap/03-controlled-mutation.md) is the active experiment.
+**Status:** [Steps 01–03](docs/roadmap/README.md) are complete; [Step 04](docs/roadmap/04-mutation-recovery.md) is the active experiment.
 
 ## Ownership
 

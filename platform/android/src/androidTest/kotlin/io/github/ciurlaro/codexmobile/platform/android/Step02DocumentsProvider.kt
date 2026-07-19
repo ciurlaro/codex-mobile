@@ -30,7 +30,7 @@ class Step02DocumentsProvider : DocumentsProvider() {
 
     override fun queryDocument(documentId: String, projection: Array<out String>?): Cursor {
         if (scenario == Scenario.THROW_QUERY) throw FileNotFoundException("injected")
-        val document = documents().getValue(documentId)
+        val document = documents()[documentId] ?: throw FileNotFoundException("missing")
         return MatrixCursor(projection ?: DOCUMENT_PROJECTION).apply {
             addDocumentRow(document, projection ?: DOCUMENT_PROJECTION)
         }
@@ -92,6 +92,55 @@ class Step02DocumentsProvider : DocumentsProvider() {
         return pipe[0]
     }
 
+    override fun renameDocument(documentId: String, displayName: String): String? {
+        if (
+            documentId != MUTATION_SOURCE_ID && documentId != MUTATION_REPLACEMENT_ID &&
+            documentId != MUTATION_SECOND_ID
+        ) {
+            throw FileNotFoundException("not disposable")
+        }
+        RENAME_COUNT.incrementAndGet()
+        val active = ACTIVE_RENAMES.incrementAndGet()
+        MAX_ACTIVE_RENAMES.accumulateAndGet(active, ::maxOf)
+        try {
+            if (scenario == Scenario.DELAY_RENAME) Thread.sleep(250)
+            return synchronized(MUTATION_LOCK) {
+                when (scenario) {
+                    Scenario.REFUSE_RENAME -> null
+                    Scenario.THROW_RENAME -> throw FileNotFoundException("injected")
+                    Scenario.PARTIAL_RENAME -> {
+                        partialName = displayName
+                        MUTATION_VERSION.incrementAndGet()
+                        documentId
+                    }
+                    Scenario.THROW_AFTER_RENAME -> {
+                        rename(documentId, displayName)
+                        throw FileNotFoundException("injected after mutation")
+                    }
+                    Scenario.CANCEL_AFTER_RENAME -> {
+                        rename(documentId, displayName)
+                        throw android.os.OperationCanceledException("injected after mutation")
+                    }
+                    Scenario.NULL_AFTER_RENAME -> {
+                        rename(documentId, displayName)
+                        null
+                    }
+                    Scenario.DELETE_AFTER_DISPATCH -> {
+                        if (documentId == MUTATION_SOURCE_ID) sourcePresent = false else secondPresent = false
+                        MUTATION_VERSION.incrementAndGet()
+                        null
+                    }
+                    else -> {
+                        rename(documentId, displayName)
+                        documentId
+                    }
+                }
+            }
+        } finally {
+            ACTIVE_RENAMES.decrementAndGet()
+        }
+    }
+
     override fun isChildDocument(parentDocumentId: String, documentId: String): Boolean {
         var current = documents()[documentId] ?: return false
         while (current.parentId != null) {
@@ -114,8 +163,8 @@ class Step02DocumentsProvider : DocumentsProvider() {
                 Document.COLUMN_DISPLAY_NAME to document.name,
                 Document.COLUMN_MIME_TYPE to document.mimeType,
                 Document.COLUMN_SIZE to document.size,
-                Document.COLUMN_LAST_MODIFIED to modified,
-                Document.COLUMN_FLAGS to 0,
+                Document.COLUMN_LAST_MODIFIED to if (scenario == Scenario.CHANGING_METADATA) modified else document.lastModified,
+                Document.COLUMN_FLAGS to document.flags,
             ),
         )
     }
@@ -131,6 +180,8 @@ class Step02DocumentsProvider : DocumentsProvider() {
         val name: String,
         val mimeType: String,
         val declaredSize: Long? = null,
+        val lastModified: Long = LAST_MODIFIED,
+        val flags: Int = 0,
         val content: () -> ByteArray = { byteArrayOf() },
     ) {
         val isDirectory: Boolean get() = mimeType == Document.MIME_TYPE_DIR
@@ -150,16 +201,45 @@ class Step02DocumentsProvider : DocumentsProvider() {
         THROW_OPEN,
         DELETE_ON_OPEN,
         CHANGING_METADATA,
+        REFUSE_RENAME,
+        THROW_RENAME,
+        PARTIAL_RENAME,
+        THROW_AFTER_RENAME,
+        CANCEL_AFTER_RENAME,
+        NULL_AFTER_RENAME,
+        DELETE_AFTER_DISPATCH,
+        DELAY_RENAME,
     }
 
     companion object {
         const val AUTHORITY = "io.github.ciurlaro.codexmobile.platform.android.test.documents"
         const val ROOT_ID = "root"
         const val FOREIGN_ID = "foreign"
+        const val MUTATION_DIR_ID = "mutation-dir"
+        const val MUTATION_SOURCE_ID = "mutation-source"
+        const val MUTATION_REPLACEMENT_ID = "mutation-replacement"
+        const val MUTATION_SECOND_ID = "mutation-second"
         private const val LAST_MODIFIED = 1_700_000_000_000L
         private const val SUPPORTS_IS_CHILD = 1 shl 4
         private val CHANGE_COUNTER = AtomicInteger()
         private val OPEN_COUNT = AtomicInteger()
+        private val RENAME_COUNT = AtomicInteger()
+        private val ACTIVE_RENAMES = AtomicInteger()
+        private val MAX_ACTIVE_RENAMES = AtomicInteger()
+        private val MUTATION_VERSION = AtomicInteger()
+        private val MUTATION_LOCK = Any()
+        @Volatile
+        private var sourceName = "before.txt"
+        @Volatile
+        private var sourceId = MUTATION_SOURCE_ID
+        @Volatile
+        private var secondName = "second.txt"
+        @Volatile
+        private var sourcePresent = true
+        @Volatile
+        private var secondPresent = true
+        @Volatile
+        private var partialName: String? = null
         @Volatile
         var scenario = Scenario.NORMAL
 
@@ -167,15 +247,56 @@ class Step02DocumentsProvider : DocumentsProvider() {
             scenario = Scenario.NORMAL
             CHANGE_COUNTER.set(0)
             OPEN_COUNT.set(0)
+            RENAME_COUNT.set(0)
+            ACTIVE_RENAMES.set(0)
+            MAX_ACTIVE_RENAMES.set(0)
+            MUTATION_VERSION.set(0)
+            sourceName = "before.txt"
+            sourceId = MUTATION_SOURCE_ID
+            secondName = "second.txt"
+            sourcePresent = true
+            secondPresent = true
+            partialName = null
         }
 
         fun openCount(): Int = OPEN_COUNT.get()
+
+        fun renameCount(): Int = RENAME_COUNT.get()
+
+        fun maxActiveRenames(): Int = MAX_ACTIVE_RENAMES.get()
+
+        fun activeRenames(): Int = ACTIVE_RENAMES.get()
+
+        fun mutationNames(): List<String> = documents().values
+            .filter { it.parentId == MUTATION_DIR_ID }
+            .map { it.name }
+
+        fun changeMutationSource(name: String = sourceName) = synchronized(MUTATION_LOCK) {
+            sourceName = name
+            MUTATION_VERSION.incrementAndGet()
+        }
+
+        fun removeMutationSource() = synchronized(MUTATION_LOCK) {
+            sourcePresent = false
+            MUTATION_VERSION.incrementAndGet()
+        }
+
+        fun replaceMutationSource() = synchronized(MUTATION_LOCK) {
+            sourceId = MUTATION_REPLACEMENT_ID
+            MUTATION_VERSION.incrementAndGet()
+        }
+
+        private fun rename(documentId: String, displayName: String) {
+            if (documentId == sourceId) sourceName = displayName else secondName = displayName
+            MUTATION_VERSION.incrementAndGet()
+        }
 
         private fun documents(): Map<String, TestDocument> = buildMap {
             put(ROOT_ID, TestDocument(ROOT_ID, null, "Root", Document.MIME_TYPE_DIR))
             put("empty-dir", TestDocument("empty-dir", ROOT_ID, "empty", Document.MIME_TYPE_DIR))
             put("nested-dir", TestDocument("nested-dir", ROOT_ID, "nested", Document.MIME_TYPE_DIR))
             put("large-dir", TestDocument("large-dir", ROOT_ID, "large", Document.MIME_TYPE_DIR))
+            put(MUTATION_DIR_ID, TestDocument(MUTATION_DIR_ID, ROOT_ID, "mutation", Document.MIME_TYPE_DIR))
             put("empty-text", TestDocument("empty-text", ROOT_ID, "empty.txt", "text/plain"))
             put("long-name", TestDocument("long-name", ROOT_ID, "l".repeat(4_096), "text/plain"))
             put(
@@ -208,6 +329,43 @@ class Step02DocumentsProvider : DocumentsProvider() {
                     "{}".toByteArray()
                 },
             )
+            val mutationModified = LAST_MODIFIED + MUTATION_VERSION.get()
+            if (sourcePresent) {
+                put(
+                    sourceId,
+                    TestDocument(
+                        sourceId,
+                        MUTATION_DIR_ID,
+                        sourceName,
+                        "text/plain",
+                        lastModified = mutationModified,
+                        flags = Document.FLAG_SUPPORTS_RENAME,
+                    ),
+                )
+            }
+            if (secondPresent) {
+                put(
+                    MUTATION_SECOND_ID,
+                    TestDocument(
+                        MUTATION_SECOND_ID,
+                        MUTATION_DIR_ID,
+                        secondName,
+                        "text/plain",
+                        lastModified = mutationModified,
+                        flags = Document.FLAG_SUPPORTS_RENAME,
+                    ),
+                )
+            }
+            put(
+                "mutation-conflict",
+                TestDocument("mutation-conflict", MUTATION_DIR_ID, "taken.txt", "text/plain"),
+            )
+            partialName?.let { name ->
+                put(
+                    "mutation-partial",
+                    TestDocument("mutation-partial", MUTATION_DIR_ID, name, "text/plain", lastModified = mutationModified),
+                )
+            }
             repeat(300) { index ->
                 val id = "large-$index"
                 put(id, TestDocument(id, "large-dir", "entry-${index.toString().padStart(3, '0')}", "text/plain"))

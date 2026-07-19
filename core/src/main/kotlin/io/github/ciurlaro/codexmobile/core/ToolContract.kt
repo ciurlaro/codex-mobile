@@ -1,5 +1,7 @@
 package io.github.ciurlaro.codexmobile.core
 
+import java.util.concurrent.atomic.AtomicBoolean
+
 @JvmInline
 value class ToolCallId(val value: String)
 
@@ -29,6 +31,15 @@ data class ToolPlan(
     val effect: ToolEffect,
     val summary: String,
     val fingerprint: String,
+    val approvalPreview: ApprovalPreview? = null,
+)
+
+data class ApprovalPreview(
+    val operation: String,
+    val source: String,
+    val destination: String,
+    val scope: String,
+    val conflictBehavior: String,
 )
 
 sealed interface ToolResult {
@@ -64,6 +75,8 @@ interface DeviceTool {
     suspend fun prepare(call: ToolCall, scopeId: ResourceScopeId): ToolPlan
 
     suspend fun execute(plan: ToolPlan): ToolResult
+
+    fun abandon(plan: ToolPlan) = Unit
 }
 
 class ToolRejectedException(message: String) : IllegalArgumentException(message)
@@ -78,7 +91,18 @@ fun interface ApprovalPolicy {
     fun requirement(plan: ToolPlan): ApprovalRequirement
 }
 
-data class UserApproval(
-    val callId: ToolCallId,
-    val planFingerprint: String,
-)
+class UserApproval private constructor(private val plan: ToolPlan) {
+    private val consumed = AtomicBoolean()
+
+    internal fun consume(candidate: ToolPlan): Boolean =
+        consumed.compareAndSet(false, true) && plan === candidate
+
+    companion object {
+        fun grant(plan: ToolPlan): UserApproval {
+            require(plan.effect == ToolEffect.MUTATION && plan.approvalPreview != null) {
+                "Only a resolved mutation plan can be approved"
+            }
+            return UserApproval(plan)
+        }
+    }
+}

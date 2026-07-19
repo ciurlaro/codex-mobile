@@ -5,17 +5,25 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.ApprovalPreview
 import io.github.ciurlaro.codexmobile.core.SessionId
+import io.github.ciurlaro.codexmobile.core.ToolEffect
+import io.github.ciurlaro.codexmobile.core.ToolPlan
 import io.github.ciurlaro.codexmobile.core.ToolRejectedException
 import io.github.ciurlaro.codexmobile.core.ToolResult
+import io.github.ciurlaro.codexmobile.core.UserApproval
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class MainUiState(
     val status: String = "Ready to sign in",
@@ -25,15 +33,22 @@ data class MainUiState(
     val userCode: String? = null,
     val turnActive: Boolean = false,
     val scopeSelected: Boolean = false,
+    val mutationScopeSelected: Boolean = false,
+    val approvalPreview: ApprovalPreview? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as CodexMobileApplication).graph
     private val agentClient = graph.newAgentClient()
     private val mutableState = MutableStateFlow(
-        MainUiState(scopeSelected = graph.platform.currentScopeId() != null),
+        MainUiState(
+            scopeSelected = graph.platform.currentScopeId() != null,
+            mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
+        ),
     )
     private val openingSession = AtomicBoolean(false)
+    private var pendingApproval: PendingApproval? = null
+    private var approvalTimeout: Job? = null
 
     val state: StateFlow<MainUiState> = mutableState.asStateFlow()
 
@@ -95,7 +110,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 graph.platform.persistScope(uri)
                 mutableState.update {
-                    it.copy(status = "Read-only document folder selected", scopeSelected = true)
+                    it.copy(
+                        status = "Read-only document folder selected",
+                        scopeSelected = true,
+                        mutationScopeSelected = false,
+                    )
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -104,6 +123,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         status = "Document folder selection failed",
                         scopeSelected = graph.platform.currentScopeId() != null,
+                        mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
+                    )
+                }
+            }
+        }
+    }
+
+    fun selectMutationScope(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                graph.platform.persistMutationScope(uri)
+                mutableState.update {
+                    it.copy(
+                        status = "Disposable mutation folder selected",
+                        scopeSelected = true,
+                        mutationScopeSelected = true,
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                mutableState.update {
+                    it.copy(
+                        status = "Disposable mutation folder selection failed",
+                        scopeSelected = graph.platform.currentScopeId() != null,
+                        mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
                     )
                 }
             }
@@ -120,7 +165,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 graph.platform.revokeScope(scopeId)
                 mutableState.update {
-                    it.copy(status = "Document folder access revoked", scopeSelected = false)
+                    it.copy(
+                        status = "Document folder access revoked",
+                        scopeSelected = false,
+                        mutationScopeSelected = false,
+                    )
                 }
             } catch (error: CancellationException) {
                 throw error
@@ -129,6 +178,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         status = "Document folder revocation failed",
                         scopeSelected = graph.platform.currentScopeId() != null,
+                        mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
                     )
                 }
             }
@@ -137,15 +187,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshScope() {
         mutableState.update {
-            it.copy(scopeSelected = graph.platform.currentScopeId() != null)
+            it.copy(
+                scopeSelected = graph.platform.currentScopeId() != null,
+                mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
+            )
         }
     }
 
+    fun approveMutation() {
+        val pending = takePendingApproval() ?: return
+        mutableState.update { it.copy(status = "Applying approved Android change…") }
+        viewModelScope.launch {
+            executePrepared(pending.event, pending.plan, UserApproval.grant(pending.plan))
+        }
+    }
+
+    fun denyMutation() {
+        rejectPendingApproval("User denied the Android change")
+    }
+
     override fun onCleared() {
+        takePendingApproval()?.let { graph.toolExecutor.abandon(it.plan) }
         agentClient.close()
     }
 
-    private suspend fun reduce(event: AgentEvent) {
+    internal suspend fun reduce(event: AgentEvent) {
         when (event) {
             is AgentEvent.AuthenticationRequired -> mutableState.update {
                 it.copy(
@@ -175,14 +241,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(status = "Ready", turnActive = false)
             }
 
-            is AgentEvent.Failure -> mutableState.update {
-                it.copy(
-                    status = event.message,
-                    sessionId = if (event.sessionId == null) null else it.sessionId,
-                    verificationUrl = null,
-                    userCode = null,
-                    turnActive = false,
-                )
+            is AgentEvent.Failure -> {
+                abandonPendingApproval()
+                mutableState.update {
+                    it.copy(
+                        status = event.message,
+                        sessionId = if (event.sessionId == null) null else it.sessionId,
+                        verificationUrl = null,
+                        userCode = null,
+                        turnActive = false,
+                    )
+                }
             }
 
             is AgentEvent.ToolRequested -> executeTool(event)
@@ -190,21 +259,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun executeTool(event: AgentEvent.ToolRequested) {
-        mutableState.update { it.copy(status = "Reading selected documents…") }
+        mutableState.update { it.copy(status = "Resolving Android document request…") }
         val scopeId = graph.platform.currentScopeId()
-        val result = if (scopeId == null) {
-            ToolResult.Rejected(event.call.id, "No document folder is selected")
-        } else {
-            try {
-                graph.toolExecutor.execute(graph.toolExecutor.prepare(event.call, scopeId))
-            } catch (error: ToolRejectedException) {
-                ToolResult.Rejected(event.call.id, error.message ?: "Document request was rejected")
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                ToolResult.Failed(event.call.id, "tool_failure", "Android document tool failed")
-            }
+        if (scopeId == null) {
+            submitToolResult(event, ToolResult.Rejected(event.call.id, "No document folder is selected"))
+            return
         }
+        val plan = try {
+            withContext(Dispatchers.IO) { graph.toolExecutor.prepare(event.call, scopeId) }
+        } catch (error: ToolRejectedException) {
+            submitToolResult(
+                event,
+                ToolResult.Rejected(event.call.id, error.message ?: "Document request was rejected"),
+            )
+            return
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            submitToolResult(
+                event,
+                ToolResult.Failed(event.call.id, "tool_failure", "Android document tool failed"),
+            )
+            return
+        }
+
+        if (plan.effect == ToolEffect.MUTATION) {
+            requestApproval(event, plan)
+        } else {
+            executePrepared(event, plan)
+        }
+    }
+
+    private suspend fun executePrepared(
+        event: AgentEvent.ToolRequested,
+        plan: ToolPlan,
+        approval: UserApproval? = null,
+    ) {
+        val result = try {
+            withContext(Dispatchers.IO) { graph.toolExecutor.execute(plan, approval) }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            ToolResult.Failed(event.call.id, "tool_failure", "Android document tool failed")
+        }
+        submitToolResult(event, result)
+    }
+
+    private suspend fun submitToolResult(event: AgentEvent.ToolRequested, result: ToolResult) {
         try {
             agentClient.submitToolResult(event.sessionId, result)
             mutableState.update { it.copy(status = "Codex is responding…") }
@@ -213,6 +314,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } catch (error: Exception) {
             showFailure(error)
         }
+    }
+
+    private suspend fun requestApproval(event: AgentEvent.ToolRequested, plan: ToolPlan) {
+        val preview = plan.approvalPreview
+            ?: return executePrepared(event, plan)
+        if (pendingApproval != null) {
+            graph.toolExecutor.abandon(plan)
+            submitToolResult(event, ToolResult.Rejected(event.call.id, "Another approval is already pending"))
+            return
+        }
+        pendingApproval = PendingApproval(event, plan)
+        mutableState.update {
+            it.copy(status = "Waiting for explicit approval", approvalPreview = preview)
+        }
+        approvalTimeout?.cancel()
+        approvalTimeout = viewModelScope.launch {
+            delay(APPROVAL_TIMEOUT_MILLIS)
+            rejectPendingApproval("Android change approval timed out")
+        }
+    }
+
+    private fun rejectPendingApproval(reason: String) {
+        val pending = takePendingApproval() ?: return
+        mutableState.update { it.copy(status = reason) }
+        graph.toolExecutor.abandon(pending.plan)
+        viewModelScope.launch {
+            submitToolResult(pending.event, ToolResult.Rejected(pending.event.call.id, reason))
+        }
+    }
+
+    private fun takePendingApproval(): PendingApproval? {
+        val pending = pendingApproval ?: return null
+        pendingApproval = null
+        approvalTimeout?.cancel()
+        approvalTimeout = null
+        mutableState.update { it.copy(approvalPreview = null) }
+        return pending
+    }
+
+    private fun abandonPendingApproval() {
+        val pending = takePendingApproval() ?: return
+        graph.toolExecutor.abandon(pending.plan)
     }
 
     private fun openSessionOnce() {
@@ -251,5 +394,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 turnActive = false,
             )
         }
+    }
+
+    private data class PendingApproval(
+        val event: AgentEvent.ToolRequested,
+        val plan: ToolPlan,
+    )
+
+    private companion object {
+        const val APPROVAL_TIMEOUT_MILLIS = 30_000L
     }
 }

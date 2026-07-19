@@ -12,7 +12,7 @@ internal class AppGraph(context: Context) {
     val platform = AndroidPlatform(context)
     private val deviceTools = platform.deviceTools()
     val toolExecutor = ToolExecutor(deviceTools) { plan ->
-        if (plan.effect == ToolEffect.READ) ApprovalRequirement.ALLOW else ApprovalRequirement.DENY
+        if (plan.effect == ToolEffect.READ) ApprovalRequirement.ALLOW else ApprovalRequirement.USER
     }
 
     fun newAgentClient(): AgentClient = CodexAgentClient(
