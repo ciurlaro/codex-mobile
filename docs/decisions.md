@@ -7,7 +7,7 @@
 | Android owns operation truth | Codex cannot observe Android permission and provider outcomes authoritatively | Never |
 | Use opaque SAF scopes | Paths cannot represent every Android document provider | Never for Android device resources |
 | Require exact resolved-plan approval for mutations | Provider text is untrusted, call IDs are only correlation, and resolved state can become stale | A narrowly defined operation is proven safe to pre-authorize |
-| Implement the mutation journal in Step 04 | Crash consistency should not contaminate mutation feasibility | Step 04 starts |
+| Use app-private native SQLite for the mutation journal | One table, single-row compare-and-set transitions, `SQLiteOpenHelper` migration, and platform fault injection satisfy current recovery needs without another dependency | Relationships or query complexity measurably justify Room |
 | Defer foreground service work | It adds lifecycle restrictions without proving the runtime premise | Visible-Activity execution works and background continuation is required |
 | Keep KMP disabled | Hypothetical portability is not a current product requirement | iOS work is funded and measured migration cost is known |
 | Do not promise exactly-once tools | Process death can obscure whether an external side effect occurred | Never; reconcile instead |
@@ -20,7 +20,6 @@
 ## Deliberately unsettled
 
 - Whether coordination belongs in the initial ViewModel or a `SessionController`.
-- Room schema/module shape.
 - Foreground-service details.
 - Additional providers and KMP.
 

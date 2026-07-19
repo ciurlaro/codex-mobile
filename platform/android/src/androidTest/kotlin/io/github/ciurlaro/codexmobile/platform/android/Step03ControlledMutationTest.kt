@@ -356,7 +356,7 @@ class Step03ControlledMutationTest {
         val sourceToken: String,
         val secondToken: String,
     ) {
-        val executor = ToolExecutor(platform.deviceTools()) { plan ->
+        val executor = ToolExecutor(platform.deviceTools(), platform.mutationJournal()) { plan ->
             if (plan.effect == ToolEffect.MUTATION) ApprovalRequirement.USER else ApprovalRequirement.ALLOW
         }
     }

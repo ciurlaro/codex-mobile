@@ -11,7 +11,7 @@ import io.github.ciurlaro.codexmobile.platform.android.AndroidPlatform
 internal class AppGraph(context: Context) {
     val platform = AndroidPlatform(context)
     private val deviceTools = platform.deviceTools()
-    val toolExecutor = ToolExecutor(deviceTools) { plan ->
+    val toolExecutor = ToolExecutor(deviceTools, platform.mutationJournal()) { plan ->
         if (plan.effect == ToolEffect.READ) ApprovalRequirement.ALLOW else ApprovalRequirement.USER
     }
 
@@ -19,6 +19,4 @@ internal class AppGraph(context: Context) {
         launchProcess = platform::launchProcess,
         toolDefinitions = deviceTools.map { it.definition },
     )
-
-    // TODO Step 04: compose MutationJournal only after mutation recovery starts.
 }

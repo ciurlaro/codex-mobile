@@ -6,6 +6,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.ApprovalPreview
+import io.github.ciurlaro.codexmobile.core.MutationRecordId
+import io.github.ciurlaro.codexmobile.core.MutationState
 import io.github.ciurlaro.codexmobile.core.SessionId
 import io.github.ciurlaro.codexmobile.core.ToolEffect
 import io.github.ciurlaro.codexmobile.core.ToolPlan
@@ -35,6 +37,12 @@ data class MainUiState(
     val scopeSelected: Boolean = false,
     val mutationScopeSelected: Boolean = false,
     val approvalPreview: ApprovalPreview? = null,
+    val recoveryNotices: List<MutationRecoveryNotice> = emptyList(),
+)
+
+data class MutationRecoveryNotice(
+    val recordId: MutationRecordId,
+    val state: MutationState,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -53,6 +61,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<MainUiState> = mutableState.asStateFlow()
 
     init {
+        viewModelScope.launch { refreshRecovery(reconcile = true) }
         viewModelScope.launch {
             agentClient.events.collect(::reduce)
         }
@@ -116,6 +125,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         mutationScopeSelected = false,
                     )
                 }
+                refreshRecovery(reconcile = true)
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
@@ -141,6 +151,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         mutationScopeSelected = true,
                     )
                 }
+                refreshRecovery(reconcile = true)
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Exception) {
@@ -302,7 +313,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } catch (_: Exception) {
             ToolResult.Failed(event.call.id, "tool_failure", "Android document tool failed")
         }
+        refreshRecovery(reconcile = false)
         submitToolResult(event, result)
+    }
+
+    fun acknowledgeMutation(recordId: MutationRecordId) {
+        viewModelScope.launch {
+            try {
+                withContext(Dispatchers.IO) { graph.toolExecutor.acknowledgeMutation(recordId) }
+                refreshRecovery(reconcile = false)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                mutableState.update { it.copy(status = "Mutation recovery acknowledgement failed") }
+            }
+        }
     }
 
     private suspend fun submitToolResult(event: AgentEvent.ToolRequested, result: ToolResult) {
@@ -358,6 +383,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         graph.toolExecutor.abandon(pending.plan)
     }
 
+    private suspend fun refreshRecovery(reconcile: Boolean) {
+        try {
+            val records = withContext(Dispatchers.IO) {
+                if (reconcile) {
+                    graph.toolExecutor.reconcileUnresolved().also {
+                        graph.toolExecutor.pruneResolvedMutations(
+                            System.currentTimeMillis() - RESOLVED_MUTATION_RETENTION_MILLIS,
+                        )
+                    }
+                } else {
+                    graph.toolExecutor.visibleMutationRecords()
+                }
+            }
+            mutableState.update { current ->
+                current.copy(
+                    recoveryNotices = records.map {
+                        MutationRecoveryNotice(it.id, it.state)
+                    },
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            mutableState.update { it.copy(status = "Mutation recovery is unavailable") }
+        }
+    }
+
     private fun openSessionOnce() {
         if (state.value.sessionId != null || !openingSession.compareAndSet(false, true)) return
         viewModelScope.launch {
@@ -403,5 +455,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val APPROVAL_TIMEOUT_MILLIS = 30_000L
+        const val RESOLVED_MUTATION_RETENTION_MILLIS = 30L * 24 * 60 * 60 * 1_000
     }
 }

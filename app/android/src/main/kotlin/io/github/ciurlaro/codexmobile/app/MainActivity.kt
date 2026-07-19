@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.ciurlaro.codexmobile.core.ApprovalPreview
+import io.github.ciurlaro.codexmobile.core.MutationState
 
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<MainViewModel>()
@@ -79,6 +80,12 @@ class MainActivity : ComponentActivity() {
                             Text("Disposable mutation access enabled")
                         } else if (state.scopeSelected) {
                             Text("Read-only document access enabled")
+                        }
+                        state.recoveryNotices.forEach { notice ->
+                            Text(notice.state.recoveryDisplayText())
+                            Button(onClick = { viewModel.acknowledgeMutation(notice.recordId) }) {
+                                Text("Acknowledge recovery")
+                            }
                         }
 
                         if (state.sessionId == null && state.verificationUrl == null) {
@@ -200,4 +207,11 @@ internal fun String.toApprovalDisplayText(): String = buildString {
         }
         offset += Character.charCount(codePoint)
     }
+}
+
+internal fun MutationState.recoveryDisplayText(): String = when (this) {
+    MutationState.PREPARED, MutationState.EXECUTING -> "Android mutation recovery is pending"
+    MutationState.UNKNOWN -> "Android mutation outcome is unknown"
+    MutationState.SUCCEEDED -> "Android mutation was recovered as succeeded"
+    MutationState.FAILED -> "Android mutation was recovered as not completed"
 }

@@ -77,6 +77,14 @@ interface DeviceTool {
     suspend fun execute(plan: ToolPlan): ToolResult
 
     fun abandon(plan: ToolPlan) = Unit
+
+    fun recoveryPayload(plan: ToolPlan): String? = null
+
+    suspend fun reconcile(record: MutationRecord): ToolResult =
+        ToolResult.Unknown(record.callId, "This Android tool cannot reconcile an interrupted mutation")
+
+    fun retrySafety(record: MutationRecord, candidate: ToolPlan): MutationRetrySafety =
+        MutationRetrySafety.NEVER
 }
 
 class ToolRejectedException(message: String) : IllegalArgumentException(message)

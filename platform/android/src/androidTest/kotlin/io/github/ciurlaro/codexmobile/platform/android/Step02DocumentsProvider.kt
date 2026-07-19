@@ -7,12 +7,17 @@ import android.os.ParcelFileDescriptor
 import android.provider.DocumentsContract.Document
 import android.provider.DocumentsContract.Root
 import android.provider.DocumentsProvider
+import android.util.Log
 import java.io.FileNotFoundException
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
 class Step02DocumentsProvider : DocumentsProvider() {
-    override fun onCreate(): Boolean = true
+    override fun onCreate(): Boolean {
+        preferences = checkNotNull(context).getSharedPreferences(PROCESS_DEATH_PREFERENCES, 0)
+        preferences?.getString(PERSISTED_SOURCE_NAME, null)?.let { sourceName = it }
+        return true
+    }
 
     override fun queryRoots(projection: Array<out String>?): Cursor =
         MatrixCursor(projection ?: ROOT_PROJECTION).apply {
@@ -130,6 +135,13 @@ class Step02DocumentsProvider : DocumentsProvider() {
                         MUTATION_VERSION.incrementAndGet()
                         null
                     }
+                    Scenario.PERSIST_RENAME_AND_BLOCK -> {
+                        rename(documentId, displayName)
+                        check(preferences?.edit()?.putString(PERSISTED_SOURCE_NAME, sourceName)?.commit() == true)
+                        Log.i(PROCESS_DEATH_TAG, "dispatch entered:${checkNotNull(processDeathRunId)}")
+                        Thread.sleep(PROCESS_DEATH_BLOCK_MILLIS)
+                        documentId
+                    }
                     else -> {
                         rename(documentId, displayName)
                         documentId
@@ -209,6 +221,7 @@ class Step02DocumentsProvider : DocumentsProvider() {
         NULL_AFTER_RENAME,
         DELETE_AFTER_DISPATCH,
         DELAY_RENAME,
+        PERSIST_RENAME_AND_BLOCK,
     }
 
     companion object {
@@ -229,6 +242,8 @@ class Step02DocumentsProvider : DocumentsProvider() {
         private val MUTATION_VERSION = AtomicInteger()
         private val MUTATION_LOCK = Any()
         @Volatile
+        private var preferences: android.content.SharedPreferences? = null
+        @Volatile
         private var sourceName = "before.txt"
         @Volatile
         private var sourceId = MUTATION_SOURCE_ID
@@ -242,9 +257,13 @@ class Step02DocumentsProvider : DocumentsProvider() {
         private var partialName: String? = null
         @Volatile
         var scenario = Scenario.NORMAL
+        @Volatile
+        var processDeathRunId: String? = null
 
         fun reset() {
             scenario = Scenario.NORMAL
+            processDeathRunId = null
+            preferences?.edit()?.clear()?.commit()
             CHANGE_COUNTER.set(0)
             OPEN_COUNT.set(0)
             RENAME_COUNT.set(0)
@@ -391,5 +410,9 @@ class Step02DocumentsProvider : DocumentsProvider() {
             Document.COLUMN_LAST_MODIFIED,
             Document.COLUMN_FLAGS,
         )
+        private const val PROCESS_DEATH_PREFERENCES = "step04_provider_death"
+        private const val PERSISTED_SOURCE_NAME = "source_name"
+        private const val PROCESS_DEATH_TAG = "CodexMobileStep04Dispatch"
+        private const val PROCESS_DEATH_BLOCK_MILLIS = 120_000L
     }
 }

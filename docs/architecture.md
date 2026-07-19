@@ -48,6 +48,8 @@ Only the platform result can establish whether an Android operation succeeded. A
 
 The pinned app-server registers Android capabilities as dynamic tools on the existing session. Read-only plans are allowed by core policy and dispatched directly; mutating plans require an explicit, one-use UI decision bound to the exact resolved plan. The app-server receives only the `ToolResult` produced from Android's observed provider outcome.
 
+After approval, core requires durable `Prepared` and `Executing` journal transitions before mutation dispatch. Android stores the minimum tool-specific recovery intent in an app-private SQLite database. On restart, a `Prepared` row is safely closed as not dispatched; an `Executing` row becomes `Unknown` before the tool re-observes Android state. Reconciliation never executes the mutation, unresolved outcomes remain user-visible until acknowledged or resolved, and retry remains a tool-specific decision over a fresh plan rather than a call-ID policy.
+
 ## Dependency rules
 
 - Core may use JVM/Kotlin libraries, but no `android.*` or `androidx.*` API.

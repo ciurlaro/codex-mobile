@@ -10,7 +10,7 @@ class Step03ApprovalContractTest {
     @Test
     fun `mutations require user approval by default`(): Unit = runBlocking {
         val tool = RecordingMutationTool()
-        val executor = ToolExecutor(listOf(tool)) { ApprovalRequirement.ALLOW }
+        val executor = ToolExecutor(listOf(tool), TestMutationJournal()) { ApprovalRequirement.ALLOW }
         val denied = executor.execute(executor.prepare(call("1"), SCOPE))
         assertIs<ToolResult.Rejected>(denied)
         assertEquals(0, tool.executions)
@@ -24,7 +24,7 @@ class Step03ApprovalContractTest {
     @Test
     fun `unknown tool and cross-scope plan fail closed`(): Unit = runBlocking {
         val tool = RecordingMutationTool()
-        val executor = ToolExecutor(listOf(tool)) { ApprovalRequirement.USER }
+        val executor = ToolExecutor(listOf(tool), TestMutationJournal()) { ApprovalRequirement.USER }
         assertFailsWith<ToolRejectedException> {
             runBlocking { executor.prepare(ToolCall(ToolCallId("1"), "unknown", "{}"), SCOPE) }
         }
@@ -38,7 +38,7 @@ class Step03ApprovalContractTest {
     @Test
     fun `approval must match call and resolved plan fingerprint`(): Unit = runBlocking {
         val tool = RecordingMutationTool()
-        val executor = ToolExecutor(listOf(tool)) { ApprovalRequirement.USER }
+        val executor = ToolExecutor(listOf(tool), TestMutationJournal()) { ApprovalRequirement.USER }
         val first = executor.prepare(call("1"), SCOPE)
         val second = executor.prepare(call("2"), SCOPE)
         val approval = UserApproval.grant(first)
@@ -51,7 +51,7 @@ class Step03ApprovalContractTest {
     @Test
     fun `approval is consumed once and cannot authorize altered intent`(): Unit = runBlocking {
         val tool = RecordingMutationTool()
-        val executor = ToolExecutor(listOf(tool)) { ApprovalRequirement.USER }
+        val executor = ToolExecutor(listOf(tool), TestMutationJournal()) { ApprovalRequirement.USER }
         val plan = executor.prepare(call("1"), SCOPE)
         val approval = UserApproval.grant(plan)
 
@@ -64,7 +64,7 @@ class Step03ApprovalContractTest {
     @Test
     fun `duplicate call ID never implies replay safety`(): Unit = runBlocking {
         val tool = RecordingMutationTool()
-        val executor = ToolExecutor(listOf(tool)) { ApprovalRequirement.USER }
+        val executor = ToolExecutor(listOf(tool), TestMutationJournal()) { ApprovalRequirement.USER }
         val first = executor.prepare(call("duplicate"), SCOPE)
         val second = executor.prepare(call("duplicate"), SCOPE)
 
@@ -76,7 +76,7 @@ class Step03ApprovalContractTest {
     @Test
     fun `abandoned approval plan cannot execute later`(): Unit = runBlocking {
         val tool = RecordingMutationTool()
-        val executor = ToolExecutor(listOf(tool)) { ApprovalRequirement.USER }
+        val executor = ToolExecutor(listOf(tool), TestMutationJournal()) { ApprovalRequirement.USER }
         val plan = executor.prepare(call("abandoned"), SCOPE)
 
         assertEquals(true, executor.abandon(plan))
@@ -115,6 +115,8 @@ class Step03ApprovalContractTest {
         override fun abandon(plan: ToolPlan) {
             abandons += 1
         }
+
+        override fun recoveryPayload(plan: ToolPlan): String = "{}"
     }
 
     private fun call(id: String) = ToolCall(ToolCallId(id), "rename_document", "{\"newName\":\"after.txt\"}")

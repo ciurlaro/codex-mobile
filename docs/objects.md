@@ -15,7 +15,7 @@ These are stable responsibilities, not a requirement that every row remain a sep
 | `ToolExecutor` | Validate registration, scope, approval, and dispatch | Core policy boundary |
 | `ApprovalPolicy` | Decide deny, allow, or require a user decision | Core policy; mutation defaults to user approval |
 | `ResourceScopeId` | Opaque reference to an Android-controlled SAF grant | Durable only while its OS grant remains valid |
-| `MutationJournal` | Persist mutation intent/state and list records requiring reconciliation | Skeleton only; implemented and wired in Step 04 |
+| `MutationJournal` | Persist mutation intent/state, recovery data, acknowledgement, and retention ordering | Core contract with app-private Android SQLite implementation; unresolved rows survive process death |
 
 ## Mutation states
 
@@ -30,4 +30,4 @@ stateDiagram-v2
     Unknown --> Failed: reconciled
 ```
 
-`Unknown` is a valid, user-visible outcome. Retry behavior is tool-specific and must not be inferred from a generic call ID.
+`Unknown` is a valid, user-visible outcome. Reconciliation is observation-only. Retry behavior is tool-specific, requires a fresh prepared plan, and must not be inferred from a generic call ID.

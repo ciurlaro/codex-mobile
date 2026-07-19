@@ -14,6 +14,7 @@ import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import io.github.ciurlaro.codexmobile.core.DeviceTool
 import io.github.ciurlaro.codexmobile.core.MutationJournal
+import io.github.ciurlaro.codexmobile.core.MutationRecord
 import io.github.ciurlaro.codexmobile.core.ResourceScopeId
 import io.github.ciurlaro.codexmobile.core.ToolCall
 import io.github.ciurlaro.codexmobile.core.ToolDefinition
@@ -67,6 +68,7 @@ class AndroidPlatform internal constructor(
 
     private val appContext = context.applicationContext
     private val readAuthority = SafReadAuthority(appContext)
+    private val journal by lazy { AndroidMutationJournal(appContext) }
 
     fun launchProcess(command: List<String>, environment: Map<String, String>): Process {
         require(command == listOf(CODEX_APP_SERVER)) { "Only the bundled Codex app-server may run" }
@@ -125,8 +127,7 @@ class AndroidPlatform internal constructor(
 
     fun deviceTools(): List<DeviceTool> = readAuthority.tools
 
-    fun mutationJournal(): MutationJournal =
-        TODO("Step 04: create the durable Android journal only when recovery work begins")
+    fun mutationJournal(): MutationJournal = journal
 
     private fun File.requireDirectory(): File = apply {
         check(isDirectory || mkdirs()) { "Unable to prepare private runtime directory" }
@@ -534,6 +535,66 @@ private class SafReadAuthority(context: Context) {
             } ?: return
         }
 
+        override fun recoveryPayload(plan: ToolPlan): String? {
+            val snapshot = pending[plan.fingerprint]?.takeIf {
+                it.call == plan.call && it.scopeId == plan.scopeId
+            } ?: return null
+            val parentPath = JSONArray()
+            snapshot.parentPath.forEach(parentPath::put)
+            return JSONObject()
+                .put("version", RENAME_RECOVERY_VERSION)
+                .put("parentPath", parentPath)
+                .put("parentId", snapshot.parent.id)
+                .put("sourceId", snapshot.source.id)
+                .put("sourceName", snapshot.source.name)
+                .put("destinationName", snapshot.newName)
+                .toString()
+        }
+
+        override suspend fun reconcile(record: MutationRecord): ToolResult =
+            withContext(Dispatchers.IO) {
+                try {
+                    if (record.toolName != name) {
+                        throw ToolRejectedException("Mutation tool does not match recovery data")
+                    }
+                    val recovery = decodeRenameRecovery(record.recoveryPayload)
+                    val scope = requireScope(record.scopeId)
+                    val parent = resolvePath(scope, recovery.parentPath)
+                    if (parent.id != recovery.parentId) {
+                        throw ToolRejectedException("Mutation parent changed before recovery")
+                    }
+                    val children = queryChildren(scope.treeUri, parent.id)
+                    val oldObserved = children.any {
+                        it.id == recovery.sourceId && it.name == recovery.sourceName
+                    }
+                    val destinations = children.filter { it.name == recovery.destinationName }
+                    when {
+                        !oldObserved && destinations.size == 1 -> ToolResult.Success(
+                            record.callId,
+                            JSONObject().put("status", "reconciled_renamed").toString(),
+                        )
+
+                        oldObserved && destinations.isEmpty() -> ToolResult.Failed(
+                            record.callId,
+                            "reconciled_unchanged",
+                            "Provider state proves the source remained unchanged",
+                        )
+
+                        else -> ToolResult.Unknown(
+                            record.callId,
+                            "Provider state remains ambiguous after rename interruption",
+                        )
+                    }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    ToolResult.Unknown(
+                        record.callId,
+                        "Android mutation state could not be re-observed",
+                    )
+                }
+            }
+
         private suspend fun executeRename(
             plan: ToolPlan,
             snapshot: ResolvedRename,
@@ -609,6 +670,51 @@ private class SafReadAuthority(context: Context) {
                     "Rename was dispatched; provider state could not be re-observed",
                 )
             }
+        }
+
+        private fun decodeRenameRecovery(payload: String): RenameRecovery {
+            if (payload.toByteArray(StandardCharsets.UTF_8).size > MAX_RECOVERY_PAYLOAD_BYTES) {
+                throw ToolRejectedException("Mutation recovery data is too large")
+            }
+            val tokener = JSONTokener(payload)
+            val value = runCatching { tokener.nextValue() }.getOrNull() as? JSONObject
+                ?: throw ToolRejectedException("Mutation recovery data is invalid")
+            if (tokener.nextClean() != '\u0000' || value.keys().asSequence().toSet() != RECOVERY_KEYS) {
+                throw ToolRejectedException("Mutation recovery data is invalid")
+            }
+            if (value.optInt("version", -1) != RENAME_RECOVERY_VERSION) {
+                throw ToolRejectedException("Mutation recovery version is unsupported")
+            }
+            val parentPathValue = value.optJSONArray("parentPath")
+                ?: throw ToolRejectedException("Mutation recovery path is invalid")
+            if (parentPathValue.length() > MAX_DOCUMENT_DEPTH) {
+                throw ToolRejectedException("Mutation recovery path is invalid")
+            }
+            val parentPath = buildList {
+                repeat(parentPathValue.length()) { index ->
+                    val id = parentPathValue.opt(index) as? String
+                        ?: throw ToolRejectedException("Mutation recovery path is invalid")
+                    if (id.isEmpty() || id.toByteArray(StandardCharsets.UTF_8).size > MAX_DOCUMENT_ID_BYTES) {
+                        throw ToolRejectedException("Mutation recovery path is invalid")
+                    }
+                    add(id)
+                }
+            }
+            fun required(name: String, maxLength: Int): String {
+                val text = value.opt(name) as? String
+                    ?: throw ToolRejectedException("Mutation recovery data is invalid")
+                if (text.isEmpty() || text.length > maxLength) {
+                    throw ToolRejectedException("Mutation recovery data is invalid")
+                }
+                return text
+            }
+            return RenameRecovery(
+                parentPath = parentPath,
+                parentId = required("parentId", MAX_DOCUMENT_ID_BYTES),
+                sourceId = required("sourceId", MAX_DOCUMENT_ID_BYTES),
+                sourceName = required("sourceName", MAX_DISPLAY_NAME_CHARS),
+                destinationName = required("destinationName", MAX_DISPLAY_NAME_CHARS),
+            )
         }
     }
 
@@ -921,6 +1027,14 @@ private class SafReadAuthority(context: Context) {
         val newName: String,
     )
 
+    private data class RenameRecovery(
+        val parentPath: List<String>,
+        val parentId: String,
+        val sourceId: String,
+        val sourceName: String,
+        val destinationName: String,
+    )
+
     private class SafFailure(val code: String, val publicMessage: String) : Exception(publicMessage)
 
     private companion object {
@@ -946,8 +1060,10 @@ private class SafReadAuthority(context: Context) {
         const val MAX_TOKEN_PAYLOAD_BYTES = 32 * 1024
         const val MAX_TOKEN_CHARS = 64 * 1024
         const val MAX_TOOL_ARGUMENT_CHARS = 72 * 1024
+        const val MAX_RECOVERY_PAYLOAD_BYTES = 64 * 1024
         const val MAX_EMPTY_READS = 16
         const val MAX_PENDING_RENAMES = 64
+        const val RENAME_RECOVERY_VERSION = 1
         const val HMAC_ALGORITHM = "HmacSHA256"
         const val CONFLICT_BEHAVIOR =
             "Reject if the destination name is already listed; the provider may reject additional names"
@@ -955,6 +1071,14 @@ private class SafReadAuthority(context: Context) {
         const val COMPAT_EXTRA_URI = "uri"
         const val COMPAT_EXTRA_TARGET_URI = "android.content.extra.TARGET_URI"
         const val COMPAT_EXTRA_RESULT = "result"
+        val RECOVERY_KEYS = setOf(
+            "version",
+            "parentPath",
+            "parentId",
+            "sourceId",
+            "sourceName",
+            "destinationName",
+        )
         const val LIST_SCHEMA =
             "{\"type\":\"object\",\"properties\":{\"directoryId\":{\"type\":\"string\"}},\"additionalProperties\":false}"
         const val READ_SCHEMA =
