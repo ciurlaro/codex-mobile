@@ -14,6 +14,10 @@ android {
         versionCode = 1
         versionName = "0.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     buildFeatures {
@@ -24,6 +28,34 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    packaging {
+        jniLibs {
+            keepDebugSymbols += "**/libcodex_app_server.so"
+            useLegacyPackaging = true
+        }
+    }
+}
+
+val codexRuntime = layout.projectDirectory.file(
+    "src/main/jniLibs/arm64-v8a/libcodex_app_server.so",
+)
+val prepareCodexRuntime = tasks.register<Exec>("prepareCodexRuntime") {
+    inputs.property("codexVersion", "0.144.6")
+    inputs.property("archiveSha256", "3539380f431aa72ce1e9ba83cf4d9b2c2a70d12ddf3280bc67c8c59f93bb9eb5")
+    inputs.property("binarySha256", "09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd")
+    outputs.file(codexRuntime)
+    commandLine(
+        rootProject.file("scripts/prepare-codex-runtime.sh"),
+        "0.144.6",
+        "3539380f431aa72ce1e9ba83cf4d9b2c2a70d12ddf3280bc67c8c59f93bb9eb5",
+        "09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd",
+        codexRuntime.asFile.absolutePath,
+    )
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(prepareCodexRuntime)
 }
 
 dependencies {
@@ -38,7 +70,4 @@ dependencies {
 
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

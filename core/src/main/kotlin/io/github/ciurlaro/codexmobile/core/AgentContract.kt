@@ -7,6 +7,8 @@ interface AgentClient : AutoCloseable {
 
     suspend fun authenticate()
 
+    suspend fun cancelAuthentication()
+
     suspend fun openSession(previous: SessionId? = null): SessionId
 
     suspend fun sendPrompt(sessionId: SessionId, prompt: String)

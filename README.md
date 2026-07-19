@@ -2,7 +2,7 @@
 
 An Android feasibility project for running Codex locally, while Android keeps final authority over device data and side effects.
 
-**Status:** architecture frozen provisionally; implementation not started; [Step 01](docs/roadmap/01-runtime-premise.md) is the only active experiment.
+**Status:** [Step 01](docs/roadmap/01-runtime-premise.md) is complete; [Step 02](docs/roadmap/02-read-only-authority.md) is the active experiment.
 
 ## Ownership
 
@@ -31,4 +31,4 @@ bash scripts/verify-structure.sh
 gradle test assembleDebug assembleDebugAndroidTest
 ```
 
-CI pins the required Gradle version. The executable Codex runtime is intentionally absent until Step 01 determines how it can be packaged legally and reliably.
+CI pins the required Gradle version. The debug build downloads the pinned Codex app-server release, verifies both archive and executable checksums, and packages the ARM64 executable as a native library.

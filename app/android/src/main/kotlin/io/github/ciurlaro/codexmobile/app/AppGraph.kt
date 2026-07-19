@@ -8,9 +8,7 @@ import io.github.ciurlaro.codexmobile.platform.android.AndroidPlatform
 internal class AppGraph(context: Context) {
     val platform = AndroidPlatform(context)
 
-    val agentClient: AgentClient by lazy {
-        CodexAgentClient(platform::launchProcess)
-    }
+    fun newAgentClient(): AgentClient = CodexAgentClient(platform::launchProcess)
 
     // TODO Step 02: compose ToolExecutor only after the tool bridge is selected.
     // TODO Step 04: compose MutationJournal only after mutation recovery starts.

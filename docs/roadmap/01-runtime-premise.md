@@ -1,6 +1,6 @@
 # Step 01 — Runtime premise
 
-**Status:** Not started
+**Status:** Complete
 
 ## Question
 
@@ -56,4 +56,10 @@ Package the runtime, supply Android process launch, implement only the app-serve
 
 ## Result record
 
-On completion, append only: device/API, runtime version/hash, launch mechanism, authentication survival, session survival, measured startup latency, and the go/no-go decision.
+- **Device/API:** RMX3851 ARM64 production device on Android 16/API 36; ARM64 emulators on API 26 and API 37.
+- **Runtime version/hash:** Codex 0.144.6; app-server SHA-256 `09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd`.
+- **Launch mechanism:** The verified app-server is packaged as an ARM64 native library and launched directly with app-private home/state directories, Android system CAs, an authenticated allowlisted loopback CONNECT proxy, and a private SQLite runtime-log rejection trigger.
+- **Authentication survival:** ChatGPT device-code authentication completed while the Activity remained visible and survived force-stop/relaunch; authorization used another device because Android blocks this app's network while a same-device browser is foregrounded.
+- **Session survival:** A real prompted thread resumed after app-server restart; streaming, cancellation, client reuse, and Activity recreation also passed on the physical device.
+- **Measured startup latency:** Maximum observed app-server readiness was 285 ms on the physical device, 483 ms on API 26, and 259 ms on API 37.
+- **Go/no-go:** Go for the visible-Activity premise; same-device browser authorization requires Step 05 foreground execution or continued use of another device.
