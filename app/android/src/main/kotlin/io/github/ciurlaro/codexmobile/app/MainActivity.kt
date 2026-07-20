@@ -1,5 +1,8 @@
 package io.github.ciurlaro.codexmobile.app
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -50,6 +53,11 @@ class MainActivity : ComponentActivity() {
             ) { uri ->
                 if (uri == null) viewModel.scopeSelectionCancelled() else viewModel.selectMutationScope(uri)
             }
+            val notificationPermission = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestPermission(),
+            ) {
+                viewModel.authenticate()
+            }
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
                     Column(
@@ -60,6 +68,15 @@ class MainActivity : ComponentActivity() {
                     ) {
                         Text("Codex Mobile", style = MaterialTheme.typography.headlineMedium)
                         Text(state.status)
+                        if (state.backgroundActive && !state.backgroundNotificationVisible) {
+                            Text(
+                                "Background work is active, but notifications are disabled. " +
+                                    "Android still shows it under Active apps.",
+                            )
+                        }
+                        if (state.backgroundActive) {
+                            Button(onClick = viewModel::stopBackgroundWork) { Text("Stop background work") }
+                        }
 
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Button(onClick = { scopePicker.launch(null) }) {
@@ -89,7 +106,19 @@ class MainActivity : ComponentActivity() {
                         }
 
                         if (state.sessionId == null && state.verificationUrl == null) {
-                            Button(onClick = viewModel::authenticate) { Text("Sign in with ChatGPT") }
+                            Button(
+                                onClick = {
+                                    if (
+                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                                        PackageManager.PERMISSION_GRANTED
+                                    ) {
+                                        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                    } else {
+                                        viewModel.authenticate()
+                                    }
+                                },
+                            ) { Text("Sign in with ChatGPT") }
                         }
 
                         state.userCode?.let { code ->
@@ -97,7 +126,7 @@ class MainActivity : ComponentActivity() {
                             Text(code, fontFamily = FontFamily.Monospace)
                         }
                         state.verificationUrl?.let { url ->
-                            Text("Keep Codex Mobile open. On another device, visit:")
+                            Text("Visit this address in a browser; Codex Mobile will continue in the background:")
                             Text(url)
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Button(onClick = viewModel::cancelAuthentication) { Text("Cancel sign-in") }

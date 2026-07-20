@@ -2,7 +2,7 @@
 
 An Android feasibility project for running Codex locally, while Android keeps final authority over device data and side effects.
 
-**Status:** [Steps 01–04](docs/roadmap/README.md) are complete; [Step 05](docs/roadmap/05-background-lifecycle.md) is at its product-condition decision.
+**Status:** [Steps 01–05](docs/roadmap/README.md) are complete; [Step 06](docs/roadmap/06-mvp-readiness.md) is the active experiment.
 
 ## Ownership
 

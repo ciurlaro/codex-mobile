@@ -1,6 +1,6 @@
 # Step 05 — Background lifecycle
 
-**Status:** Blocked by Step 04 and a demonstrated product need
+**Status:** Complete
 
 ## Question
 
@@ -42,3 +42,16 @@ Move only active session ownership needed for continuation into a foreground ser
 ## Stop condition
 
 If visible-Activity execution satisfies the product, skip this step and keep the service disabled.
+
+The stop condition does not apply. Step 01 showed that opening the same-device browser backgrounds the Activity and blocks its network, while the product requires that authentication and an active turn continue when the Activity is not visible.
+
+## Result record
+
+- **Ownership and start:** One explicit UI action creates one non-exported `dataSync` foreground service, one controller, and one app-server client. A private one-use authorization rejects duplicate, background-only, malformed, and unsolicited starts. The service is `START_NOT_STICKY`; no boot receiver, alarm, job, or scheduled restart exists.
+- **Notification and denial:** The low-importance ongoing notification contains only generic private state plus immutable Open and Stop actions. API 37 denial/revocation testing kept the service in Android's Active apps surface and showed an in-app explanation. The stock API 36 device also passed the real permission dialog path after its OEM ROM rejected shell permission changes. Stop cancelled bounded work, closed the runtime, cleared the durable active marker, and removed the notification.
+- **Binding and approval:** API 26, API 37, and the stock API 36 device passed bind/unbind/rebind, Activity recreation, concurrent bind clients, duplicate submission stress, and one controller identity. Tool requests have one UI claim; mutation approval remains an explicit visible one-use action and a late, detached, cancelled, or changed request cannot dispatch.
+- **Lifecycle faults:** Home, screen off/on, Activity finish, and task removal retained the same owner on API 26 and API 37. API 37 external force-stop, app-UID `SIGKILL`, and full reboot removed work without restart; a fresh process detected the durable stale marker, reconciled mutation state, reported the interruption, and cleared the marker. A system-injected API 35+ `dataSync` timeout invoked `onTimeout`, closed work, and removed foreground state.
+- **Network and browser:** A real API 37 Wi-Fi loss/restore cycle remained in bounded retry, authorization-pending, or ready state and recovered after successful authentication cancellation; this exposed and fixed a stale authentication guard. Same-device Firefox authorization completed on the stock device while the service remained foreground, then persisted across app-server restarts. Captive-style recoverable errors use the same bounded failure path at the controller seam.
+- **Resource and privacy profile:** Two-minute live app-server background windows kept one production app process, one native runtime, and one notification. API 37 app PSS was 106.1 MiB then 105.9 MiB and runtime PSS was 58.4 MiB then 58.8 MiB; the stock device sampled 103.3 MiB app PSS and 0% CPU. Neither device showed an app-owned wake lock. A stock-device count-only scan found 426 app-related log lines, zero sensitive-pattern matches, and zero crash-buffer mentions. Authentication events redact their URL and code when stringified. Streamed text is capped at 256 KiB and notification writes are state-deduplicated.
+- **Compatibility and regression:** Five ordinary Step 05 cases pass on API 26, stock API 36, and API 37. All seven explicitly gated denial/browser/network/timeout/external-fault/profile harnesses were run separately and pass. The final stock build also passed persisted-account streaming, cancellation, backgrounding, and Activity recreation. The full app sweep passes 51 tests on both emulators, the platform sweep passes 32, the complete JVM/build/lint/release regression passes 241 Gradle tasks, and structural verification passes.
+- **Go/no-go:** Go. Explicit foreground execution preserves one truthful owner outside Activity visibility without moving approval or Android authority into the service.

@@ -1,7 +1,12 @@
 package io.github.ciurlaro.codexmobile.app
 
 import android.app.Application
+import android.content.ComponentName
+import android.content.Context
+import android.content.Intent
+import android.content.ServiceConnection
 import android.net.Uri
+import android.os.IBinder
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.ciurlaro.codexmobile.core.AgentEvent
@@ -14,7 +19,7 @@ import io.github.ciurlaro.codexmobile.core.ToolPlan
 import io.github.ciurlaro.codexmobile.core.ToolRejectedException
 import io.github.ciurlaro.codexmobile.core.ToolResult
 import io.github.ciurlaro.codexmobile.core.UserApproval
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -38,6 +43,8 @@ data class MainUiState(
     val mutationScopeSelected: Boolean = false,
     val approvalPreview: ApprovalPreview? = null,
     val recoveryNotices: List<MutationRecoveryNotice> = emptyList(),
+    val backgroundActive: Boolean = false,
+    val backgroundNotificationVisible: Boolean = true,
 )
 
 data class MutationRecoveryNotice(
@@ -47,47 +54,109 @@ data class MutationRecoveryNotice(
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as CodexMobileApplication).graph
-    private val agentClient = graph.newAgentClient()
+    private val appContext = application.applicationContext
+    private val toolOwner = UUID.randomUUID().toString()
     private val mutableState = MutableStateFlow(
         MainUiState(
             scopeSelected = graph.platform.currentScopeId() != null,
             mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
         ),
     )
-    private val openingSession = AtomicBoolean(false)
     private var pendingApproval: PendingApproval? = null
     private var approvalTimeout: Job? = null
+    private var serviceController: ForegroundSessionController? = null
+    private var serviceStateJob: Job? = null
+    private var notificationsEnabled: (() -> Boolean)? = null
+    private var bindingRequested = false
+    internal var serviceInstanceId: String? = null
+        private set
+
+    private val serviceConnection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, service: IBinder) {
+            val binder = service as? CodexForegroundService.LocalBinder ?: return
+            serviceController = binder.controller
+            notificationsEnabled = binder::notificationsEnabled
+            serviceInstanceId = binder.serviceInstanceId
+            bindingRequested = true
+            serviceStateJob?.cancel()
+            serviceStateJob = viewModelScope.launch {
+                binder.controller.state.collect { session ->
+                    applySessionState(session, binder.notificationsEnabled())
+                    session.pendingTool?.let { event ->
+                        binder.controller.claimTool(toolOwner, event.call.id)?.let { claimed ->
+                            launch { executeTool(claimed, binder.controller) }
+                        }
+                    }
+                }
+            }
+        }
+
+        override fun onServiceDisconnected(name: ComponentName) = serviceEnded()
+
+        override fun onBindingDied(name: ComponentName) = serviceEnded()
+
+        override fun onNullBinding(name: ComponentName) = serviceEnded()
+    }
 
     val state: StateFlow<MainUiState> = mutableState.asStateFlow()
 
     init {
         viewModelScope.launch { refreshRecovery(reconcile = true) }
         viewModelScope.launch {
-            agentClient.events.collect(::reduce)
+            graph.backgroundFailure.collect { failure ->
+                failure?.let { message ->
+                    mutableState.update {
+                        it.copy(status = message, backgroundActive = false)
+                    }
+                }
+            }
+        }
+        val backgroundWasActive = graph.wasBackgroundActive()
+        bindService(flags = 0)
+        if (backgroundWasActive) {
+            viewModelScope.launch {
+                delay(EXISTING_SERVICE_BIND_TIMEOUT_MILLIS)
+                if (serviceController == null && graph.wasBackgroundActive()) {
+                    if (bindingRequested) runCatching { appContext.unbindService(serviceConnection) }
+                    bindingRequested = false
+                    mutableState.update {
+                        it.copy(status = "Previous background work ended unexpectedly; recovery was checked")
+                    }
+                    graph.markBackgroundActive(false)
+                }
+            }
         }
     }
 
     fun authenticate() {
         mutableState.update {
-            it.copy(status = "Checking sign-in…", verificationUrl = null, userCode = null)
+            it.copy(status = "Starting protected background work…", verificationUrl = null, userCode = null)
         }
-        launchVisibleFailure { agentClient.authenticate() }
+        serviceController?.let {
+            it.authenticate()
+            return
+        }
+        val authorization = graph.authorizeForegroundStart()
+        try {
+            appContext.startForegroundService(
+                CodexForegroundService.startIntent(appContext, authorization, authenticate = true),
+            )
+            bindService(Context.BIND_AUTO_CREATE)
+        } catch (_: Exception) {
+            graph.revokeForegroundStart(authorization)
+            mutableState.update {
+                it.copy(
+                    status = "Android could not start background work; keep Codex Mobile visible and try again",
+                    backgroundActive = false,
+                )
+            }
+        }
     }
 
     fun cancelAuthentication() {
         mutableState.update { it.copy(status = "Cancelling sign-in…") }
-        viewModelScope.launch {
-            try {
-                agentClient.cancelAuthentication()
-                mutableState.update {
-                    it.copy(status = "Ready to sign in", verificationUrl = null, userCode = null)
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                showFailure(error)
-            }
-        }
+        serviceController?.cancelAuthentication()
+            ?: mutableState.update { it.copy(status = "Ready to sign in") }
     }
 
     fun submit(prompt: String) {
@@ -95,23 +164,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(status = "Enter a prompt first") }
             return
         }
-        val sessionId = state.value.sessionId
-        if (sessionId == null) {
-            mutableState.update { it.copy(status = "Sign in and wait for a session first") }
-            return
-        }
-        if (state.value.turnActive) return
-
-        mutableState.update {
-            it.copy(status = "Codex is responding…", streamedText = "", turnActive = true)
-        }
-        launchVisibleFailure { agentClient.sendPrompt(sessionId, prompt) }
+        serviceController?.submit(prompt)
+            ?: mutableState.update { it.copy(status = "Start a background session first") }
     }
 
     fun cancel() {
-        val sessionId = state.value.sessionId ?: return
-        mutableState.update { it.copy(status = "Cancelling…") }
-        launchVisibleFailure { agentClient.cancelTurn(sessionId) }
+        serviceController?.cancelTurn()
+    }
+
+    fun stopBackgroundWork() {
+        runCatching { appContext.startService(CodexForegroundService.stopIntent(appContext)) }
+            .onFailure {
+                mutableState.update { state -> state.copy(status = "Background work could not be stopped") }
+            }
     }
 
     fun selectScope(uri: Uri) {
@@ -201,6 +266,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 scopeSelected = graph.platform.currentScopeId() != null,
                 mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
+                backgroundNotificationVisible = serviceController?.let {
+                    notificationsEnabled?.invoke() ?: false
+                } ?: it.backgroundNotificationVisible,
             )
         }
     }
@@ -209,7 +277,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val pending = takePendingApproval() ?: return
         mutableState.update { it.copy(status = "Applying approved Android change…") }
         viewModelScope.launch {
-            executePrepared(pending.event, pending.plan, UserApproval.grant(pending.plan))
+            executePrepared(
+                pending.event,
+                pending.plan,
+                UserApproval.grant(pending.plan),
+                pending.controller,
+            )
         }
     }
 
@@ -219,7 +292,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         takePendingApproval()?.let { graph.toolExecutor.abandon(it.plan) }
-        agentClient.close()
+        serviceController?.releaseOwner(toolOwner, "Android request UI was closed")
+        serviceStateJob?.cancel()
+        if (bindingRequested) runCatching { appContext.unbindService(serviceConnection) }
+        bindingRequested = false
+        serviceController = null
+        notificationsEnabled = null
+        serviceInstanceId = null
     }
 
     internal suspend fun reduce(event: AgentEvent) {
@@ -234,9 +313,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             AgentEvent.Authenticated -> {
                 mutableState.update {
-                    it.copy(status = "Signed in; starting session…", verificationUrl = null, userCode = null)
+                    it.copy(status = "Signed in", verificationUrl = null, userCode = null)
                 }
-                openSessionOnce()
             }
 
             is AgentEvent.SessionOpened -> mutableState.update {
@@ -265,39 +343,48 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            is AgentEvent.ToolRequested -> executeTool(event)
+            is AgentEvent.ToolRequested -> executeTool(event, null)
         }
     }
 
-    private suspend fun executeTool(event: AgentEvent.ToolRequested) {
+    private suspend fun executeTool(
+        event: AgentEvent.ToolRequested,
+        controller: ForegroundSessionController?,
+    ) {
         mutableState.update { it.copy(status = "Resolving Android document request…") }
         val scopeId = graph.platform.currentScopeId()
         if (scopeId == null) {
-            submitToolResult(event, ToolResult.Rejected(event.call.id, "No document folder is selected"))
+            finishTool(
+                event,
+                ToolResult.Rejected(event.call.id, "No document folder is selected"),
+                controller,
+            )
             return
         }
         val plan = try {
             withContext(Dispatchers.IO) { graph.toolExecutor.prepare(event.call, scopeId) }
         } catch (error: ToolRejectedException) {
-            submitToolResult(
+            finishTool(
                 event,
                 ToolResult.Rejected(event.call.id, error.message ?: "Document request was rejected"),
+                controller,
             )
             return
         } catch (error: CancellationException) {
             throw error
         } catch (_: Exception) {
-            submitToolResult(
+            finishTool(
                 event,
                 ToolResult.Failed(event.call.id, "tool_failure", "Android document tool failed"),
+                controller,
             )
             return
         }
 
         if (plan.effect == ToolEffect.MUTATION) {
-            requestApproval(event, plan)
+            requestApproval(event, plan, controller)
         } else {
-            executePrepared(event, plan)
+            executePrepared(event, plan, controller = controller)
         }
     }
 
@@ -305,7 +392,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         event: AgentEvent.ToolRequested,
         plan: ToolPlan,
         approval: UserApproval? = null,
+        controller: ForegroundSessionController? = null,
     ) {
+        if (controller != null && !controller.beginTool(toolOwner, event.call.id)) {
+            graph.toolExecutor.abandon(plan)
+            mutableState.update { it.copy(status = "Android request expired before execution") }
+            return
+        }
         val result = try {
             withContext(Dispatchers.IO) { graph.toolExecutor.execute(plan, approval) }
         } catch (error: CancellationException) {
@@ -314,7 +407,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ToolResult.Failed(event.call.id, "tool_failure", "Android document tool failed")
         }
         refreshRecovery(reconcile = false)
-        submitToolResult(event, result)
+        submitToolResult(event, result, controller)
     }
 
     fun acknowledgeMutation(recordId: MutationRecordId) {
@@ -330,26 +423,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun submitToolResult(event: AgentEvent.ToolRequested, result: ToolResult) {
-        try {
-            agentClient.submitToolResult(event.sessionId, result)
+    private fun finishTool(
+        event: AgentEvent.ToolRequested,
+        result: ToolResult,
+        controller: ForegroundSessionController?,
+    ) {
+        if (controller != null && !controller.beginTool(toolOwner, event.call.id)) {
+            mutableState.update { it.copy(status = "Android request expired before execution") }
+            return
+        }
+        submitToolResult(event, result, controller)
+    }
+
+    private fun submitToolResult(
+        event: AgentEvent.ToolRequested,
+        result: ToolResult,
+        controller: ForegroundSessionController?,
+    ) {
+        if (controller == null || controller.submitToolResult(toolOwner, event, result)) {
             mutableState.update { it.copy(status = "Codex is responding…") }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            showFailure(error)
+        } else {
+            mutableState.update { it.copy(status = "Android request expired before its result was accepted") }
         }
     }
 
-    private suspend fun requestApproval(event: AgentEvent.ToolRequested, plan: ToolPlan) {
+    private suspend fun requestApproval(
+        event: AgentEvent.ToolRequested,
+        plan: ToolPlan,
+        controller: ForegroundSessionController?,
+    ) {
         val preview = plan.approvalPreview
-            ?: return executePrepared(event, plan)
+            ?: return executePrepared(event, plan, controller = controller)
         if (pendingApproval != null) {
             graph.toolExecutor.abandon(plan)
-            submitToolResult(event, ToolResult.Rejected(event.call.id, "Another approval is already pending"))
+            finishTool(
+                event,
+                ToolResult.Rejected(event.call.id, "Another approval is already pending"),
+                controller,
+            )
             return
         }
-        pendingApproval = PendingApproval(event, plan)
+        pendingApproval = PendingApproval(event, plan, controller)
         mutableState.update {
             it.copy(status = "Waiting for explicit approval", approvalPreview = preview)
         }
@@ -364,9 +478,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val pending = takePendingApproval() ?: return
         mutableState.update { it.copy(status = reason) }
         graph.toolExecutor.abandon(pending.plan)
-        viewModelScope.launch {
-            submitToolResult(pending.event, ToolResult.Rejected(pending.event.call.id, reason))
-        }
+        finishTool(
+            pending.event,
+            ToolResult.Rejected(pending.event.call.id, reason),
+            pending.controller,
+        )
     }
 
     private fun takePendingApproval(): PendingApproval? {
@@ -410,40 +526,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun openSessionOnce() {
-        if (state.value.sessionId != null || !openingSession.compareAndSet(false, true)) return
-        viewModelScope.launch {
-            try {
-                agentClient.openSession()
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                showFailure(error)
-            } finally {
-                openingSession.set(false)
-            }
-        }
-    }
-
-    private fun launchVisibleFailure(block: suspend () -> Unit) {
-        viewModelScope.launch {
-            try {
-                block()
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                showFailure(error)
-            }
-        }
-    }
-
-    private fun showFailure(error: Exception) {
+    private fun applySessionState(
+        session: ForegroundSessionState,
+        notificationVisible: Boolean,
+    ) {
+        if (session.terminal) abandonPendingApproval()
         mutableState.update {
             it.copy(
-                status = error.message?.take(500) ?: "Codex failed",
+                status = session.status,
+                streamedText = session.streamedText,
+                sessionId = session.sessionId,
+                verificationUrl = session.verificationUrl,
+                userCode = session.userCode,
+                turnActive = session.turnActive,
+                backgroundActive = !session.terminal,
+                backgroundNotificationVisible = notificationVisible,
+            )
+        }
+    }
+
+    private fun bindService(flags: Int): Boolean {
+        if (bindingRequested) return true
+        val bound = runCatching {
+            appContext.bindService(
+                CodexForegroundService.bindIntent(appContext),
+                serviceConnection,
+                flags,
+            )
+        }.getOrDefault(false)
+        bindingRequested = bound
+        return bound
+    }
+
+    private fun serviceEnded() {
+        serviceStateJob?.cancel()
+        serviceStateJob = null
+        serviceController = null
+        notificationsEnabled = null
+        serviceInstanceId = null
+        bindingRequested = false
+        abandonPendingApproval()
+        mutableState.update {
+            it.copy(
+                status = if (it.backgroundActive) "Background work ended; start again to continue" else it.status,
+                sessionId = null,
                 verificationUrl = null,
                 userCode = null,
                 turnActive = false,
+                backgroundActive = false,
             )
         }
     }
@@ -451,10 +581,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private data class PendingApproval(
         val event: AgentEvent.ToolRequested,
         val plan: ToolPlan,
+        val controller: ForegroundSessionController?,
     )
 
     private companion object {
         const val APPROVAL_TIMEOUT_MILLIS = 30_000L
+        const val EXISTING_SERVICE_BIND_TIMEOUT_MILLIS = 1_000L
         const val RESOLVED_MUTATION_RETENTION_MILLIS = 30L * 24 * 60 * 60 * 1_000
     }
 }

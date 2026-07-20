@@ -2,6 +2,7 @@ package io.github.ciurlaro.codexmobile.app
 
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Bundle
 import android.os.SystemClock
@@ -135,6 +136,11 @@ class Step01RuntimePremiseDeviceTest {
             withTimeout(60_000) { original.state.first { it.sessionId != null } }
             original.submit("Reply with three short lines.")
             assertTrue(original.state.value.turnActive)
+            val serviceInstance = requireNotNull(original.serviceInstanceId)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
+            SystemClock.sleep(500)
+            assertEquals(serviceInstance, original.serviceInstanceId)
+            scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
 
             scenario.recreate()
             lateinit var recreated: MainViewModel
@@ -142,10 +148,12 @@ class Step01RuntimePremiseDeviceTest {
                 recreated = ViewModelProvider(activity)[MainViewModel::class.java]
             }
             assertSame(original, recreated)
+            assertEquals(serviceInstance, recreated.serviceInstanceId)
             withTimeout(120_000) {
                 recreated.state.first { !it.turnActive && it.streamedText.isNotBlank() }
             }
         }
+        context.startService(CodexForegroundService.stopIntent(context))
     }
 
     @Test
@@ -185,7 +193,10 @@ class Step01RuntimePremiseDeviceTest {
         )
         val foregroundService = services.single { it.name == CodexForegroundService::class.java.name }
         assertTrue(services.none { it.exported })
-        assertFalse(foregroundService.enabled)
+        assertTrue(foregroundService.enabled)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC, foregroundService.foregroundServiceType)
+        }
         assertEquals(0, context.applicationInfo.flags and ApplicationInfo.FLAG_ALLOW_BACKUP)
         assertFalse(context.applicationInfo.dataDir.startsWith("/sdcard"))
         assertTrue(runtimeFile().canonicalPath.startsWith(File(context.applicationInfo.nativeLibraryDir).canonicalPath))
@@ -207,7 +218,7 @@ class Step01RuntimePremiseDeviceTest {
     private suspend fun requirePersistedAuthentication(client: CodexAgentClient) = coroutineScope {
         val event = async { withTimeout(30_000) { client.events.first() } }
         client.authenticate()
-        assertEquals(AgentEvent.Authenticated, event.await())
+        assertTrue("Persisted ChatGPT authentication is required", event.await() === AgentEvent.Authenticated)
     }
 
     private suspend fun runPrompt(
