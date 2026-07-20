@@ -2,7 +2,7 @@
 
 An Android feasibility project for running Codex locally, while Android keeps final authority over device data and side effects.
 
-**Status:** [Steps 01–05](docs/roadmap/README.md) are complete; [Step 06](docs/roadmap/06-mvp-readiness.md) is the active experiment.
+**Status:** [Roadmap Steps 01–06](docs/roadmap/README.md) are complete; the bounded Android MVP passes its documented release gates.
 
 ## Ownership
 

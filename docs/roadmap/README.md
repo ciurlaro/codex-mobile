@@ -9,6 +9,6 @@ Only one step is active at a time. A later step may refine internals, but it mus
 | [03](03-controlled-mutation.md) | One disposable mutation requires trustworthy approval | Complete |
 | [04](04-mutation-recovery.md) | Interrupted mutations reconcile without false certainty | Complete |
 | [05](05-background-lifecycle.md) | Active work survives loss of Activity visibility | Complete |
-| [06](06-mvp-readiness.md) | Android MVP meets release-quality gates | Active |
+| [06](06-mvp-readiness.md) | Android MVP meets release-quality gates | Complete |
 
 Provider expansion and KMP are separate future decisions, not hidden roadmap steps.
