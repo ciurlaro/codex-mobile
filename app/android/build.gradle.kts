@@ -17,6 +17,9 @@ val releaseSigningConfigured = listOf(
     releaseKeyAlias,
     releaseKeyPassword,
 ).all { it.isPresent }
+val requestedTaskNames = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }
+val visualCaptureRequested = "visualCapture" in requestedTaskNames
+val visualCheckRequested = "visualCheck" in requestedTaskNames
 
 android {
     namespace = "io.github.ciurlaro.codexmobile.app"
@@ -29,6 +32,11 @@ android {
         versionCode = 2
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        if (visualCaptureRequested || visualCheckRequested) {
+            testInstrumentationRunnerArguments["class"] =
+                "io.github.ciurlaro.codexmobile.app.VisualRegressionTest"
+            testInstrumentationRunnerArguments["captureOnly"] = visualCaptureRequested.toString()
+        }
 
         ndk {
             abiFilters += "arm64-v8a"

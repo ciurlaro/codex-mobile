@@ -5,7 +5,7 @@
 | Data | Location / recipient | Retention and deletion |
 |---|---|---|
 | ChatGPT credentials | Codex files under app-private, no-backup storage | Until **Sign out of ChatGPT** (`account/logout`) or Android/app **Erase Codex Mobile data** |
-| Prompts, responses, session/thread history, and Android tool results | Process memory and app-private Codex history; prompts/tool results are sent to OpenAI | Bounded visible response is process-local; persisted history remains until app-data erasure |
+| Prompts, structured Web Search tags, responses, session/thread history, and Android tool results | Process memory and app-private Codex history; prompts, requested Web Searches, and tool results are sent to OpenAI | Bounded visible response is process-local; persisted history remains until app-data erasure |
 | Selected document scope | Private preferences plus Android's persisted URI grant | Replaced by another selection, removed by **Revoke access**, or removed by app-data erasure |
 | Document content/metadata | Read from the selected provider and returned as a bounded tool result; may therefore enter Codex/OpenAI conversation history | No separate app cache; provider file remains until the user changes it outside this app; conversation copy follows history deletion above |
 | Mutation recovery record | App-private, no-backup SQLite | Unresolved records remain visible. Acknowledged resolved records are pruned after 30 days; all records disappear on app-data erasure |
@@ -20,7 +20,7 @@ The app has no analytics, advertising, telemetry, remote crash reporter, contact
 
 ## User controls
 
-- **Cancel sign-in** cancels a pending device-code login.
+- **Cancel sign-in** cancels a pending Codex-managed ChatGPT login.
 - **Sign out of ChatGPT** removes local ChatGPT credentials and stops the owned runtime. It deliberately retains selected-folder access and conversation/recovery history so sign-out is not misrepresented as full deletion.
 - **Revoke access** removes the current SAF grant and opaque scope without modifying provider files.
 - **Acknowledge recovery** hides an understood mutation outcome; resolved acknowledgements become eligible for 30-day pruning.

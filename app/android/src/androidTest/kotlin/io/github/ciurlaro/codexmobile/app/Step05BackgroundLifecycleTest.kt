@@ -9,7 +9,6 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
-import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
@@ -236,7 +235,7 @@ class Step05BackgroundLifecycleTest {
             bind().use { bound ->
                 await(NETWORK_FAULT_WAIT_MILLIS) {
                     val state = bound.binder.controller.state.value
-                    state.attentionRequired || state.verificationUrl != null || state.sessionId != null
+                    state.attentionRequired || state.signInUrl != null || state.sessionId != null
                 }
                 val bounded = bound.binder.controller.state.value
                 assertFalse(bounded.turnActive)
@@ -256,16 +255,16 @@ class Step05BackgroundLifecycleTest {
                     shell("svc wifi enable")
                     wifiRestored = true
                     SystemClock.sleep(NETWORK_RESTORE_WAIT_MILLIS)
-                    if (bounded.verificationUrl != null) {
+                    if (bounded.signInUrl != null) {
                         viewModel.cancelAuthentication()
                         await(NETWORK_RECOVERY_WAIT_MILLIS) {
-                            viewModel.state.value.verificationUrl == null
+                            viewModel.state.value.signInUrl == null
                         }
                     }
                     if (viewModel.state.value.sessionId == null) viewModel.authenticate()
                     await(NETWORK_RECOVERY_WAIT_MILLIS) {
                         val state = viewModel.state.value
-                        state.verificationUrl != null || state.sessionId != null
+                        state.signInUrl != null || state.sessionId != null
                     }
                     assertTrue(
                         activeNotifications().single().notification.extras
@@ -295,22 +294,17 @@ class Step05BackgroundLifecycleTest {
             bind().use { bound ->
                 await(NETWORK_RECOVERY_WAIT_MILLIS) {
                     val state = bound.binder.controller.state.value
-                    state.verificationUrl != null || state.sessionId != null
+                    state.signInUrl != null || state.sessionId != null
                 }
-                val verificationUrl = bound.binder.controller.state.value.verificationUrl
+                val signInUrl = bound.binder.controller.state.value.signInUrl
                 assumeTrue(
                     "Browser handoff requires a fresh unauthenticated runtime",
-                    verificationUrl != null,
+                    signInUrl != null,
                 )
-                val browserUri = Uri.parse(requireNotNull(verificationUrl))
                 val instance = bound.binder.serviceInstanceId
-                scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
-                context.startActivity(
-                    Intent(Intent.ACTION_VIEW, browserUri)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
                 SystemClock.sleep(BROWSER_HANDOFF_WAIT_MILLIS)
 
+                assertFalse(scenario.state == androidx.lifecycle.Lifecycle.State.RESUMED)
                 assertEquals(instance, bind().use { it.binder.serviceInstanceId })
                 assertTrue(bound.binder.isForegroundStarted)
                 assertTrue(application.graph.wasBackgroundActive())
@@ -340,7 +334,7 @@ class Step05BackgroundLifecycleTest {
             bind().use { bound ->
                 await(NETWORK_RECOVERY_WAIT_MILLIS) {
                     val state = bound.binder.controller.state.value
-                    state.verificationUrl != null || state.sessionId != null || state.attentionRequired
+                    state.signInUrl != null || state.sessionId != null || state.attentionRequired
                 }
                 scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
                 assertTrue(bound.binder.isForegroundStarted)

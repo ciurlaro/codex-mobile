@@ -10,7 +10,12 @@ import android.net.Uri
 import android.os.IBinder
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentMessageRole
+import io.github.ciurlaro.codexmobile.core.AgentModel
+import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.ApprovalPreview
 import io.github.ciurlaro.codexmobile.core.MutationRecordId
 import io.github.ciurlaro.codexmobile.core.MutationState
@@ -37,8 +42,20 @@ data class MainUiState(
     val status: String = "Ready to sign in",
     val streamedText: String = "",
     val sessionId: SessionId? = null,
-    val verificationUrl: String? = null,
-    val userCode: String? = null,
+    val authenticated: Boolean = false,
+    val conversations: List<AgentConversationSummary> = emptyList(),
+    val messages: List<ChatMessage> = emptyList(),
+    val models: List<AgentModel> = emptyList(),
+    val draft: String = "",
+    val selectedCapabilities: Set<AgentCapability> = emptySet(),
+    val selectedModel: String? = null,
+    val selectedEffort: String? = null,
+    val drawerOpen: Boolean = false,
+    val destination: AppDestination = AppDestination.CHAT,
+    val popup: ChatPopup = ChatPopup.NONE,
+    val historySearch: String = "",
+    val conversationLoading: Boolean = false,
+    val signInUrl: String? = null,
     val turnActive: Boolean = false,
     val scopeSelected: Boolean = false,
     val mutationScopeSelected: Boolean = false,
@@ -57,11 +74,14 @@ data class MutationRecoveryNotice(
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as CodexMobileApplication).graph
     private val appContext = application.applicationContext
+    private val chatPreferences = appContext.getSharedPreferences(CHAT_PREFERENCES, Context.MODE_PRIVATE)
     private val toolOwner = UUID.randomUUID().toString()
     private val mutableState = MutableStateFlow(
         MainUiState(
             scopeSelected = graph.platform.currentScopeId() != null,
             mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
+            selectedModel = chatPreferences.getString(LAST_MODEL, null),
+            selectedEffort = chatPreferences.getString(LAST_EFFORT, null),
         ),
     )
     private var pendingApproval: PendingApproval? = null
@@ -72,6 +92,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var signOutAction: (() -> Unit)? = null
     private var signOutPending = false
     private var bindingRequested = false
+    private var chatDataRequested = false
+    private var activeAssistantMessageId: String? = null
+    private var pendingConversationId: SessionId? = null
+    private var selectionRestoredSessionId: SessionId? = null
     internal var serviceInstanceId: String? = null
         private set
 
@@ -91,6 +115,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             serviceStateJob = viewModelScope.launch {
                 binder.controller.state.collect { session ->
                     applySessionState(session, binder.notificationsEnabled())
+                    if (session.authenticated && !chatDataRequested) {
+                        chatDataRequested = true
+                        launch { refreshChatData(binder.controller) }
+                    }
                     if (session.terminal) releaseServiceBinding()
                     session.pendingTool?.let { event ->
                         binder.controller.claimTool(toolOwner, event.call.id)?.let { claimed ->
@@ -140,7 +168,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun authenticate() {
         mutableState.update {
-            it.copy(status = "Starting protected background work…", verificationUrl = null, userCode = null)
+            it.copy(status = "Starting protected background work…", signInUrl = null)
         }
         serviceController?.let {
             it.authenticate()
@@ -174,12 +202,198 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun submit(prompt: String) {
-        if (prompt.isBlank()) {
-            mutableState.update { it.copy(status = "Enter a prompt first") }
+        updateDraft(prompt)
+        sendMessage()
+    }
+
+    fun sendMessage() {
+        val before = mutableState.value
+        if (before.draft.isBlank() && before.selectedCapabilities.isEmpty()) {
+            mutableState.update { it.copy(status = "Enter a message or add a prompt tag") }
             return
         }
-        serviceController?.submit(prompt)
-            ?: mutableState.update { it.copy(status = "Start a background session first") }
+        val controller = serviceController
+        if (controller == null) {
+            mutableState.update { it.copy(status = "Start a background session first") }
+            return
+        }
+        val clientMessageId = UUID.randomUUID().toString()
+        val request = AgentTurnRequest(
+            prompt = before.draft.trim(),
+            clientMessageId = clientMessageId,
+            model = before.selectedModel,
+            effort = before.selectedEffort,
+            capabilities = before.selectedCapabilities,
+        )
+        if (!controller.submit(request)) return
+
+        val assistantId = "stream-$clientMessageId"
+        activeAssistantMessageId = assistantId
+        mutableState.update {
+            it.copy(
+                status = "Thinking",
+                messages = it.messages + listOf(
+                    ChatMessage(
+                        id = "user-$clientMessageId",
+                        role = AgentMessageRole.USER,
+                        text = request.prompt,
+                        capabilities = request.capabilities,
+                        model = request.model,
+                        effort = request.effort,
+                    ),
+                    ChatMessage(
+                        id = assistantId,
+                        role = AgentMessageRole.CODEX,
+                        text = "",
+                        streaming = true,
+                    ),
+                ),
+                draft = "",
+                selectedCapabilities = emptySet(),
+                popup = ChatPopup.NONE,
+            )
+        }
+    }
+
+    fun updateDraft(value: String) {
+        mutableState.update {
+            it.copy(
+                draft = value,
+                popup = if (selectedTagQuery(value) != null) ChatPopup.TAGS else it.popup,
+            )
+        }
+    }
+
+    fun openHistory() {
+        mutableState.update { it.copy(drawerOpen = true, popup = ChatPopup.NONE) }
+        refreshConversations()
+    }
+
+    fun closeHistory() {
+        mutableState.update { it.copy(drawerOpen = false, historySearch = "") }
+    }
+
+    fun updateHistorySearch(value: String) {
+        mutableState.update { it.copy(historySearch = value) }
+    }
+
+    fun freshChat() {
+        serviceController?.let { if (!it.freshChat()) return }
+        pendingConversationId = null
+        selectionRestoredSessionId = null
+        activeAssistantMessageId = null
+        mutableState.update {
+            it.copy(
+                status = if (it.authenticated) "Ready" else it.status,
+                streamedText = "",
+                sessionId = null,
+                messages = emptyList(),
+                draft = "",
+                selectedCapabilities = emptySet(),
+                drawerOpen = false,
+                destination = AppDestination.CHAT,
+                popup = ChatPopup.NONE,
+                historySearch = "",
+                conversationLoading = false,
+            )
+        }
+    }
+
+    fun selectConversation(sessionId: SessionId) {
+        val controller = serviceController ?: return
+        if (!controller.openConversation(sessionId)) return
+        pendingConversationId = sessionId
+        selectionRestoredSessionId = null
+        activeAssistantMessageId = null
+        mutableState.update {
+            it.copy(
+                sessionId = sessionId,
+                messages = emptyList(),
+                drawerOpen = false,
+                popup = ChatPopup.NONE,
+                historySearch = "",
+                conversationLoading = true,
+            )
+        }
+        viewModelScope.launch {
+            try {
+                val conversation = controller.readConversation(sessionId)
+                if (pendingConversationId == sessionId) {
+                    mutableState.update {
+                        it.copy(
+                            messages = conversation.messages.map { message -> message.toChatMessage() },
+                            conversationLoading = false,
+                        )
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                if (pendingConversationId == sessionId) {
+                    mutableState.update {
+                        it.copy(status = "Conversation history could not be loaded", conversationLoading = false)
+                    }
+                }
+            }
+        }
+    }
+
+    fun openSettings() {
+        mutableState.update {
+            it.copy(destination = AppDestination.SETTINGS, drawerOpen = false, popup = ChatPopup.NONE)
+        }
+    }
+
+    fun closeSettings() {
+        mutableState.update { it.copy(destination = AppDestination.CHAT, popup = ChatPopup.NONE) }
+    }
+
+    fun showEffortSelector() {
+        mutableState.update { it.copy(popup = ChatPopup.EFFORT) }
+    }
+
+    fun showModelSelector() {
+        mutableState.update { it.copy(popup = ChatPopup.MODEL) }
+    }
+
+    fun showTagPicker() {
+        mutableState.update { it.copy(popup = ChatPopup.TAGS) }
+    }
+
+    fun dismissPopup() {
+        mutableState.update { it.copy(popup = ChatPopup.NONE) }
+    }
+
+    fun selectModel(modelId: String) {
+        val model = mutableState.value.models.firstOrNull { it.id == modelId } ?: return
+        mutableState.update {
+            val effort = it.selectedEffort?.takeIf(model.supportedEfforts::contains)
+                ?: model.defaultEffort
+            it.copy(selectedModel = model.id, selectedEffort = effort, popup = ChatPopup.EFFORT)
+        }
+        persistSelection()
+    }
+
+    fun selectEffort(effort: String) {
+        val current = mutableState.value
+        val model = current.models.firstOrNull { it.id == current.selectedModel } ?: return
+        if (effort !in model.supportedEfforts) return
+        mutableState.update { it.copy(selectedEffort = effort, popup = ChatPopup.NONE) }
+        persistSelection()
+    }
+
+    fun addCapability(capability: AgentCapability) {
+        mutableState.update {
+            it.copy(
+                selectedCapabilities = it.selectedCapabilities + capability,
+                draft = removeSelectedTagQuery(it.draft),
+                popup = ChatPopup.NONE,
+            )
+        }
+    }
+
+    fun removeCapability(capability: AgentCapability) {
+        mutableState.update { it.copy(selectedCapabilities = it.selectedCapabilities - capability) }
     }
 
     fun cancel() {
@@ -195,7 +409,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun signOut() {
         mutableState.update {
-            it.copy(status = "Signing out…", verificationUrl = null, userCode = null)
+            it.copy(status = "Signing out…", signInUrl = null)
         }
         signOutAction?.invoke() ?: run {
             signOutPending = true
@@ -344,19 +558,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             is AgentEvent.AuthenticationRequired -> mutableState.update {
                 it.copy(
                     status = "Finish sign-in in your browser",
-                    verificationUrl = event.verificationUrl,
-                    userCode = event.userCode,
+                    signInUrl = event.signInUrl,
                 )
             }
 
             AgentEvent.Authenticated -> {
                 mutableState.update {
-                    it.copy(status = "Signed in", verificationUrl = null, userCode = null)
+                    it.copy(
+                        status = "Signed in",
+                        authenticated = true,
+                        signInUrl = null,
+                    )
                 }
             }
 
             is AgentEvent.SessionOpened -> mutableState.update {
-                it.copy(status = "Ready", sessionId = event.sessionId)
+                it.copy(
+                    status = "Ready",
+                    authenticated = true,
+                    sessionId = event.sessionId,
+                    selectedModel = event.model ?: it.selectedModel,
+                    selectedEffort = event.effort ?: it.selectedEffort,
+                )
             }
 
             is AgentEvent.TextDelta -> mutableState.update {
@@ -374,8 +597,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     it.copy(
                         status = event.message,
                         sessionId = if (event.sessionId == null) null else it.sessionId,
-                        verificationUrl = null,
-                        userCode = null,
+                        signInUrl = null,
                         turnActive = false,
                         diagnosticCode = event.code,
                     )
@@ -565,24 +787,99 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private suspend fun refreshChatData(controller: ForegroundSessionController) {
+        val models = runCatching { controller.listModels() }.getOrDefault(emptyList())
+        val conversations = runCatching { controller.listConversations() }.getOrDefault(emptyList())
+        mutableState.update { current ->
+            val selected = models.firstOrNull { it.id == current.selectedModel }
+                ?: models.firstOrNull(AgentModel::isDefault)
+                ?: models.firstOrNull()
+            val effort = selected?.let { model ->
+                current.selectedEffort?.takeIf(model.supportedEfforts::contains)
+                    ?: model.defaultEffort
+            }
+            current.copy(
+                models = models,
+                conversations = conversations,
+                selectedModel = selected?.id ?: current.selectedModel,
+                selectedEffort = effort ?: current.selectedEffort,
+            )
+        }
+        persistSelection()
+    }
+
+    private fun refreshConversations() {
+        val controller = serviceController ?: return
+        viewModelScope.launch {
+            try {
+                val conversations = controller.listConversations()
+                mutableState.update { it.copy(conversations = conversations) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                // Existing history remains usable when a refresh fails.
+            }
+        }
+    }
+
+    private fun persistSelection() {
+        val current = mutableState.value
+        chatPreferences.edit()
+            .apply {
+                if (current.selectedModel == null) remove(LAST_MODEL)
+                else putString(LAST_MODEL, current.selectedModel)
+                if (current.selectedEffort == null) remove(LAST_EFFORT)
+                else putString(LAST_EFFORT, current.selectedEffort)
+            }
+            .apply()
+    }
+
     private fun applySessionState(
         session: ForegroundSessionState,
         notificationVisible: Boolean,
     ) {
         if (session.terminal) abandonPendingApproval()
-        mutableState.update {
-            it.copy(
+        val before = mutableState.value
+        val finishedTurn = before.turnActive && !session.turnActive
+        val assistantId = activeAssistantMessageId
+        val restoreSelection = session.sessionId != null &&
+            pendingConversationId == session.sessionId &&
+            selectionRestoredSessionId != session.sessionId
+        if (restoreSelection) selectionRestoredSessionId = session.sessionId
+        mutableState.update { current ->
+            var messages = current.messages
+            if (assistantId != null) {
+                messages = messages.map { message ->
+                    if (message.id == assistantId) {
+                        message.copy(text = session.streamedText, streaming = session.turnActive)
+                    } else {
+                        message
+                    }
+                }
+                if (finishedTurn) messages = messages.filterNot { it.id == assistantId && it.text.isEmpty() }
+            }
+            current.copy(
                 status = session.status,
                 streamedText = session.streamedText,
                 sessionId = session.sessionId,
-                verificationUrl = session.verificationUrl,
-                userCode = session.userCode,
+                authenticated = session.authenticated,
+                messages = messages,
+                selectedModel = if (restoreSelection) session.activeModel ?: current.selectedModel
+                else current.selectedModel,
+                selectedEffort = if (restoreSelection) session.activeEffort ?: current.selectedEffort
+                else current.selectedEffort,
+                signInUrl = session.signInUrl,
                 turnActive = session.turnActive,
                 backgroundActive = !session.terminal,
                 backgroundNotificationVisible = notificationVisible,
                 diagnosticCode = session.diagnosticCode,
             )
         }
+        if (finishedTurn) {
+            activeAssistantMessageId = null
+            refreshConversations()
+        }
+        if (restoreSelection) persistSelection()
     }
 
     private fun bindService(flags: Int): Boolean {
@@ -612,13 +909,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         signOutPending = false
         serviceInstanceId = null
         bindingRequested = false
+        chatDataRequested = false
         abandonPendingApproval()
         mutableState.update {
             it.copy(
                 status = if (it.backgroundActive) "Background work ended; start again to continue" else it.status,
                 sessionId = null,
-                verificationUrl = null,
-                userCode = null,
+                authenticated = false,
+                signInUrl = null,
                 turnActive = false,
                 backgroundActive = false,
             )
@@ -632,6 +930,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private companion object {
+        const val CHAT_PREFERENCES = "chat-ui"
+        const val LAST_MODEL = "last-model"
+        const val LAST_EFFORT = "last-effort"
         const val APPROVAL_TIMEOUT_MILLIS = 30_000L
         const val EXISTING_SERVICE_BIND_TIMEOUT_MILLIS = 1_000L
         const val RESOLVED_MUTATION_RETENTION_MILLIS = 30L * 24 * 60 * 60 * 1_000

@@ -7,24 +7,21 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -32,11 +29,6 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.semantics.LiveRegionMode
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.liveRegion
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.ciurlaro.codexmobile.core.ApprovalPreview
 import io.github.ciurlaro.codexmobile.core.MutationState
@@ -46,11 +38,25 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.BLACK),
+        )
         setContent {
             val state by viewModel.state.collectAsState()
-            var prompt by rememberSaveable { mutableStateOf("") }
             var showEraseConfirmation by rememberSaveable { mutableStateOf(false) }
             var showPrivacyDisclosure by rememberSaveable { mutableStateOf(false) }
+            var openedSignInUrl by rememberSaveable { mutableStateOf<String?>(null) }
+            fun openSignIn(rawUrl: String?) {
+                val signInUri = rawUrl?.toOfficialSignInUri()
+                if (signInUri == null) {
+                    viewModel.browserUnavailable()
+                } else {
+                    runCatching {
+                        startActivity(Intent(Intent.ACTION_VIEW, signInUri))
+                    }.onFailure { viewModel.browserUnavailable() }
+                }
+            }
             val scopePicker = rememberLauncherForActivityResult(
                 ActivityResultContracts.OpenDocumentTree(),
             ) { uri ->
@@ -66,171 +72,54 @@ class MainActivity : ComponentActivity() {
             ) {
                 viewModel.authenticate()
             }
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    Column(
-                        modifier = Modifier
-                            .padding(24.dp)
-                            .verticalScroll(rememberScrollState()),
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                    ) {
-                        Text(
-                            "Codex Mobile",
-                            modifier = Modifier.semantics { heading() },
-                            style = MaterialTheme.typography.headlineMedium,
-                        )
-                        Text(
-                            state.status,
-                            modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
-                        )
-                        state.diagnosticCode?.let { Text("Diagnostic reference: $it") }
-                        if (state.backgroundActive && !state.backgroundNotificationVisible) {
-                            Text(
-                                "Background work is active, but notifications are disabled. " +
-                                    "Android still shows it under Active apps.",
-                            )
-                        }
-                        if (state.backgroundActive) {
-                            Button(
-                                onClick = viewModel::stopBackgroundWork,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            ) { Text("Stop background work") }
-                        }
-
-                        Text(
-                            "Privacy and data",
-                            modifier = Modifier.semantics { heading() },
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        Button(
-                            onClick = viewModel::signOut,
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                        ) {
-                            Text("Sign out of ChatGPT")
-                        }
-                        Button(
-                            onClick = { showPrivacyDisclosure = true },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                        ) { Text("Privacy details") }
-                        Button(
-                            onClick = { showEraseConfirmation = true },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                        ) { Text("Erase Codex Mobile data") }
-
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(
-                                onClick = { scopePicker.launch(null) },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            LaunchedEffect(state.signInUrl) {
+                state.signInUrl?.takeIf { it != openedSignInUrl }?.let {
+                    openedSignInUrl = it
+                    openSignIn(it)
+                }
+            }
+            CodexMobileTheme {
+                CodexMobileApp(state) { event ->
+                    when (event) {
+                        ChatUiEvent.OpenHistory -> viewModel.openHistory()
+                        ChatUiEvent.CloseHistory -> viewModel.closeHistory()
+                        ChatUiEvent.FreshChat -> viewModel.freshChat()
+                        ChatUiEvent.OpenSettings -> viewModel.openSettings()
+                        ChatUiEvent.CloseSettings -> viewModel.closeSettings()
+                        ChatUiEvent.ShowEffort -> viewModel.showEffortSelector()
+                        ChatUiEvent.ShowModels -> viewModel.showModelSelector()
+                        ChatUiEvent.ShowTags -> viewModel.showTagPicker()
+                        ChatUiEvent.DismissPopup -> viewModel.dismissPopup()
+                        ChatUiEvent.Send -> viewModel.sendMessage()
+                        ChatUiEvent.Stop -> viewModel.cancel()
+                        ChatUiEvent.Authenticate -> {
+                            if (
+                                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                                PackageManager.PERMISSION_GRANTED
                             ) {
-                                Text(
-                                    if (state.scopeSelected) "Change document folder"
-                                    else "Select document folder",
-                                )
-                            }
-                            if (state.scopeSelected) {
-                                Button(
-                                    onClick = viewModel::revokeScope,
-                                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                                ) { Text("Revoke access") }
+                                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+                            } else {
+                                viewModel.authenticate()
                             }
                         }
-                        Button(
-                            onClick = { mutationScopePicker.launch(null) },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                        ) {
-                            Text(
-                                if (state.mutationScopeSelected) "Change disposable mutation folder"
-                                else "Select disposable mutation folder",
-                            )
-                        }
-                        Text("Use mutation access only with a dedicated disposable test folder.")
-                        if (state.mutationScopeSelected) {
-                            Text("Disposable mutation access enabled")
-                        } else if (state.scopeSelected) {
-                            Text("Read-only document access enabled")
-                        }
-                        state.recoveryNotices.forEach { notice ->
-                            Text(notice.state.recoveryDisplayText())
-                            Button(
-                                onClick = { viewModel.acknowledgeMutation(notice.recordId) },
-                                modifier = Modifier.heightIn(min = 48.dp),
-                            ) {
-                                Text("Acknowledge recovery")
-                            }
-                        }
-
-                        if (state.sessionId == null && state.verificationUrl == null) {
-                            Button(
-                                onClick = {
-                                    if (
-                                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                                        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
-                                        PackageManager.PERMISSION_GRANTED
-                                    ) {
-                                        notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-                                    } else {
-                                        viewModel.authenticate()
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            ) { Text("Sign in with ChatGPT") }
-                        }
-
-                        state.userCode?.let { code ->
-                            Text("One-time code")
-                            Text(code, fontFamily = FontFamily.Monospace)
-                        }
-                        state.verificationUrl?.let { url ->
-                            val signInUri = remember(url) { url.toOfficialSignInUri() }
-                            Text("Visit this address in a browser; Codex Mobile will continue in the background:")
-                            Text(url)
-                            Button(
-                                onClick = {
-                                    runCatching {
-                                        startActivity(Intent(Intent.ACTION_VIEW, signInUri))
-                                    }.onFailure { viewModel.browserUnavailable() }
-                                },
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                                enabled = signInUri != null,
-                            ) { Text("Open sign-in page") }
-                            Button(
-                                onClick = viewModel::cancelAuthentication,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            ) { Text("Cancel sign-in") }
-                        }
-
-                        OutlinedTextField(
-                            value = prompt,
-                            onValueChange = { prompt = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            enabled = state.sessionId != null && !state.turnActive,
-                            label = { Text("Prompt") },
-                            minLines = 3,
-                        )
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Button(
-                                onClick = {
-                                    viewModel.submit(prompt)
-                                },
-                                enabled = state.sessionId != null && !state.turnActive,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            ) {
-                                Text("Send")
-                            }
-                            Button(
-                                onClick = viewModel::cancel,
-                                enabled = state.turnActive,
-                                modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
-                            ) {
-                                Text("Cancel")
-                            }
-                        }
-
-                        if (state.streamedText.isNotEmpty()) {
-                            Text("Response", style = MaterialTheme.typography.titleMedium)
-                            Text(state.streamedText)
-                        }
-
+                        ChatUiEvent.CancelAuthentication -> viewModel.cancelAuthentication()
+                        ChatUiEvent.OpenSignIn -> openSignIn(state.signInUrl)
+                        ChatUiEvent.StopBackground -> viewModel.stopBackgroundWork()
+                        ChatUiEvent.SignOut -> viewModel.signOut()
+                        ChatUiEvent.ShowPrivacy -> showPrivacyDisclosure = true
+                        ChatUiEvent.ShowEraseConfirmation -> showEraseConfirmation = true
+                        ChatUiEvent.SelectScope -> scopePicker.launch(null)
+                        ChatUiEvent.SelectMutationScope -> mutationScopePicker.launch(null)
+                        ChatUiEvent.RevokeScope -> viewModel.revokeScope()
+                        is ChatUiEvent.SearchHistory -> viewModel.updateHistorySearch(event.query)
+                        is ChatUiEvent.SelectConversation -> viewModel.selectConversation(event.id)
+                        is ChatUiEvent.UpdateDraft -> viewModel.updateDraft(event.text)
+                        is ChatUiEvent.SelectModel -> viewModel.selectModel(event.id)
+                        is ChatUiEvent.SelectEffort -> viewModel.selectEffort(event.effort)
+                        is ChatUiEvent.AddCapability -> viewModel.addCapability(event.capability)
+                        is ChatUiEvent.RemoveCapability -> viewModel.removeCapability(event.capability)
+                        is ChatUiEvent.AcknowledgeMutation -> viewModel.acknowledgeMutation(event.id)
                     }
                 }
                 val preview = state.approvalPreview
@@ -269,12 +158,12 @@ class MainActivity : ComponentActivity() {
                         title = { Text("Privacy details") },
                         text = {
                             Text(
-                                "Prompts, Codex responses, ChatGPT credentials, conversation history, " +
-                                    "selected-folder access, and mutation recovery records stay in app-private " +
-                                    "storage and are excluded from backup. Prompts and Android tool results are " +
-                                    "sent to OpenAI. Codex Mobile does not put prompt or document content in its " +
-                                    "logs. Erasing app data removes this local data and access without deleting " +
-                                    "your documents.",
+                                "Prompts, structured Web Search tags, Codex responses, ChatGPT credentials, " +
+                                    "conversation history, selected-folder access, and mutation recovery records " +
+                                    "stay in app-private storage and are excluded from backup. Prompts, requested " +
+                                    "Web Searches, and Android tool results are sent to OpenAI. Codex Mobile does " +
+                                    "not put prompt or document content in its logs. Erasing app data removes this " +
+                                    "local data and access without deleting your documents.",
                             )
                         },
                         confirmButton = {

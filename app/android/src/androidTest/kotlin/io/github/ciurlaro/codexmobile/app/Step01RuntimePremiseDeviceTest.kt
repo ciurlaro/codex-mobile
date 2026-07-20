@@ -91,10 +91,13 @@ class Step01RuntimePremiseDeviceTest {
             when (val event = result.await()) {
                 AgentEvent.Authenticated -> Unit
                 is AgentEvent.AuthenticationRequired -> {
-                    val verificationUri = URI(event.verificationUrl)
-                    assertEquals("https", verificationUri.scheme)
-                    assertEquals("auth.openai.com", verificationUri.host)
-                    assertTrue(event.userCode?.isNotBlank() == true)
+                    val signInUri = URI(event.signInUrl)
+                    assertEquals("https", signInUri.scheme)
+                    val host = requireNotNull(signInUri.host).lowercase()
+                    assertTrue(
+                        host == "openai.com" || host.endsWith(".openai.com") ||
+                            host == "chatgpt.com" || host.endsWith(".chatgpt.com"),
+                    )
                     client.cancelAuthentication()
                 }
 

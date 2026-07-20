@@ -140,7 +140,7 @@ class CodexForegroundService : Service() {
         state.pendingTool != null -> "Open the app to review an Android request"
         state.attentionRequired -> "Open Codex Mobile to retry"
         state.turnActive -> "Codex is responding"
-        state.verificationUrl != null -> "Waiting for ChatGPT sign-in"
+        state.signInUrl != null -> "Waiting for ChatGPT sign-in"
         state.sessionId != null -> "Session ready"
         else -> "Starting background session"
     }

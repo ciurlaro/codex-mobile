@@ -69,12 +69,12 @@ class Step06MvpReadinessTest {
 
     @Test
     fun signInBrowserBoundaryAcceptsOnlyOfficialHttpsUrls() {
-        assertNotNull("https://auth.openai.com/codex/device".toOfficialSignInUri())
-        assertNotNull("https://chatgpt.com/device".toOfficialSignInUri())
-        assertNull("http://auth.openai.com/codex/device".toOfficialSignInUri())
-        assertNull("https://openai.com.evil.example/device".toOfficialSignInUri())
-        assertNull("https://user@auth.openai.com/device".toOfficialSignInUri())
-        assertNull("https://auth.openai.com:8443/device".toOfficialSignInUri())
+        assertNotNull("https://auth.openai.com/oauth/authorize?state=test".toOfficialSignInUri())
+        assertNotNull("https://chatgpt.com/auth/login?state=test".toOfficialSignInUri())
+        assertNull("http://auth.openai.com/oauth/authorize".toOfficialSignInUri())
+        assertNull("https://openai.com.evil.example/oauth/authorize".toOfficialSignInUri())
+        assertNull("https://user@auth.openai.com/oauth/authorize".toOfficialSignInUri())
+        assertNull("https://auth.openai.com:8443/oauth/authorize".toOfficialSignInUri())
         assertNull("not a URL".toOfficialSignInUri())
     }
 
@@ -113,18 +113,19 @@ class Step06MvpReadinessTest {
         context.stopService(Intent(context, CodexForegroundService::class.java))
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
-            scrollToStart()
-            val title = findNode("Codex Mobile")
+            val title = findNode("Chat")
             val status = flatten(root()).first { it.liveRegion == View.ACCESSIBILITY_LIVE_REGION_POLITE }
             val statusText = status.text?.toString()
             assertTrue(!statusText.isNullOrBlank())
             val ordered = flatten(root()).mapNotNull(::nodeLabel)
-            assertTrue(ordered.indexOf("Codex Mobile") < ordered.indexOf(statusText))
-            assertTrue(ordered.indexOf(statusText) < ordered.indexOf("Privacy and data"))
+            assertTrue(ordered.indexOf("Chat") < ordered.indexOf(statusText))
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) assertTrue(title.isHeading)
             assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE, status.liveRegion)
 
+            openSettings()
+            val settingsTitle = findNode("Settings")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) assertTrue(settingsTitle.isHeading)
             val folderLabel = if (
                 (context.applicationContext as CodexMobileApplication).graph.platform.currentScopeId() == null
             ) {
@@ -153,6 +154,7 @@ class Step06MvpReadinessTest {
         wakeDevice()
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
+            openSettings()
             scrollToStart()
             assertTrue(findButton("Erase Codex Mobile data").performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
@@ -175,14 +177,21 @@ class Step06MvpReadinessTest {
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
             instrumentation.waitForIdleSync()
+            openSettings()
             scrollToStart()
             scenario.onActivity { activity -> assertTrue(activity.resources.configuration.fontScale >= 1.9f) }
             val minimumPixels = 48f * context.resources.displayMetrics.density - 1f
+            val folderLabel = if (
+                (context.applicationContext as CodexMobileApplication).graph.platform.currentScopeId() == null
+            ) {
+                "Select document folder"
+            } else {
+                "Change document folder"
+            }
             listOf(
-                "Sign out of ChatGPT",
+                folderLabel,
                 "Privacy details",
                 "Erase Codex Mobile data",
-                "Sign in with ChatGPT",
             ).forEach { label -> assertTouchTarget(label, minimumPixels) }
         } finally {
             scenario.close()
@@ -272,6 +281,16 @@ class Step06MvpReadinessTest {
             instrumentation.waitForIdleSync()
         }
         throw AssertionError("$label could not be fully shown")
+    }
+
+    private fun openSettings() {
+        assertTrue(
+            findButton("Open conversation history")
+                .performAction(AccessibilityNodeInfo.ACTION_CLICK),
+        )
+        instrumentation.waitForIdleSync()
+        assertTrue(findButton("Open Settings").performAction(AccessibilityNodeInfo.ACTION_CLICK))
+        instrumentation.waitForIdleSync()
     }
 
     private fun scrollToStart() {

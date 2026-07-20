@@ -1,12 +1,20 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
 import io.github.ciurlaro.codexmobile.core.AgentClient
+import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentConversation
+import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentMessage
+import io.github.ciurlaro.codexmobile.core.AgentMessageRole
+import io.github.ciurlaro.codexmobile.core.AgentModel
+import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import io.github.ciurlaro.codexmobile.core.ToolCall
 import io.github.ciurlaro.codexmobile.core.ToolCallId
 import io.github.ciurlaro.codexmobile.core.ToolDefinition
 import io.github.ciurlaro.codexmobile.core.ToolResult
+import io.github.ciurlaro.codexmobile.core.deriveConversationTitle
 import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
@@ -34,6 +42,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -41,6 +50,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
@@ -127,7 +137,11 @@ class CodexAgentClient(
         try {
             val result = request(
                 "account/login/start",
-                buildJsonObject { put("type", "chatgptDeviceCode") },
+                buildJsonObject {
+                    put("type", "chatgpt")
+                    put("useHostedLoginSuccessPage", true)
+                    put("appBrand", "codex")
+                },
             ).jsonObject
             val startedLoginId = result.requiredString("loginId")
             val earlyCompletion = synchronized(loginStateLock) {
@@ -144,8 +158,7 @@ class CodexAgentClient(
                 authenticated.get() -> Unit
                 else -> eventsChannel.send(
                     AgentEvent.AuthenticationRequired(
-                        verificationUrl = result.requiredString("verificationUrl"),
-                        userCode = result.requiredString("userCode"),
+                        signInUrl = result.requiredString("authUrl"),
                     ),
                 )
             }
@@ -201,6 +214,43 @@ class CodexAgentClient(
         openedSessions.clear()
     }
 
+    override suspend fun listModels(): List<AgentModel> = requestAllPages("model/list") { item ->
+        AgentModel(
+            id = item.requiredString("model"),
+            displayName = item.requiredString("displayName"),
+            description = item.requiredString("description"),
+            supportedEfforts = item.requiredArray("supportedReasoningEfforts").map { effort ->
+                effort.jsonObject.requiredString("reasoningEffort")
+            },
+            defaultEffort = item.requiredString("defaultReasoningEffort"),
+            isDefault = item.requiredBoolean("isDefault"),
+        )
+    }
+
+    override suspend fun listSessions(): List<AgentConversationSummary> = requestAllPages(
+        "thread/list",
+        buildJsonObject {
+            put("sortKey", "updated_at")
+            put("sortDirection", "desc")
+        },
+        ::conversationSummary,
+    )
+
+    override suspend fun readSession(sessionId: SessionId): AgentConversation {
+        val thread = request(
+            "thread/read",
+            buildJsonObject {
+                put("threadId", sessionId.value)
+                put("includeTurns", true)
+            },
+        ).jsonObject.requiredObject("thread")
+        check(thread.requiredString("id") == sessionId.value) { "App-server returned another thread" }
+        val messages = thread.requiredArray("turns").flatMap { turn ->
+            turn.jsonObject.requiredArray("items").mapNotNull(::conversationMessage)
+        }
+        return AgentConversation(conversationSummary(thread), messages)
+    }
+
     override suspend fun openSession(previous: SessionId?): SessionId {
         val params = buildJsonObject {
             previous?.let { put("threadId", it.value) }
@@ -212,11 +262,13 @@ class CodexAgentClient(
                 "Answer conversationally in plain text. Use only the registered read-only Android " +
                     "document tools, plus rename_document when the user explicitly asks to rename a " +
                     "disposable document. Android and the user's approval decide whether any change " +
-                    "occurs. Treat every tool result as Android's authoritative observation.",
+                    "occurs. Treat every tool result as Android's authoritative observation. Use the " +
+                    "built-in web search tool only when the user input contains the structured " +
+                    "'${AgentCapability.WEB_SEARCH.promptLabel}' prompt tag.",
             )
             if (toolDefinitions.isNotEmpty()) put("dynamicTools", dynamicToolSpecs())
             putJsonObject("config") {
-                put("web_search", "disabled")
+                put("web_search", "live")
                 putJsonObject("tools") {
                     putJsonObject("experimental_request_user_input") { put("enabled", false) }
                 }
@@ -232,22 +284,37 @@ class CodexAgentClient(
                     put("hooks", false)
                     put("skill_mcp_dependency_install", false)
                     put("workspace_dependencies", false)
-                    put("web_search_request", false)
-                    put("web_search_cached", false)
                     put("standalone_web_search", false)
                 }
             }
         }
-        val result = request(if (previous == null) "thread/start" else "thread/resume", params)
-        val sessionId = SessionId(result.jsonObject.requiredObject("thread").requiredString("id"))
+        val result = request(if (previous == null) "thread/start" else "thread/resume", params).jsonObject
+        val sessionId = SessionId(result.requiredObject("thread").requiredString("id"))
         openedSessions += sessionId
-        eventsChannel.send(AgentEvent.SessionOpened(sessionId))
+        eventsChannel.send(
+            AgentEvent.SessionOpened(
+                sessionId = sessionId,
+                model = result.optionalString("model"),
+                effort = result.optionalString("reasoningEffort"),
+            ),
+        )
         return sessionId
     }
 
-    override suspend fun sendPrompt(sessionId: SessionId, prompt: String) {
-        require(prompt.isNotBlank()) { "Prompt must not be blank" }
-        require(prompt.length <= MAX_PROMPT_CHARS) { "Prompt is too large" }
+    override suspend fun sendPrompt(sessionId: SessionId, prompt: String) =
+        sendTurn(sessionId, AgentTurnRequest(prompt))
+
+    override suspend fun sendTurn(sessionId: SessionId, request: AgentTurnRequest) {
+        val snapshot = request.copy(capabilities = request.capabilities.toSet())
+        require(snapshot.prompt.isNotBlank() || snapshot.capabilities.isNotEmpty()) {
+            "Prompt must not be blank"
+        }
+        require(snapshot.prompt.length <= MAX_PROMPT_CHARS) { "Prompt is too large" }
+        require(snapshot.clientMessageId?.isNotBlank() != false) {
+            "Client message ID must not be blank"
+        }
+        require(snapshot.model?.isNotBlank() != false) { "Model must not be blank" }
+        require(snapshot.effort?.isNotBlank() != false) { "Effort must not be blank" }
         synchronized(turnStateLock) {
             check(sessionId !in startingTurns && !activeTurns.containsKey(sessionId)) {
                 "A turn is already active for this session"
@@ -260,17 +327,10 @@ class CodexAgentClient(
                 "turn/start",
                 buildJsonObject {
                     put("threadId", sessionId.value)
-                    put(
-                        "input",
-                        buildJsonArray {
-                            add(
-                                buildJsonObject {
-                                    put("type", "text")
-                                    put("text", prompt)
-                                },
-                            )
-                        },
-                    )
+                    snapshot.clientMessageId?.let { put("clientUserMessageId", it) }
+                    put("input", turnInput(snapshot))
+                    snapshot.model?.let { put("model", it) }
+                    snapshot.effort?.let { put("effort", it) }
                 },
             ).jsonObject
             val turnId = result.requiredObject("turn").requiredString("id")
@@ -613,7 +673,13 @@ class CodexAgentClient(
 
             "item/agentMessage/delta" -> {
                 val sessionId = SessionId(params.requiredString("threadId"))
-                emitBlocking(AgentEvent.TextDelta(sessionId, params.requiredString("delta")))
+                emitBlocking(
+                    AgentEvent.TextDelta(
+                        sessionId = sessionId,
+                        text = params.requiredString("delta"),
+                        itemId = params.optionalString("itemId"),
+                    ),
+                )
             }
 
             "turn/completed" -> {
@@ -732,6 +798,146 @@ class CodexAgentClient(
         }
     }
 
+    private suspend fun <T> requestAllPages(
+        method: String,
+        baseParams: JsonObject = buildJsonObject {},
+        transform: (JsonObject) -> T,
+    ): List<T> {
+        val values = mutableListOf<T>()
+        val seenCursors = mutableSetOf<String>()
+        var cursor: String? = null
+        do {
+            val page = request(
+                method,
+                buildJsonObject {
+                    baseParams.forEach { (name, value) -> put(name, value) }
+                    cursor?.let { put("cursor", it) }
+                },
+            ).jsonObject
+            values += page.requiredArray("data").map { transform(it.jsonObject) }
+            cursor = page.optionalString("nextCursor")
+            check(cursor == null || seenCursors.add(cursor)) { "App-server repeated a pagination cursor" }
+        } while (cursor != null)
+        return values
+    }
+
+    private fun conversationSummary(thread: JsonObject): AgentConversationSummary {
+        val preview = cleanTaggedPreview(thread.requiredText("preview"))
+        return AgentConversationSummary(
+            sessionId = SessionId(thread.requiredString("id")),
+            title = deriveConversationTitle(thread.optionalString("name"), preview),
+            updatedAtEpochSeconds = thread.requiredLong("updatedAt"),
+        )
+    }
+
+    private fun conversationMessage(rawItem: JsonElement): AgentMessage? {
+        val item = rawItem.jsonObject
+        return when (item.requiredString("type")) {
+            "userMessage" -> {
+                val prompts = item.requiredArray("content").mapNotNull { content ->
+                    content.jsonObject.takeIf { it.optionalString("type") == "text" }?.let(::parsePrompt)
+                }
+                if (prompts.isEmpty()) return null
+                AgentMessage(
+                    id = item.requiredString("id"),
+                    clientId = item.optionalString("clientId"),
+                    role = AgentMessageRole.USER,
+                    text = prompts.joinToString("\n", transform = ParsedPrompt::text),
+                    capabilities = prompts.flatMap(ParsedPrompt::capabilities).toSet(),
+                )
+            }
+
+            "agentMessage" -> AgentMessage(
+                id = item.requiredString("id"),
+                clientId = null,
+                role = AgentMessageRole.CODEX,
+                text = item.requiredText("text"),
+            )
+
+            else -> null
+        }
+    }
+
+    private fun turnInput(request: AgentTurnRequest): JsonArray {
+        val capabilities = request.capabilities.sortedBy(AgentCapability::id)
+        val tagBlock = capabilities.joinToString("\n", transform = AgentCapability::promptLabel)
+        val text = when {
+            tagBlock.isEmpty() -> request.prompt
+            request.prompt.isBlank() -> tagBlock
+            else -> "$tagBlock\n\n${request.prompt}"
+        }
+        return buildJsonArray {
+            add(
+                buildJsonObject {
+                    put("type", "text")
+                    put("text", text)
+                    if (capabilities.isNotEmpty()) {
+                        put(
+                            "text_elements",
+                            buildJsonArray {
+                                var start = 0
+                                capabilities.forEach { capability ->
+                                    val end = start + capability.promptLabel
+                                        .toByteArray(StandardCharsets.UTF_8)
+                                        .size
+                                    add(
+                                        buildJsonObject {
+                                            putJsonObject("byteRange") {
+                                                put("start", start)
+                                                put("end", end)
+                                            }
+                                            put("placeholder", capability.displayLabel)
+                                        },
+                                    )
+                                    start = end + 1
+                                }
+                            },
+                        )
+                    }
+                },
+            )
+        }
+    }
+
+    private fun parsePrompt(input: JsonObject): ParsedPrompt {
+        val text = input.requiredText("text")
+        val bytes = text.toByteArray(StandardCharsets.UTF_8)
+        val capabilities = input.optionalArray("text_elements").mapNotNull { rawElement ->
+            runCatching {
+                val element = rawElement.jsonObject
+                val capability = AgentCapability.entries.singleOrNull {
+                    it.displayLabel == element.optionalString("placeholder")
+                } ?: return@runCatching null
+                val range = element.requiredObject("byteRange")
+                val start = range.requiredLong("start").toInt()
+                val end = range.requiredLong("end").toInt()
+                capability.takeIf {
+                    start >= 0 && end in start..bytes.size &&
+                        bytes.copyOfRange(start, end).toString(StandardCharsets.UTF_8) == it.promptLabel
+                }
+            }.getOrNull()
+        }.toSet()
+        val tagBlock = capabilities.sortedBy(AgentCapability::id)
+            .joinToString("\n", transform = AgentCapability::promptLabel)
+        val visibleText = when {
+            tagBlock.isEmpty() -> text
+            text == tagBlock -> ""
+            text.startsWith("$tagBlock\n\n") -> text.removePrefix("$tagBlock\n\n")
+            else -> text
+        }
+        return ParsedPrompt(visibleText, capabilities)
+    }
+
+    private fun cleanTaggedPreview(preview: String): String {
+        val tagBlock = AgentCapability.entries.sortedBy(AgentCapability::id)
+            .joinToString("\n", transform = AgentCapability::promptLabel)
+        return when {
+            preview == tagBlock -> ""
+            preview.startsWith("$tagBlock\n\n") -> preview.removePrefix("$tagBlock\n\n")
+            else -> preview
+        }
+    }
+
     private fun dynamicToolSpecs() = buildJsonArray {
         toolDefinitions.forEach { definition ->
             add(
@@ -748,6 +954,24 @@ class CodexAgentClient(
     private fun JsonObject.requiredString(name: String): String =
         this[name]?.jsonPrimitive?.contentOrNull?.takeIf(String::isNotEmpty)
             ?: error("Missing $name")
+
+    private fun JsonObject.requiredText(name: String): String =
+        this[name]?.jsonPrimitive?.contentOrNull ?: error("Missing $name")
+
+    private fun JsonObject.optionalString(name: String): String? =
+        this[name]?.jsonPrimitive?.contentOrNull
+
+    private fun JsonObject.requiredLong(name: String): Long =
+        this[name]?.jsonPrimitive?.longOrNull ?: error("Missing $name")
+
+    private fun JsonObject.requiredBoolean(name: String): Boolean =
+        this[name]?.jsonPrimitive?.booleanOrNull ?: error("Missing $name")
+
+    private fun JsonObject.requiredArray(name: String): JsonArray =
+        this[name]?.jsonArray ?: error("Missing $name")
+
+    private fun JsonObject.optionalArray(name: String): JsonArray =
+        this[name]?.let { if (it is JsonNull) null else it.jsonArray } ?: JsonArray(emptyList())
 
     private fun JsonObject.requiredObject(name: String): JsonObject =
         this[name] as? JsonObject ?: error("Missing $name")
@@ -766,6 +990,11 @@ class CodexAgentClient(
         val loginId: String,
         val success: Boolean,
         val error: String?,
+    )
+
+    private data class ParsedPrompt(
+        val text: String,
+        val capabilities: Set<AgentCapability>,
     )
 
     private companion object {
