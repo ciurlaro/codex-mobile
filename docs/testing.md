@@ -28,7 +28,15 @@ Use the smallest layer that crosses the real boundary. Mocking `ContentResolver`
 
 ```sh
 bash scripts/verify-structure.sh
-gradle test assembleDebug assembleDebugAndroidTest
+./gradlew test assembleDebug assembleDebugAndroidTest lint
 ```
 
-Instrumentation suites run on a matching emulator and at least one stock ARM64 device when their roadmap step becomes active.
+With external release signing variables configured, the release gate adds:
+
+```sh
+./gradlew assembleRelease
+scripts/verify-release.sh
+scripts/verify-reproducible-release.sh
+```
+
+Instrumentation suites run on ARM64 API 26 and API 37/16K emulators plus a stock ARM64 API 36 device. Assumption-gated process-death, permission, network, timeout, profile, sign-out, and deletion harnesses run separately with their documented arguments; an assumption in an ordinary sweep is never counted as evidence for that gated case.

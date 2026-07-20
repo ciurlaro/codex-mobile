@@ -3,6 +3,21 @@ plugins {
     alias(libs.plugins.kotlin.compose)
 }
 
+val releaseStorePath = providers.gradleProperty("codexMobile.release.storeFile")
+    .orElse(providers.environmentVariable("CODEX_MOBILE_RELEASE_STORE_FILE"))
+val releaseStorePassword = providers.gradleProperty("codexMobile.release.storePassword")
+    .orElse(providers.environmentVariable("CODEX_MOBILE_RELEASE_STORE_PASSWORD"))
+val releaseKeyAlias = providers.gradleProperty("codexMobile.release.keyAlias")
+    .orElse(providers.environmentVariable("CODEX_MOBILE_RELEASE_KEY_ALIAS"))
+val releaseKeyPassword = providers.gradleProperty("codexMobile.release.keyPassword")
+    .orElse(providers.environmentVariable("CODEX_MOBILE_RELEASE_KEY_PASSWORD"))
+val releaseSigningConfigured = listOf(
+    releaseStorePath,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword,
+).all { it.isPresent }
+
 android {
     namespace = "io.github.ciurlaro.codexmobile.app"
     compileSdk = 37
@@ -11,8 +26,8 @@ android {
         applicationId = "io.github.ciurlaro.codexmobile"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.0.0"
+        versionCode = 2
+        versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -22,6 +37,33 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    dependenciesInfo {
+        includeInApk = false
+    }
+
+    signingConfigs {
+        create("release") {
+            if (releaseSigningConfigured) {
+                storeFile = file(releaseStorePath.get())
+                storePassword = releaseStorePassword.get()
+                keyAlias = releaseKeyAlias.get()
+                keyPassword = releaseKeyPassword.get()
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            if (releaseSigningConfigured) signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     compileOptions {
@@ -56,6 +98,24 @@ val prepareCodexRuntime = tasks.register<Exec>("prepareCodexRuntime") {
 
 tasks.named("preBuild").configure {
     dependsOn(prepareCodexRuntime)
+}
+
+val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
+    inputs.property("configured", releaseSigningConfigured)
+    inputs.property("storePath", releaseStorePath.orElse(""))
+    doLast {
+        check(inputs.properties["configured"] == true) {
+            "Release signing requires codexMobile.release.{storeFile,storePassword,keyAlias,keyPassword} " +
+                "Gradle properties or the matching CODEX_MOBILE_RELEASE_* environment variables"
+        }
+        check(File(inputs.properties.getValue("storePath").toString()).isFile) {
+            "Release keystore does not exist"
+        }
+    }
+}
+
+tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
+    dependsOn(verifyReleaseSigning)
 }
 
 dependencies {

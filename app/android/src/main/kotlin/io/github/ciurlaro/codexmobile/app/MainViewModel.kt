@@ -1,5 +1,6 @@
 package io.github.ciurlaro.codexmobile.app
 
+import android.app.ActivityManager
 import android.app.Application
 import android.content.ComponentName
 import android.content.Context
@@ -45,6 +46,7 @@ data class MainUiState(
     val recoveryNotices: List<MutationRecoveryNotice> = emptyList(),
     val backgroundActive: Boolean = false,
     val backgroundNotificationVisible: Boolean = true,
+    val diagnosticCode: String? = null,
 )
 
 data class MutationRecoveryNotice(
@@ -67,6 +69,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var serviceController: ForegroundSessionController? = null
     private var serviceStateJob: Job? = null
     private var notificationsEnabled: (() -> Boolean)? = null
+    private var signOutAction: (() -> Unit)? = null
+    private var signOutPending = false
     private var bindingRequested = false
     internal var serviceInstanceId: String? = null
         private set
@@ -76,12 +80,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val binder = service as? CodexForegroundService.LocalBinder ?: return
             serviceController = binder.controller
             notificationsEnabled = binder::notificationsEnabled
+            signOutAction = binder::signOut
             serviceInstanceId = binder.serviceInstanceId
             bindingRequested = true
+            if (signOutPending) {
+                signOutPending = false
+                binder.signOut()
+            }
             serviceStateJob?.cancel()
             serviceStateJob = viewModelScope.launch {
                 binder.controller.state.collect { session ->
                     applySessionState(session, binder.notificationsEnabled())
+                    if (session.terminal) releaseServiceBinding()
                     session.pendingTool?.let { event ->
                         binder.controller.claimTool(toolOwner, event.call.id)?.let { claimed ->
                             launch { executeTool(claimed, binder.controller) }
@@ -159,6 +169,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ?: mutableState.update { it.copy(status = "Ready to sign in") }
     }
 
+    fun browserUnavailable() {
+        mutableState.update { it.copy(status = "No browser can open the ChatGPT sign-in page") }
+    }
+
     fun submit(prompt: String) {
         if (prompt.isBlank()) {
             mutableState.update { it.copy(status = "Enter a prompt first") }
@@ -177,6 +191,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure {
                 mutableState.update { state -> state.copy(status = "Background work could not be stopped") }
             }
+    }
+
+    fun signOut() {
+        mutableState.update {
+            it.copy(status = "Signing out…", verificationUrl = null, userCode = null)
+        }
+        signOutAction?.invoke() ?: run {
+            signOutPending = true
+            if (!bindService(Context.BIND_AUTO_CREATE)) {
+                signOutPending = false
+                mutableState.update { it.copy(status = "ChatGPT sign-out could not start; try again") }
+            }
+        }
+    }
+
+    fun eraseAppData() {
+        mutableState.update { it.copy(status = "Erasing Codex Mobile data…") }
+        val accepted = appContext.getSystemService(ActivityManager::class.java)
+            .clearApplicationUserData()
+        if (!accepted) {
+            mutableState.update { it.copy(status = "Android could not erase app data; try again") }
+        }
     }
 
     fun selectScope(uri: Uri) {
@@ -298,6 +334,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         bindingRequested = false
         serviceController = null
         notificationsEnabled = null
+        signOutAction = null
+        signOutPending = false
         serviceInstanceId = null
     }
 
@@ -339,6 +377,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         verificationUrl = null,
                         userCode = null,
                         turnActive = false,
+                        diagnosticCode = event.code,
                     )
                 }
             }
@@ -541,6 +580,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 turnActive = session.turnActive,
                 backgroundActive = !session.terminal,
                 backgroundNotificationVisible = notificationVisible,
+                diagnosticCode = session.diagnosticCode,
             )
         }
     }
@@ -558,11 +598,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         return bound
     }
 
+    private fun releaseServiceBinding() {
+        if (bindingRequested) runCatching { appContext.unbindService(serviceConnection) }
+        serviceEnded()
+    }
+
     private fun serviceEnded() {
         serviceStateJob?.cancel()
         serviceStateJob = null
         serviceController = null
         notificationsEnabled = null
+        signOutAction = null
+        signOutPending = false
         serviceInstanceId = null
         bindingRequested = false
         abandonPendingApproval()

@@ -15,6 +15,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -122,6 +123,36 @@ class ForegroundSessionControllerTest {
     }
 
     @Test
+    fun signOutClosesTheOwnerAndClearsVisibleSessionState(): Unit = runBlocking {
+        val fake = FakeAgentClient()
+        val controller = controller(fake)
+        fake.emit(AgentEvent.SessionOpened(SESSION))
+        await { controller.state.value.sessionId == SESSION }
+
+        assertTrue(controller.stopAndClose("Signed out", signOut = true))
+
+        assertEquals(1, fake.signOutCount.get())
+        assertTrue(fake.closed)
+        assertEquals("Signed out", controller.state.value.status)
+        assertNull(controller.state.value.sessionId)
+        assertTrue(controller.state.value.terminal)
+    }
+
+    @Test
+    fun signOutDoesNotReleaseTheServiceBeforeLogoutFinishes(): Unit = runBlocking {
+        val fake = FakeAgentClient().apply { blockSignOut = true }
+        val controller = controller(fake)
+        val result = async { controller.stopAndClose("Signed out", signOut = true) }
+
+        fake.signOutStarted.await()
+        assertFalse(controller.state.value.terminal)
+        fake.finishSignOut.complete(Unit)
+
+        assertTrue(result.await())
+        assertTrue(controller.state.value.terminal)
+    }
+
+    @Test
     fun concurrentSubmissionsStartOneTurnAndNetworkFailureRemainsBounded(): Unit = runBlocking {
         val fake = FakeAgentClient()
         val controller = controller(fake)
@@ -160,6 +191,7 @@ class ForegroundSessionControllerTest {
             await { !controller.state.value.turnActive }
             assertEquals(500, controller.state.value.status.length)
             assertTrue(controller.state.value.attentionRequired)
+            assertEquals("network_unavailable", controller.state.value.diagnosticCode)
 
             controller.submit("x")
             await { fake.promptCount.get() == 3 }
@@ -188,6 +220,10 @@ class ForegroundSessionControllerTest {
         override val events: Flow<AgentEvent> = eventChannel.receiveAsFlow()
         val authenticateCount = AtomicInteger()
         val cancelAuthenticationCount = AtomicInteger()
+        val signOutCount = AtomicInteger()
+        val signOutStarted = CompletableDeferred<Unit>()
+        val finishSignOut = CompletableDeferred<Unit>()
+        var blockSignOut = false
         val openSessionCount = AtomicInteger()
         val promptCount = AtomicInteger()
         val cancelCount = AtomicInteger()
@@ -200,6 +236,12 @@ class ForegroundSessionControllerTest {
 
         override suspend fun cancelAuthentication() {
             cancelAuthenticationCount.incrementAndGet()
+        }
+
+        override suspend fun signOut() {
+            signOutCount.incrementAndGet()
+            signOutStarted.complete(Unit)
+            if (blockSignOut) finishSignOut.await()
         }
 
         override suspend fun openSession(previous: SessionId?): SessionId {

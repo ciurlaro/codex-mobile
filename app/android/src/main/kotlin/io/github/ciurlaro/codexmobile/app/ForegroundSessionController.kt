@@ -26,6 +26,7 @@ internal data class ForegroundSessionState(
     val turnActive: Boolean = false,
     val pendingTool: AgentEvent.ToolRequested? = null,
     val attentionRequired: Boolean = false,
+    val diagnosticCode: String? = null,
     val terminal: Boolean = false,
 )
 
@@ -56,6 +57,7 @@ internal class ForegroundSessionController(
                 verificationUrl = null,
                 userCode = null,
                 attentionRequired = false,
+                diagnosticCode = null,
             )
         }
         launchVisibleFailure(resetAuthentication = true) { agentClient.authenticate() }
@@ -92,6 +94,7 @@ internal class ForegroundSessionController(
                 streamedText = "",
                 turnActive = true,
                 attentionRequired = false,
+                diagnosticCode = null,
             )
         }
         launchVisibleFailure(resetTurn = true) { agentClient.sendPrompt(sessionId, prompt) }
@@ -161,8 +164,8 @@ internal class ForegroundSessionController(
         launchVisibleFailure { agentClient.submitToolResult(claim.event.sessionId, result) }
     }
 
-    suspend fun stopAndClose(reason: String) {
-        if (!closed.compareAndSet(false, true)) return
+    suspend fun stopAndClose(reason: String, signOut: Boolean = false): Boolean {
+        if (!closed.compareAndSet(false, true)) return false
         val before = state.value
         synchronized(lock) {
             authenticationStarted = false
@@ -178,7 +181,7 @@ internal class ForegroundSessionController(
                 userCode = null,
                 turnActive = false,
                 pendingTool = null,
-                terminal = true,
+                diagnosticCode = null,
             )
         }
         if (before.turnActive && before.sessionId != null) {
@@ -186,8 +189,18 @@ internal class ForegroundSessionController(
                 runCatching { agentClient.cancelTurn(before.sessionId) }
             }
         }
+        val signedOut = !signOut || withTimeoutOrNull(STOP_TIMEOUT_MILLIS) {
+            runCatching { agentClient.signOut() }.isSuccess
+        } == true
         agentClient.close()
         eventJob.cancel()
+        mutableState.update {
+            it.copy(
+                status = if (signedOut) it.status else "ChatGPT sign-out failed; try again",
+                terminal = true,
+            )
+        }
+        return signedOut
     }
 
     override fun close() {
@@ -206,6 +219,7 @@ internal class ForegroundSessionController(
                 userCode = null,
                 turnActive = false,
                 pendingTool = null,
+                diagnosticCode = null,
                 terminal = true,
             )
         }
@@ -227,13 +241,18 @@ internal class ForegroundSessionController(
             AgentEvent.Authenticated -> {
                 synchronized(lock) { authenticationStarted = false }
                 mutableState.update {
-                    it.copy(status = "Signed in; starting session…", verificationUrl = null, userCode = null)
+                    it.copy(
+                        status = "Signed in; starting session…",
+                        verificationUrl = null,
+                        userCode = null,
+                        diagnosticCode = null,
+                    )
                 }
                 openSessionOnce()
             }
 
             is AgentEvent.SessionOpened -> mutableState.update {
-                it.copy(status = "Ready", sessionId = event.sessionId)
+                it.copy(status = "Ready", sessionId = event.sessionId, diagnosticCode = null)
             }
 
             is AgentEvent.TextDelta -> mutableState.update {
@@ -253,7 +272,11 @@ internal class ForegroundSessionController(
                 turnClaimed.set(false)
                 cancellationStarted.set(false)
                 mutableState.update {
-                    if (it.sessionId == event.sessionId) it.copy(status = "Ready", turnActive = false) else it
+                    if (it.sessionId == event.sessionId) {
+                        it.copy(status = "Ready", turnActive = false, diagnosticCode = null)
+                    } else {
+                        it
+                    }
                 }
             }
 
@@ -273,6 +296,7 @@ internal class ForegroundSessionController(
                         turnActive = false,
                         pendingTool = null,
                         attentionRequired = true,
+                        diagnosticCode = event.code,
                     )
                 }
             }
@@ -336,6 +360,7 @@ internal class ForegroundSessionController(
                             userCode = null,
                             turnActive = false,
                             attentionRequired = true,
+                            diagnosticCode = "client_request",
                         )
                     }
                 }

@@ -181,6 +181,26 @@ class CodexAgentClient(
         }
     }
 
+    override suspend fun signOut() = authMutex.withLock {
+        ensureStarted()
+        request("account/logout", buildJsonObject {})
+        authenticated.set(false)
+        synchronized(loginStateLock) {
+            loginId = null
+            loginStarting = false
+            loginCompletedDuringStart = null
+            cancelledLoginIds.clear()
+        }
+        synchronized(turnStateLock) {
+            activeTurns.clear()
+            startingTurns.clear()
+            terminalDuringStart.clear()
+            cancellingTurns.clear()
+        }
+        synchronized(toolRequestLock) { pendingToolRequests.clear() }
+        openedSessions.clear()
+    }
+
     override suspend fun openSession(previous: SessionId?): SessionId {
         val params = buildJsonObject {
             previous?.let { put("threadId", it.value) }

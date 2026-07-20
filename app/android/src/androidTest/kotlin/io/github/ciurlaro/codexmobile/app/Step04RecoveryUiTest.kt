@@ -63,10 +63,11 @@ class Step04RecoveryUiTest {
     private fun awaitNode(text: String): AccessibilityNodeInfo {
         val deadline = SystemClock.elapsedRealtime() + 5_000
         while (SystemClock.elapsedRealtime() < deadline) {
-            instrumentation.uiAutomation.rootInActiveWindow
-                ?.allNodes()
-                ?.singleOrNull { it.text?.toString() == text }
-                ?.let { return it }
+            val root = instrumentation.uiAutomation.rootInActiveWindow
+            val nodes = root?.allNodes().orEmpty()
+            nodes.singleOrNull { it.text?.toString() == text }?.let { return it }
+            nodes.firstOrNull { it.isScrollable }
+                ?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)
             SystemClock.sleep(25)
         }
         error("Expected recovery UI was not visible")

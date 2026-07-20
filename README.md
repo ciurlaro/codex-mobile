@@ -28,7 +28,7 @@ Start with [requirements](docs/requirements.md), then read [architecture](docs/a
 
 ```sh
 bash scripts/verify-structure.sh
-gradle test assembleDebug assembleDebugAndroidTest
+./gradlew test assembleDebug assembleDebugAndroidTest lint
 ```
 
-CI pins the required Gradle version. The debug build downloads the pinned Codex app-server release, verifies both archive and executable checksums, and packages the ARM64 executable as a native library.
+The checked-in wrapper pins Gradle 9.4.1. The build downloads the pinned Codex app-server release, verifies both archive and executable checksums, and packages the ARM64 executable as a native library. Signed release construction, inspection, reproducibility, provenance, and operator drills are documented in [Android MVP release and operations](docs/release.md); the trust and data contracts are in [security](docs/security.md) and [privacy](docs/privacy.md).

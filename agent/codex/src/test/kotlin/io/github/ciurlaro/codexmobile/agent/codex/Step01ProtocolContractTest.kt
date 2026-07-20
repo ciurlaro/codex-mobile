@@ -15,6 +15,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
+import kotlin.random.Random
+import kotlin.system.measureTimeMillis
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -48,6 +50,37 @@ class Step01ProtocolContractTest {
         readUtf8JsonLines(ChunkedInputStream(bytes, 2), onLine = lines::add)
 
         assertEquals(listOf("{\"n\":1}", "{\"text\":\"$unicode\"}"), lines)
+    }
+
+    @Test
+    fun `fuzzed frames stay bounded and malformed UTF-8 fails closed`() {
+        val random = Random(6)
+        val elapsed = measureTimeMillis {
+            repeat(2_048) {
+                val input = ByteArray(random.nextInt(0, 4_096)).also(random::nextBytes)
+                try {
+                    readUtf8JsonLines(ByteArrayInputStream(input), maxBytes = 4_096) { line ->
+                        assertTrue(line.toByteArray(StandardCharsets.UTF_8).size <= 4_096)
+                    }
+                } catch (_: Exception) {
+                    // Random malformed frames are expected; assertion errors must still fail the test.
+                }
+            }
+            repeat(64) {
+                assertFailsWith<IllegalStateException> {
+                    readUtf8JsonLines(ByteArrayInputStream(ByteArray(4_097) { 'x'.code.toByte() }), 4_096) {}
+                }
+            }
+            listOf(
+                byteArrayOf(0xC3.toByte(), 0x28),
+                byteArrayOf(0xA0.toByte(), 0xA1.toByte()),
+                byteArrayOf(0xE2.toByte(), 0x28, 0xA1.toByte()),
+                byteArrayOf(0xF0.toByte(), 0x28, 0x8C.toByte(), 0xBC.toByte()),
+            ).forEach { bytes ->
+                assertFailsWith<Exception> { readUtf8JsonLines(ByteArrayInputStream(bytes)) {} }
+            }
+        }
+        assertTrue(elapsed < 5_000, "fuzz elapsed ${elapsed}ms")
     }
 
     @Test
@@ -120,6 +153,39 @@ class Step01ProtocolContractTest {
             ).forEach { feature ->
                 assertEquals(false, features[feature]!!.jsonPrimitive.content.toBoolean())
             }
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `sign out uses the account endpoint and clears in-memory authentication`(): Unit = runBlocking {
+        val accountReads = AtomicInteger()
+        var logoutParams: JsonObject? = null
+        val process = ScriptedProcess { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "account/read" -> {
+                    accountReads.incrementAndGet()
+                    server.respond(
+                        message.id,
+                        buildJsonObject { putJsonObject("account") { put("type", "chatgpt") } },
+                    )
+                }
+                "account/logout" -> {
+                    logoutParams = message.objectValue["params"]!!.jsonObject
+                    server.respond(message.id, buildJsonObject {})
+                }
+            }
+        }
+        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        try {
+            client.authenticate()
+            client.signOut()
+            client.authenticate()
+
+            assertEquals(2, accountReads.get())
+            assertTrue(checkNotNull(logoutParams).isEmpty())
         } finally {
             client.close()
         }

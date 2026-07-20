@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.os.Process
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.ciurlaro.codexmobile.core.ApprovalRequirement
@@ -16,6 +17,7 @@ import io.github.ciurlaro.codexmobile.core.ToolExecutor
 import io.github.ciurlaro.codexmobile.core.ToolRejectedException
 import io.github.ciurlaro.codexmobile.core.ToolResult
 import java.util.concurrent.atomic.AtomicInteger
+import kotlin.random.Random
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.After
@@ -193,7 +195,7 @@ class Step02ReadOnlyAuthorityTest {
     }
 
     @Test
-    fun scopeConfinementRejectsForeignPathsAndRedirectedIdentifiers(): Unit = runBlocking {
+    fun scopeConfinementAndFuzzedArgumentsFailClosedWithinBounds(): Unit = runBlocking {
         val platform = AndroidPlatform(context)
         val treeUri = grantTree()
         val firstScope = platform.persistScope(treeUri)
@@ -215,6 +217,25 @@ class Step02ReadOnlyAuthorityTest {
                 readTool.prepare(call(readTool.name, arguments), firstScope)
             }
         }
+
+        val random = Random(6)
+        val fuzzStartedAt = SystemClock.elapsedRealtime()
+        repeat(512) { index ->
+            val length = random.nextInt(0, 2_048)
+            val value = buildString(length) {
+                repeat(length) { append(random.nextInt(0x20, 0x7f).toChar()) }
+            }
+            val arguments = when (index % 4) {
+                0 -> JSONObject().put("unknown-$index", value).toString()
+                1 -> JSONObject().put("documentId", index).toString()
+                2 -> "{\"documentId\":\"$value"
+                else -> "[$index,${JSONObject.quote(value)}]"
+            }
+            assertSuspendFails<ToolRejectedException> {
+                readTool.prepare(call(readTool.name, arguments), firstScope)
+            }
+        }
+        assertTrue(SystemClock.elapsedRealtime() - fuzzStartedAt < 10_000)
 
         val secondScope = platform.persistScope(treeUri)
         assertSuspendFails<ToolRejectedException> {

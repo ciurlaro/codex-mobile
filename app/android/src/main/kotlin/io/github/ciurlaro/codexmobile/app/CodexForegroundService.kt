@@ -118,11 +118,11 @@ class CodexForegroundService : Service() {
         stopSelfResult(startId)
     }
 
-    private fun stopOwner(reason: String) {
+    private fun stopOwner(reason: String, signOut: Boolean = false) {
         if (!stopping.compareAndSet(false, true)) return
         serviceScope.launch {
             foregroundStarted = false
-            controller.stopAndClose(reason)
+            controller.stopAndClose(reason, signOut)
             graph.markBackgroundActive(false)
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -196,6 +196,7 @@ class CodexForegroundService : Service() {
         val serviceInstanceId: String get() = instanceId
         val isForegroundStarted: Boolean get() = foregroundStarted
         fun notificationsEnabled(): Boolean = notificationManager.areNotificationsEnabled()
+        fun signOut() = stopOwner("Signed out", signOut = true)
     }
 
     internal companion object {

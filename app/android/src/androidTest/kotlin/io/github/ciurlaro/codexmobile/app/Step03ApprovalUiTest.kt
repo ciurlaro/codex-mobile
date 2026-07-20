@@ -2,6 +2,7 @@ package io.github.ciurlaro.codexmobile.app
 
 import android.view.accessibility.AccessibilityNodeInfo
 import android.os.SystemClock
+import android.os.ParcelFileDescriptor
 import android.view.KeyEvent
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -25,7 +26,7 @@ class Step03ApprovalUiTest {
         val scenario = ActivityScenario.launch(Step03ApprovalTestActivity::class.java)
         instrumentation.waitForIdleSync()
         var root = approvalRoot()
-        val texts = root.allNodes().mapNotNull { it.text?.toString() }
+        val texts = approvalTexts()
         assertTrue("Approve Android change?" in texts)
         assertTrue(texts.any { it.startsWith("Operation: Rename document") })
         val source = texts.single { it.startsWith("Source: ") }
@@ -116,6 +117,26 @@ class Step03ApprovalUiTest {
         }
         error("Approval dialog did not close")
     }
+
+    private fun approvalTexts(): Set<String> = buildSet {
+        repeat(10) {
+            val root = approvalRoot()
+            addAll(root.allNodes().mapNotNull { it.text?.toString() })
+            val scrollable = root.allNodes().firstOrNull { it.isScrollable }
+            if (scrollable?.performAction(AccessibilityNodeInfo.ACTION_SCROLL_FORWARD) != true) {
+                val metrics = instrumentation.targetContext.resources.displayMetrics
+                shell(
+                    "input swipe ${metrics.widthPixels / 2} ${metrics.heightPixels * 2 / 3} " +
+                        "${metrics.widthPixels / 2} ${metrics.heightPixels / 3} 250",
+                )
+            }
+            instrumentation.waitForIdleSync()
+        }
+    }
+
+    private fun shell(command: String) = ParcelFileDescriptor.AutoCloseInputStream(
+        instrumentation.uiAutomation.executeShellCommand(command),
+    ).use { it.readBytes() }
 
     private fun AccessibilityNodeInfo.action(label: String): AccessibilityNodeInfo {
         var node = allNodes().single { it.text?.toString() == label }

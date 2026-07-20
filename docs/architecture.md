@@ -52,7 +52,11 @@ After approval, core requires durable `Prepared` and `Executing` journal transit
 
 ## Active session lifetime
 
-An explicit UI action starts one non-exported `dataSync` foreground service. That service owns one `ForegroundSessionController` and one `CodexAgentClient`; Activities bind only to render its bounded state and may disappear without closing it. The controller excludes duplicate turns and gives one visible UI owner a claim on each tool request, but the ViewModel still resolves Android plans and the UI still makes every mutation approval decision. A one-use private start authorization rejects unsolicited starts. Stop, Android timeout, or notification action cancels active work within five seconds, closes the app-server, removes the notification, and does not schedule or reboot-restart anything.
+An explicit UI action starts one non-exported `dataSync` foreground service. That service owns one `ForegroundSessionController` and one `CodexAgentClient`; Activities bind only to render its bounded state and may disappear without closing it. The controller excludes duplicate turns and gives one visible UI owner a claim on each tool request, but the ViewModel still resolves Android plans and the UI still makes every mutation approval decision. A one-use private start authorization rejects unsolicited starts. Stop, Android timeout, or notification action cancels active work within five seconds, closes the app-server, removes the notification, and does not schedule or reboot-restart anything. Sign-out keeps the UI binding until bounded `account/logout` and client close finish, preventing Android from destroying a bind-only service mid-logout.
+
+## Data lifecycle
+
+Credentials, Codex history, scope metadata, and mutation recovery stay in app-private storage excluded from backup. `account/logout` removes ChatGPT authentication while retaining unrelated local state. Scope revocation releases only the current SAF grant. Confirmed full erasure delegates to Android's native app-data reset, which removes private state, runtime permissions, notifications, and persisted grants without deleting provider-owned user files.
 
 ## Dependency rules
 
