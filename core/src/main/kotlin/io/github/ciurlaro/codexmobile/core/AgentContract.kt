@@ -7,6 +7,10 @@ interface AgentClient : AutoCloseable {
 
     suspend fun authenticate()
 
+    suspend fun cancelAuthentication()
+
+    suspend fun signOut()
+
     suspend fun openSession(previous: SessionId? = null): SessionId
 
     suspend fun sendPrompt(sessionId: SessionId, prompt: String)
@@ -23,7 +27,9 @@ sealed interface AgentEvent {
     data class AuthenticationRequired(
         val verificationUrl: String,
         val userCode: String?,
-    ) : AgentEvent
+    ) : AgentEvent {
+        override fun toString(): String = "AuthenticationRequired"
+    }
 
     data object Authenticated : AgentEvent
 

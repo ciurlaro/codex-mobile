@@ -2,7 +2,7 @@
 
 An Android feasibility project for running Codex locally, while Android keeps final authority over device data and side effects.
 
-**Status:** architecture frozen provisionally; implementation not started; [Step 01](docs/roadmap/01-runtime-premise.md) is the only active experiment.
+**Status:** [Roadmap Steps 01–06](docs/roadmap/README.md) are complete; the bounded Android MVP passes its documented release gates.
 
 ## Ownership
 
@@ -28,7 +28,7 @@ Start with [requirements](docs/requirements.md), then read [architecture](docs/a
 
 ```sh
 bash scripts/verify-structure.sh
-gradle test assembleDebug assembleDebugAndroidTest
+./gradlew test assembleDebug assembleDebugAndroidTest lint
 ```
 
-CI pins the required Gradle version. The executable Codex runtime is intentionally absent until Step 01 determines how it can be packaged legally and reliably.
+The checked-in wrapper pins Gradle 9.4.1. The build downloads the pinned Codex app-server release, verifies both archive and executable checksums, and packages the ARM64 executable as a native library. Signed release construction, inspection, reproducibility, provenance, and operator drills are documented in [Android MVP release and operations](docs/release.md); the trust and data contracts are in [security](docs/security.md) and [privacy](docs/privacy.md).

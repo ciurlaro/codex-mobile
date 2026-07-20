@@ -1,0 +1,1513 @@
+{
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "pkg:generic/codex-mobile-core@0.1.0",
+      "name": "codex-mobile-core",
+      "purl": "pkg:generic/codex-mobile-core@0.1.0",
+      "type": "library",
+      "version": "0.1.0"
+    },
+    {
+      "bom-ref": "pkg:generic/codex-mobile-agent-codex@0.1.0",
+      "name": "codex-mobile-agent-codex",
+      "purl": "pkg:generic/codex-mobile-agent-codex@0.1.0",
+      "type": "library",
+      "version": "0.1.0"
+    },
+    {
+      "bom-ref": "pkg:generic/codex-mobile-platform-android@0.1.0",
+      "name": "codex-mobile-platform-android",
+      "purl": "pkg:generic/codex-mobile-platform-android@0.1.0",
+      "type": "library",
+      "version": "0.1.0"
+    },
+    {
+      "bom-ref": "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64",
+      "group": "OpenAI",
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "codex-app-server",
+      "properties": [
+        {
+          "name": "codex-mobile:archive-sha256",
+          "value": "3539380f431aa72ce1e9ba83cf4d9b2c2a70d12ddf3280bc67c8c59f93bb9eb5"
+        },
+        {
+          "name": "codex-mobile:source",
+          "value": "github.com/openai/codex release"
+        }
+      ],
+      "purl": "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64",
+      "type": "application",
+      "version": "0.144.6"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.activity/activity@1.13.0",
+      "group": "androidx.activity",
+      "name": "activity",
+      "purl": "pkg:maven/androidx.activity/activity@1.13.0",
+      "type": "library",
+      "version": "1.13.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.activity/activity-compose@1.13.0",
+      "group": "androidx.activity",
+      "name": "activity-compose",
+      "purl": "pkg:maven/androidx.activity/activity-compose@1.13.0",
+      "type": "library",
+      "version": "1.13.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.activity/activity-ktx@1.13.0",
+      "group": "androidx.activity",
+      "name": "activity-ktx",
+      "purl": "pkg:maven/androidx.activity/activity-ktx@1.13.0",
+      "type": "library",
+      "version": "1.13.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.annotation/annotation@1.9.1",
+      "group": "androidx.annotation",
+      "name": "annotation",
+      "purl": "pkg:maven/androidx.annotation/annotation@1.9.1",
+      "type": "library",
+      "version": "1.9.1"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.annotation/annotation-experimental@1.4.1",
+      "group": "androidx.annotation",
+      "name": "annotation-experimental",
+      "purl": "pkg:maven/androidx.annotation/annotation-experimental@1.4.1",
+      "type": "library",
+      "version": "1.4.1"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.annotation/annotation-jvm@1.9.1",
+      "group": "androidx.annotation",
+      "name": "annotation-jvm",
+      "purl": "pkg:maven/androidx.annotation/annotation-jvm@1.9.1",
+      "type": "library",
+      "version": "1.9.1"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.arch.core/core-common@2.2.0",
+      "group": "androidx.arch.core",
+      "name": "core-common",
+      "purl": "pkg:maven/androidx.arch.core/core-common@2.2.0",
+      "type": "library",
+      "version": "2.2.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.arch.core/core-runtime@2.2.0",
+      "group": "androidx.arch.core",
+      "name": "core-runtime",
+      "purl": "pkg:maven/androidx.arch.core/core-runtime@2.2.0",
+      "type": "library",
+      "version": "2.2.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.autofill/autofill@1.0.0",
+      "group": "androidx.autofill",
+      "name": "autofill",
+      "purl": "pkg:maven/androidx.autofill/autofill@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.collection/collection@1.5.0",
+      "group": "androidx.collection",
+      "name": "collection",
+      "purl": "pkg:maven/androidx.collection/collection@1.5.0",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.collection/collection-jvm@1.5.0",
+      "group": "androidx.collection",
+      "name": "collection-jvm",
+      "purl": "pkg:maven/androidx.collection/collection-jvm@1.5.0",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.collection/collection-ktx@1.5.0",
+      "group": "androidx.collection",
+      "name": "collection-ktx",
+      "purl": "pkg:maven/androidx.collection/collection-ktx@1.5.0",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose/compose-bom@2026.06.01",
+      "group": "androidx.compose",
+      "name": "compose-bom",
+      "purl": "pkg:maven/androidx.compose/compose-bom@2026.06.01",
+      "type": "library",
+      "version": "2026.06.01"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.animation/animation@1.11.4",
+      "group": "androidx.compose.animation",
+      "name": "animation",
+      "purl": "pkg:maven/androidx.compose.animation/animation@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.animation/animation-android@1.11.4",
+      "group": "androidx.compose.animation",
+      "name": "animation-android",
+      "purl": "pkg:maven/androidx.compose.animation/animation-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.animation/animation-core@1.11.4",
+      "group": "androidx.compose.animation",
+      "name": "animation-core",
+      "purl": "pkg:maven/androidx.compose.animation/animation-core@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.animation/animation-core-android@1.11.4",
+      "group": "androidx.compose.animation",
+      "name": "animation-core-android",
+      "purl": "pkg:maven/androidx.compose.animation/animation-core-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.foundation/foundation@1.11.4",
+      "group": "androidx.compose.foundation",
+      "name": "foundation",
+      "purl": "pkg:maven/androidx.compose.foundation/foundation@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.foundation/foundation-android@1.11.4",
+      "group": "androidx.compose.foundation",
+      "name": "foundation-android",
+      "purl": "pkg:maven/androidx.compose.foundation/foundation-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.foundation/foundation-layout@1.11.4",
+      "group": "androidx.compose.foundation",
+      "name": "foundation-layout",
+      "purl": "pkg:maven/androidx.compose.foundation/foundation-layout@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.foundation/foundation-layout-android@1.11.4",
+      "group": "androidx.compose.foundation",
+      "name": "foundation-layout-android",
+      "purl": "pkg:maven/androidx.compose.foundation/foundation-layout-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.material/material-ripple@1.11.4",
+      "group": "androidx.compose.material",
+      "name": "material-ripple",
+      "purl": "pkg:maven/androidx.compose.material/material-ripple@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.material/material-ripple-android@1.11.4",
+      "group": "androidx.compose.material",
+      "name": "material-ripple-android",
+      "purl": "pkg:maven/androidx.compose.material/material-ripple-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.material3/material3@1.4.0",
+      "group": "androidx.compose.material3",
+      "name": "material3",
+      "purl": "pkg:maven/androidx.compose.material3/material3@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.material3/material3-android@1.4.0",
+      "group": "androidx.compose.material3",
+      "name": "material3-android",
+      "purl": "pkg:maven/androidx.compose.material3/material3-android@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.runtime/runtime@1.11.4",
+      "group": "androidx.compose.runtime",
+      "name": "runtime",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.runtime/runtime-android@1.11.4",
+      "group": "androidx.compose.runtime",
+      "name": "runtime-android",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.runtime/runtime-annotation@1.11.4",
+      "group": "androidx.compose.runtime",
+      "name": "runtime-annotation",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime-annotation@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.runtime/runtime-annotation-android@1.11.4",
+      "group": "androidx.compose.runtime",
+      "name": "runtime-annotation-android",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime-annotation-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.runtime/runtime-retain@1.11.4",
+      "group": "androidx.compose.runtime",
+      "name": "runtime-retain",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime-retain@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.runtime/runtime-retain-android@1.11.4",
+      "group": "androidx.compose.runtime",
+      "name": "runtime-retain-android",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime-retain-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.runtime/runtime-saveable@1.11.4",
+      "group": "androidx.compose.runtime",
+      "name": "runtime-saveable",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime-saveable@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.runtime/runtime-saveable-android@1.11.4",
+      "group": "androidx.compose.runtime",
+      "name": "runtime-saveable-android",
+      "purl": "pkg:maven/androidx.compose.runtime/runtime-saveable-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui",
+      "purl": "pkg:maven/androidx.compose.ui/ui@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui-android@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui-geometry@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui-geometry",
+      "purl": "pkg:maven/androidx.compose.ui/ui-geometry@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui-geometry-android@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui-geometry-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-geometry-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui-graphics@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui-graphics",
+      "purl": "pkg:maven/androidx.compose.ui/ui-graphics@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui-graphics-android@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui-graphics-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-graphics-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui-text@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui-text",
+      "purl": "pkg:maven/androidx.compose.ui/ui-text@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui-text-android@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui-text-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-text-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui-unit@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui-unit",
+      "purl": "pkg:maven/androidx.compose.ui/ui-unit@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui-unit-android@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui-unit-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-unit-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui-util@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui-util",
+      "purl": "pkg:maven/androidx.compose.ui/ui-util@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.compose.ui/ui-util-android@1.11.4",
+      "group": "androidx.compose.ui",
+      "name": "ui-util-android",
+      "purl": "pkg:maven/androidx.compose.ui/ui-util-android@1.11.4",
+      "type": "library",
+      "version": "1.11.4"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.concurrent/concurrent-futures@1.1.0",
+      "group": "androidx.concurrent",
+      "name": "concurrent-futures",
+      "purl": "pkg:maven/androidx.concurrent/concurrent-futures@1.1.0",
+      "type": "library",
+      "version": "1.1.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.core/core@1.18.0",
+      "group": "androidx.core",
+      "name": "core",
+      "purl": "pkg:maven/androidx.core/core@1.18.0",
+      "type": "library",
+      "version": "1.18.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.core/core-ktx@1.18.0",
+      "group": "androidx.core",
+      "name": "core-ktx",
+      "purl": "pkg:maven/androidx.core/core-ktx@1.18.0",
+      "type": "library",
+      "version": "1.18.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.core/core-viewtree@1.0.0",
+      "group": "androidx.core",
+      "name": "core-viewtree",
+      "purl": "pkg:maven/androidx.core/core-viewtree@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.customview/customview-poolingcontainer@1.0.0",
+      "group": "androidx.customview",
+      "name": "customview-poolingcontainer",
+      "purl": "pkg:maven/androidx.customview/customview-poolingcontainer@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.documentfile/documentfile@1.0.0",
+      "group": "androidx.documentfile",
+      "name": "documentfile",
+      "purl": "pkg:maven/androidx.documentfile/documentfile@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.dynamicanimation/dynamicanimation@1.0.0",
+      "group": "androidx.dynamicanimation",
+      "name": "dynamicanimation",
+      "purl": "pkg:maven/androidx.dynamicanimation/dynamicanimation@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.emoji2/emoji2@1.4.0",
+      "group": "androidx.emoji2",
+      "name": "emoji2",
+      "purl": "pkg:maven/androidx.emoji2/emoji2@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.graphics/graphics-path@1.0.1",
+      "group": "androidx.graphics",
+      "name": "graphics-path",
+      "purl": "pkg:maven/androidx.graphics/graphics-path@1.0.1",
+      "type": "library",
+      "version": "1.0.1"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.interpolator/interpolator@1.0.0",
+      "group": "androidx.interpolator",
+      "name": "interpolator",
+      "purl": "pkg:maven/androidx.interpolator/interpolator@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.legacy/legacy-support-core-utils@1.0.0",
+      "group": "androidx.legacy",
+      "name": "legacy-support-core-utils",
+      "purl": "pkg:maven/androidx.legacy/legacy-support-core-utils@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-common@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-common",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-common@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-common-java8@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-common-java8",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-common-java8@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-common-jvm@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-common-jvm",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-common-jvm@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-livedata@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-livedata",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-livedata@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-livedata-core@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-livedata-core",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-livedata-core@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-livedata-core-ktx@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-livedata-core-ktx",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-livedata-core-ktx@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-process@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-process",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-process@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-runtime",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime-android@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-runtime-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime-android@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime-compose@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-runtime-compose",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime-compose@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime-compose-android@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-runtime-compose-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime-compose-android@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime-ktx@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-runtime-ktx",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime-ktx@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime-ktx-android@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-runtime-ktx-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-runtime-ktx-android@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-viewmodel",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-android@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-viewmodel-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-android@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-viewmodel-compose",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose-android@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-viewmodel-compose-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose-android@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-ktx@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-viewmodel-ktx",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-ktx@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-savedstate@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-viewmodel-savedstate",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-savedstate@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-savedstate-android@2.11.0",
+      "group": "androidx.lifecycle",
+      "name": "lifecycle-viewmodel-savedstate-android",
+      "purl": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-savedstate-android@2.11.0",
+      "type": "library",
+      "version": "2.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.loader/loader@1.0.0",
+      "group": "androidx.loader",
+      "name": "loader",
+      "purl": "pkg:maven/androidx.loader/loader@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.localbroadcastmanager/localbroadcastmanager@1.0.0",
+      "group": "androidx.localbroadcastmanager",
+      "name": "localbroadcastmanager",
+      "purl": "pkg:maven/androidx.localbroadcastmanager/localbroadcastmanager@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.navigationevent/navigationevent@1.0.0",
+      "group": "androidx.navigationevent",
+      "name": "navigationevent",
+      "purl": "pkg:maven/androidx.navigationevent/navigationevent@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.navigationevent/navigationevent-android@1.0.0",
+      "group": "androidx.navigationevent",
+      "name": "navigationevent-android",
+      "purl": "pkg:maven/androidx.navigationevent/navigationevent-android@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.navigationevent/navigationevent-compose@1.0.0",
+      "group": "androidx.navigationevent",
+      "name": "navigationevent-compose",
+      "purl": "pkg:maven/androidx.navigationevent/navigationevent-compose@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.navigationevent/navigationevent-compose-android@1.0.0",
+      "group": "androidx.navigationevent",
+      "name": "navigationevent-compose-android",
+      "purl": "pkg:maven/androidx.navigationevent/navigationevent-compose-android@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.print/print@1.0.0",
+      "group": "androidx.print",
+      "name": "print",
+      "purl": "pkg:maven/androidx.print/print@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.profileinstaller/profileinstaller@1.4.0",
+      "group": "androidx.profileinstaller",
+      "name": "profileinstaller",
+      "purl": "pkg:maven/androidx.profileinstaller/profileinstaller@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.savedstate/savedstate@1.4.0",
+      "group": "androidx.savedstate",
+      "name": "savedstate",
+      "purl": "pkg:maven/androidx.savedstate/savedstate@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.savedstate/savedstate-android@1.4.0",
+      "group": "androidx.savedstate",
+      "name": "savedstate-android",
+      "purl": "pkg:maven/androidx.savedstate/savedstate-android@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.savedstate/savedstate-compose@1.4.0",
+      "group": "androidx.savedstate",
+      "name": "savedstate-compose",
+      "purl": "pkg:maven/androidx.savedstate/savedstate-compose@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.savedstate/savedstate-compose-android@1.4.0",
+      "group": "androidx.savedstate",
+      "name": "savedstate-compose-android",
+      "purl": "pkg:maven/androidx.savedstate/savedstate-compose-android@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.savedstate/savedstate-ktx@1.4.0",
+      "group": "androidx.savedstate",
+      "name": "savedstate-ktx",
+      "purl": "pkg:maven/androidx.savedstate/savedstate-ktx@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.startup/startup-runtime@1.1.1",
+      "group": "androidx.startup",
+      "name": "startup-runtime",
+      "purl": "pkg:maven/androidx.startup/startup-runtime@1.1.1",
+      "type": "library",
+      "version": "1.1.1"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.tracing/tracing@1.2.0",
+      "group": "androidx.tracing",
+      "name": "tracing",
+      "purl": "pkg:maven/androidx.tracing/tracing@1.2.0",
+      "type": "library",
+      "version": "1.2.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.transition/transition@1.6.0",
+      "group": "androidx.transition",
+      "name": "transition",
+      "purl": "pkg:maven/androidx.transition/transition@1.6.0",
+      "type": "library",
+      "version": "1.6.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.versionedparcelable/versionedparcelable@1.1.1",
+      "group": "androidx.versionedparcelable",
+      "name": "versionedparcelable",
+      "purl": "pkg:maven/androidx.versionedparcelable/versionedparcelable@1.1.1",
+      "type": "library",
+      "version": "1.1.1"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.window/window@1.5.0",
+      "group": "androidx.window",
+      "name": "window",
+      "purl": "pkg:maven/androidx.window/window@1.5.0",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.window/window-core@1.5.0",
+      "group": "androidx.window",
+      "name": "window-core",
+      "purl": "pkg:maven/androidx.window/window-core@1.5.0",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.window/window-core-android@1.5.0",
+      "group": "androidx.window",
+      "name": "window-core-android",
+      "purl": "pkg:maven/androidx.window/window-core-android@1.5.0",
+      "type": "library",
+      "version": "1.5.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.guava/listenablefuture@1.0",
+      "group": "com.google.guava",
+      "name": "listenablefuture",
+      "purl": "pkg:maven/com.google.guava/listenablefuture@1.0",
+      "type": "library",
+      "version": "1.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains/annotations@23.0.0",
+      "group": "org.jetbrains",
+      "name": "annotations",
+      "purl": "pkg:maven/org.jetbrains/annotations@23.0.0",
+      "type": "library",
+      "version": "23.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib@2.3.10",
+      "group": "org.jetbrains.kotlin",
+      "name": "kotlin-stdlib",
+      "purl": "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib@2.3.10",
+      "type": "library",
+      "version": "2.3.10"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.10.2",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-android",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.10.2",
+      "type": "library",
+      "version": "1.10.2"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.10.2",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-bom",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.10.2",
+      "type": "library",
+      "version": "1.10.2"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.10.2",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-core",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.10.2",
+      "type": "library",
+      "version": "1.10.2"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.10.2",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-coroutines-core-jvm",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.10.2",
+      "type": "library",
+      "version": "1.10.2"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.9.0",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-bom",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.9.0",
+      "type": "library",
+      "version": "1.9.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.9.0",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-core",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.9.0",
+      "type": "library",
+      "version": "1.9.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.9.0",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-core-jvm",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.9.0",
+      "type": "library",
+      "version": "1.9.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.9.0",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-json",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.9.0",
+      "type": "library",
+      "version": "1.9.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.9.0",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-serialization-json-jvm",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.9.0",
+      "type": "library",
+      "version": "1.9.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jspecify/jspecify@1.0.0",
+      "group": "org.jspecify",
+      "name": "jspecify",
+      "purl": "pkg:maven/org.jspecify/jspecify@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    }
+  ],
+  "dependencies": [
+    {
+      "dependsOn": [
+        "pkg:generic/codex-mobile-agent-codex@0.1.0",
+        "pkg:generic/codex-mobile-core@0.1.0",
+        "pkg:generic/codex-mobile-platform-android@0.1.0",
+        "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64",
+        "pkg:maven/androidx.activity/activity-compose@1.13.0",
+        "pkg:maven/androidx.activity/activity-ktx@1.13.0",
+        "pkg:maven/androidx.activity/activity@1.13.0",
+        "pkg:maven/androidx.annotation/annotation-experimental@1.4.1",
+        "pkg:maven/androidx.annotation/annotation-jvm@1.9.1",
+        "pkg:maven/androidx.annotation/annotation@1.9.1",
+        "pkg:maven/androidx.arch.core/core-common@2.2.0",
+        "pkg:maven/androidx.arch.core/core-runtime@2.2.0",
+        "pkg:maven/androidx.autofill/autofill@1.0.0",
+        "pkg:maven/androidx.collection/collection-jvm@1.5.0",
+        "pkg:maven/androidx.collection/collection-ktx@1.5.0",
+        "pkg:maven/androidx.collection/collection@1.5.0",
+        "pkg:maven/androidx.compose.animation/animation-android@1.11.4",
+        "pkg:maven/androidx.compose.animation/animation-core-android@1.11.4",
+        "pkg:maven/androidx.compose.animation/animation-core@1.11.4",
+        "pkg:maven/androidx.compose.animation/animation@1.11.4",
+        "pkg:maven/androidx.compose.foundation/foundation-android@1.11.4",
+        "pkg:maven/androidx.compose.foundation/foundation-layout-android@1.11.4",
+        "pkg:maven/androidx.compose.foundation/foundation-layout@1.11.4",
+        "pkg:maven/androidx.compose.foundation/foundation@1.11.4",
+        "pkg:maven/androidx.compose.material/material-ripple-android@1.11.4",
+        "pkg:maven/androidx.compose.material/material-ripple@1.11.4",
+        "pkg:maven/androidx.compose.material3/material3-android@1.4.0",
+        "pkg:maven/androidx.compose.material3/material3@1.4.0",
+        "pkg:maven/androidx.compose.runtime/runtime-android@1.11.4",
+        "pkg:maven/androidx.compose.runtime/runtime-annotation-android@1.11.4",
+        "pkg:maven/androidx.compose.runtime/runtime-annotation@1.11.4",
+        "pkg:maven/androidx.compose.runtime/runtime-retain-android@1.11.4",
+        "pkg:maven/androidx.compose.runtime/runtime-retain@1.11.4",
+        "pkg:maven/androidx.compose.runtime/runtime-saveable-android@1.11.4",
+        "pkg:maven/androidx.compose.runtime/runtime-saveable@1.11.4",
+        "pkg:maven/androidx.compose.runtime/runtime@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui-android@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui-geometry-android@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui-geometry@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui-graphics-android@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui-graphics@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui-text-android@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui-text@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui-unit-android@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui-unit@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui-util-android@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui-util@1.11.4",
+        "pkg:maven/androidx.compose.ui/ui@1.11.4",
+        "pkg:maven/androidx.compose/compose-bom@2026.06.01",
+        "pkg:maven/androidx.concurrent/concurrent-futures@1.1.0",
+        "pkg:maven/androidx.core/core-ktx@1.18.0",
+        "pkg:maven/androidx.core/core-viewtree@1.0.0",
+        "pkg:maven/androidx.core/core@1.18.0",
+        "pkg:maven/androidx.customview/customview-poolingcontainer@1.0.0",
+        "pkg:maven/androidx.documentfile/documentfile@1.0.0",
+        "pkg:maven/androidx.dynamicanimation/dynamicanimation@1.0.0",
+        "pkg:maven/androidx.emoji2/emoji2@1.4.0",
+        "pkg:maven/androidx.graphics/graphics-path@1.0.1",
+        "pkg:maven/androidx.interpolator/interpolator@1.0.0",
+        "pkg:maven/androidx.legacy/legacy-support-core-utils@1.0.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-common-java8@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-common-jvm@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-common@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-livedata-core-ktx@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-livedata-core@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-livedata@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-process@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-runtime-android@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-runtime-compose-android@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-runtime-compose@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-runtime-ktx-android@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-runtime-ktx@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-runtime@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-android@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose-android@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-ktx@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-savedstate-android@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-savedstate@2.11.0",
+        "pkg:maven/androidx.lifecycle/lifecycle-viewmodel@2.11.0",
+        "pkg:maven/androidx.loader/loader@1.0.0",
+        "pkg:maven/androidx.localbroadcastmanager/localbroadcastmanager@1.0.0",
+        "pkg:maven/androidx.navigationevent/navigationevent-android@1.0.0",
+        "pkg:maven/androidx.navigationevent/navigationevent-compose-android@1.0.0",
+        "pkg:maven/androidx.navigationevent/navigationevent-compose@1.0.0",
+        "pkg:maven/androidx.navigationevent/navigationevent@1.0.0",
+        "pkg:maven/androidx.print/print@1.0.0",
+        "pkg:maven/androidx.profileinstaller/profileinstaller@1.4.0",
+        "pkg:maven/androidx.savedstate/savedstate-android@1.4.0",
+        "pkg:maven/androidx.savedstate/savedstate-compose-android@1.4.0",
+        "pkg:maven/androidx.savedstate/savedstate-compose@1.4.0",
+        "pkg:maven/androidx.savedstate/savedstate-ktx@1.4.0",
+        "pkg:maven/androidx.savedstate/savedstate@1.4.0",
+        "pkg:maven/androidx.startup/startup-runtime@1.1.1",
+        "pkg:maven/androidx.tracing/tracing@1.2.0",
+        "pkg:maven/androidx.transition/transition@1.6.0",
+        "pkg:maven/androidx.versionedparcelable/versionedparcelable@1.1.1",
+        "pkg:maven/androidx.window/window-core-android@1.5.0",
+        "pkg:maven/androidx.window/window-core@1.5.0",
+        "pkg:maven/androidx.window/window@1.5.0",
+        "pkg:maven/com.google.guava/listenablefuture@1.0",
+        "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib@2.3.10",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.10.2",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.10.2",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.10.2",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.10.2",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.9.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.9.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.9.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.9.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.9.0",
+        "pkg:maven/org.jetbrains/annotations@23.0.0",
+        "pkg:maven/org.jspecify/jspecify@1.0.0"
+      ],
+      "ref": "pkg:generic/codex-mobile@0.1.0?platform=android"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:generic/codex-mobile-agent-codex@0.1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:generic/codex-mobile-core@0.1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:generic/codex-mobile-platform-android@0.1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.activity/activity-compose@1.13.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.activity/activity-ktx@1.13.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.activity/activity@1.13.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.annotation/annotation-experimental@1.4.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.annotation/annotation-jvm@1.9.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.annotation/annotation@1.9.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.arch.core/core-common@2.2.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.arch.core/core-runtime@2.2.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.autofill/autofill@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.collection/collection-jvm@1.5.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.collection/collection-ktx@1.5.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.collection/collection@1.5.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.animation/animation-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.animation/animation-core-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.animation/animation-core@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.animation/animation@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.foundation/foundation-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.foundation/foundation-layout-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.foundation/foundation-layout@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.foundation/foundation@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.material/material-ripple-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.material/material-ripple@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.material3/material3-android@1.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.material3/material3@1.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.runtime/runtime-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.runtime/runtime-annotation-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.runtime/runtime-annotation@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.runtime/runtime-retain-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.runtime/runtime-retain@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.runtime/runtime-saveable-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.runtime/runtime-saveable@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.runtime/runtime@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui-geometry-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui-geometry@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui-graphics-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui-graphics@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui-text-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui-text@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui-unit-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui-unit@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui-util-android@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui-util@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose.ui/ui@1.11.4"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.compose/compose-bom@2026.06.01"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.concurrent/concurrent-futures@1.1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.core/core-ktx@1.18.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.core/core-viewtree@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.core/core@1.18.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.customview/customview-poolingcontainer@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.documentfile/documentfile@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.dynamicanimation/dynamicanimation@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.emoji2/emoji2@1.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.graphics/graphics-path@1.0.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.interpolator/interpolator@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.legacy/legacy-support-core-utils@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-common-java8@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-common-jvm@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-common@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-livedata-core-ktx@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-livedata-core@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-livedata@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-process@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime-android@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime-compose-android@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime-compose@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime-ktx-android@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime-ktx@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-runtime@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-android@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose-android@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-compose@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-ktx@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-savedstate-android@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel-savedstate@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.lifecycle/lifecycle-viewmodel@2.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.loader/loader@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.localbroadcastmanager/localbroadcastmanager@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.navigationevent/navigationevent-android@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.navigationevent/navigationevent-compose-android@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.navigationevent/navigationevent-compose@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.navigationevent/navigationevent@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.print/print@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.profileinstaller/profileinstaller@1.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.savedstate/savedstate-android@1.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.savedstate/savedstate-compose-android@1.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.savedstate/savedstate-compose@1.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.savedstate/savedstate-ktx@1.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.savedstate/savedstate@1.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.startup/startup-runtime@1.1.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.tracing/tracing@1.2.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.transition/transition@1.6.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.versionedparcelable/versionedparcelable@1.1.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.window/window-core-android@1.5.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.window/window-core@1.5.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.window/window@1.5.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.guava/listenablefuture@1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib@2.3.10"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.10.2"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.10.2"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.10.2"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.10.2"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.9.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.9.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.9.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.9.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.9.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains/annotations@23.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jspecify/jspecify@1.0.0"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "bom-ref": "pkg:generic/codex-mobile@0.1.0?platform=android",
+      "name": "Codex Mobile",
+      "purl": "pkg:generic/codex-mobile@0.1.0?platform=android",
+      "type": "application",
+      "version": "0.1.0"
+    }
+  },
+  "serialNumber": "urn:uuid:bf05f440-38d1-5037-89f7-f0ecb3aa34b6",
+  "specVersion": "1.6",
+  "version": 1
+}

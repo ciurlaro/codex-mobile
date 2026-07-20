@@ -38,13 +38,25 @@ sequenceDiagram
     Agent->>Core: Request tool call
     Core-->>UI: Resolved approval request
     User->>UI: Approve or deny
-    UI->>Core: Decision bound to call ID
+    UI->>Core: Decision bound to exact resolved plan
     Core->>Platform: Execute within scope
     Platform-->>Core: Observed result
     Core-->>Agent: Tool result
 ```
 
 Only the platform result can establish whether an Android operation succeeded. A provider request, response, timeout, or repeated call ID is correlation—not proof of exactly-once execution.
+
+The pinned app-server registers Android capabilities as dynamic tools on the existing session. Read-only plans are allowed by core policy and dispatched directly; mutating plans require an explicit, one-use UI decision bound to the exact resolved plan. The app-server receives only the `ToolResult` produced from Android's observed provider outcome.
+
+After approval, core requires durable `Prepared` and `Executing` journal transitions before mutation dispatch. Android stores the minimum tool-specific recovery intent in an app-private SQLite database. On restart, a `Prepared` row is safely closed as not dispatched; an `Executing` row becomes `Unknown` before the tool re-observes Android state. Reconciliation never executes the mutation, unresolved outcomes remain user-visible until acknowledged or resolved, and retry remains a tool-specific decision over a fresh plan rather than a call-ID policy.
+
+## Active session lifetime
+
+An explicit UI action starts one non-exported `dataSync` foreground service. That service owns one `ForegroundSessionController` and one `CodexAgentClient`; Activities bind only to render its bounded state and may disappear without closing it. The controller excludes duplicate turns and gives one visible UI owner a claim on each tool request, but the ViewModel still resolves Android plans and the UI still makes every mutation approval decision. A one-use private start authorization rejects unsolicited starts. Stop, Android timeout, or notification action cancels active work within five seconds, closes the app-server, removes the notification, and does not schedule or reboot-restart anything. Sign-out keeps the UI binding until bounded `account/logout` and client close finish, preventing Android from destroying a bind-only service mid-logout.
+
+## Data lifecycle
+
+Credentials, Codex history, scope metadata, and mutation recovery stay in app-private storage excluded from backup. `account/logout` removes ChatGPT authentication while retaining unrelated local state. Scope revocation releases only the current SAF grant. Confirmed full erasure delegates to Android's native app-data reset, which removes private state, runtime permissions, notifications, and persisted grants without deleting provider-owned user files.
 
 ## Dependency rules
 

@@ -1,6 +1,6 @@
 # Step 04 — Mutation recovery
 
-**Status:** Blocked by Step 03
+**Status:** Complete
 
 ## Question
 
@@ -47,3 +47,19 @@ Introduce `MutationJournal`, durable Android storage, controlled termination, re
 ## Required record
 
 Document each tool's reconciliation predicate and whether retry is impossible, conditionally safe, or safe after a proven no-op.
+
+## Result record
+
+- **Journal:** App-private `SQLiteOpenHelper` storage under `noBackupFilesDir` commits a unique record ID, call correlation, tool/scope identity, plan fingerprint, bounded recovery payload, state, outcome, timestamps, and acknowledgement. `synchronous=FULL` and compare-and-set transitions make `Prepared` durable before `Executing` and provider dispatch.
+- **Storage faults:** API 26, API 37, and the API 36 physical device passed 32-writer ordering plus real locked, page-limit/full, corrupt, and unavailable database faults. Version 1 data upgrades in place to version 2; future-version downgrade throws without deleting its row.
+- **Process death:** Physical force-stops passed before `Prepared`, after `Prepared`, after durable `Executing`, during a blocked provider dispatch, after stock-provider success, and after a controlled provider refusal. Restart first treats possible dispatch as `Unknown`, performs observation-only reconciliation, and never calls `execute` again.
+- **Recovery/UI:** Exact source unchanged resolves `Failed`; exact source absent with one requested destination resolves `Succeeded`; both, neither, a different provider-normalized name, permission loss, malformed recovery data, or unavailable observation remain visible `Unknown`. Repeated reconciliation is stable and side-effect free; acknowledgement hides but does not resolve `Unknown`.
+- **Retry:** `rename_document` reports `NEVER`. Core exposes no automatic replay; even a generally retryable tool requires a fresh prepared plan and a tool rule tested to return `SAFE_AFTER_PROVEN_NO_OP`. A copied or changed plan cannot reuse approval.
+- **Privacy/maintenance:** Rename recovery stores only version, parent path/ID, source ID/name, and destination name—never document contents, tool arguments, credentials, or SAF URIs. App-UID log scans found zero fixture or credential-shaped matches. Thirty-day pruning removes only acknowledged `Succeeded`/`Failed` history and preserves every unresolved row.
+- **Device cleanup:** The stock SAF grant was revoked before the six empty disposable files were permanently deleted and verified absent; temporary UI dumps were removed and the normal screen-timeout policy restored.
+
+## Tool reconciliation record
+
+| Tool | Reconciliation predicate | Retry |
+|---|---|---|
+| `rename_document` | `Succeeded` only when the exact recorded source ID/name is absent and exactly one child has the requested destination name. `Failed` only when the exact source remains and no child has that destination. Every other observation is `Unknown`. | Impossible (`NEVER`); no generic or automatic replay. |
