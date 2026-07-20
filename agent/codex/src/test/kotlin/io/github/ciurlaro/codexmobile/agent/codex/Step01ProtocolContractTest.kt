@@ -132,7 +132,7 @@ class Step01ProtocolContractTest {
             assertEquals("never", params["approvalPolicy"]!!.jsonPrimitive.content)
             assertEquals("read-only", params["sandbox"]!!.jsonPrimitive.content)
             val config = params["config"]!!.jsonObject
-            assertEquals("disabled", config["web_search"]!!.jsonPrimitive.content)
+            assertEquals("live", config["web_search"]!!.jsonPrimitive.content)
             assertEquals(
                 false,
                 config["tools"]!!.jsonObject["experimental_request_user_input"]!!
@@ -533,15 +533,16 @@ class Step01ProtocolContractTest {
                 )
                 "account/login/start" -> {
                     val params = message.objectValue["params"]!!.jsonObject
-                    assertEquals(setOf("type"), params.keys)
-                    assertEquals("chatgptDeviceCode", params["type"]!!.jsonPrimitive.content)
+                    assertEquals(setOf("type", "useHostedLoginSuccessPage", "appBrand"), params.keys)
+                    assertEquals("chatgpt", params["type"]!!.jsonPrimitive.content)
+                    assertEquals("true", params["useHostedLoginSuccessPage"]!!.jsonPrimitive.content)
+                    assertEquals("codex", params["appBrand"]!!.jsonPrimitive.content)
                     server.respond(
                         message.id,
                         buildJsonObject {
-                            put("type", "chatgptDeviceCode")
+                            put("type", "chatgpt")
                             put("loginId", "login-1")
-                            put("verificationUrl", "https://auth.openai.com/codex/device")
-                            put("userCode", "TEST-CODE")
+                            put("authUrl", "https://auth.openai.com/oauth/authorize?state=test")
                         },
                     )
                 }
@@ -603,11 +604,10 @@ class Step01ProtocolContractTest {
             collector.await()
 
             val required = assertIs<AgentEvent.AuthenticationRequired>(received[0])
-            assertEquals("https://auth.openai.com/codex/device", required.verificationUrl)
-            assertEquals("TEST-CODE", required.userCode)
+            assertEquals("https://auth.openai.com/oauth/authorize?state=test", required.signInUrl)
             assertIs<AgentEvent.Authenticated>(received[1])
             assertEquals(AgentEvent.SessionOpened(SessionId("thread-1")), received[2])
-            assertEquals(AgentEvent.TextDelta(SessionId("thread-1"), "Hello"), received[3])
+            assertEquals(AgentEvent.TextDelta(SessionId("thread-1"), "Hello", "item-1"), received[3])
             assertEquals(AgentEvent.TurnCompleted(SessionId("thread-1")), received[4])
             assertIs<AgentEvent.Failure>(received[5])
         } finally {
@@ -634,10 +634,9 @@ class Step01ProtocolContractTest {
                     server.respond(
                         message.id,
                         buildJsonObject {
-                            put("type", "chatgptDeviceCode")
+                            put("type", "chatgpt")
                             put("loginId", loginId)
-                            put("verificationUrl", "https://auth.openai.com/codex/device")
-                            put("userCode", "TEST-CODE")
+                            put("authUrl", "https://auth.openai.com/oauth/authorize?state=$loginId")
                         },
                     )
                     server.notify(
@@ -686,10 +685,9 @@ class Step01ProtocolContractTest {
                     server.respond(
                         message.id,
                         buildJsonObject {
-                            put("type", "chatgptDeviceCode")
+                            put("type", "chatgpt")
                             put("loginId", loginId)
-                            put("verificationUrl", "https://auth.openai.com/codex/device")
-                            put("userCode", "TEST-CODE")
+                            put("authUrl", "https://auth.openai.com/oauth/authorize?state=$loginId")
                         },
                     )
                 }

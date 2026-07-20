@@ -3,14 +3,20 @@
 ## Supported product
 
 - ARM64 (`arm64-v8a`) stock Android API 26–37.
-- One ChatGPT account through Codex device-code authentication.
+- One ChatGPT account through Codex-managed browser authentication.
 - Android `DocumentsProvider` trees selected with SAF.
 - Scoped listing/read and one explicitly approved rename in a disposable writable tree.
 - Debug and release APKs; additional providers, CPUs, iOS, KMP, shell, general automation, and runtime updating are unsupported.
 
 ## Reproducible signed build
 
-Java 17, the checked-in Gradle 9.4.1 wrapper, Android platform 37, and build-tools 36.0.0 are required. Release signing material stays outside the repository:
+Java 17, the checked-in Gradle 9.4.1 wrapper, Android platform 37, and build-tools 36.0.0 are required. On the configured developer Mac, one command retrieves the release password from macOS Keychain, builds every artifact, runs tests and lint, and verifies the signed APK:
+
+```sh
+scripts/release-local.sh
+```
+
+Add `--reproducible` to perform the two clean byte-for-byte comparison builds too. The password is inherited only by the build process; it is not printed or stored in the repository. For another workstation or CI, provide the signing material explicitly:
 
 ```sh
 export CODEX_MOBILE_RELEASE_STORE_FILE=/absolute/path/to/keystore
@@ -26,6 +32,16 @@ scripts/verify-reproducible-release.sh
 `assembleRelease` refuses to emit an unsigned APK. Release code and resources are shrunk. The verifier checks the signature, version, manifest exposure, cleartext/backup policy, one ABI/runtime, upstream license/notice, lock files, verification metadata, R8 mapping, and current SBOM. The reproducibility check performs two clean, cache-disabled signed builds and requires byte-for-byte identical APKs.
 
 AGP's encrypted Play Console SDK-dependency block is omitted from APKs because its randomized ciphertext prevents byte-for-byte reproduction. The release lockfile, strict verification metadata, and checked-in SBOM remain the dependency inventory; a Play-distributed build can restore the block only if the release policy replaces the byte-identical APK requirement.
+
+## Install on a connected phone
+
+Connect and unlock one physical Android phone with USB debugging authorized, then run:
+
+```sh
+scripts/install-phone.sh
+```
+
+The command performs the verified signed release above, updates the existing app in place with `adb install -r`, verifies the package, and opens it. It refuses emulators, unauthorized phones, and ambiguous multi-phone selections. When several phones are connected, set `ANDROID_SERIAL` explicitly. It never uninstalls the app or clears its data.
 
 ## Provenance
 

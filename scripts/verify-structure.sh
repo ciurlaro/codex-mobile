@@ -38,6 +38,8 @@ required=(
     app/android/proguard-rules.pro
     app/android/src/main/res/xml/network_security_config.xml
     scripts/generate-sbom.py
+    scripts/install-phone.sh
+    scripts/release-local.sh
     scripts/verify-release.sh
     scripts/verify-reproducible-release.sh
 )

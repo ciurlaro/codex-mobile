@@ -3,6 +3,8 @@
 build/
 **/build/
 local.properties
+/.release-signing.local.md
+/.private/ui-references/
 *.iml
 *.jks
 *.keystore

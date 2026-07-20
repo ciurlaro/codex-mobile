@@ -1,7 +1,13 @@
 package io.github.ciurlaro.codexmobile.app
 
 import io.github.ciurlaro.codexmobile.core.AgentClient
+import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentConversation
+import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentMessage
+import io.github.ciurlaro.codexmobile.core.AgentMessageRole
+import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import io.github.ciurlaro.codexmobile.core.ToolCall
 import io.github.ciurlaro.codexmobile.core.ToolCallId
@@ -36,14 +42,20 @@ class ForegroundSessionControllerTest {
             controller.authenticate()
             await { fake.authenticateCount.get() == 1 }
             fake.emit(AgentEvent.Authenticated)
-            await { controller.state.value.sessionId == SESSION }
+            await { controller.state.value.authenticated }
+            assertNull(controller.state.value.sessionId)
+            assertEquals(0, fake.openSessionCount.get())
 
             controller.authenticate()
             await { fake.authenticateCount.get() == 2 }
-            assertEquals(1, fake.openSessionCount.get())
+            assertEquals(0, fake.openSessionCount.get())
 
             controller.submit("bounded response")
-            await { fake.promptCount.get() == 1 && controller.state.value.turnActive }
+            await {
+                fake.promptCount.get() == 1 && controller.state.value.turnActive &&
+                    controller.state.value.sessionId == SESSION
+            }
+            assertEquals(1, fake.openSessionCount.get())
             fake.emit(AgentEvent.TextDelta(SESSION, "x".repeat(300_000)))
             await { controller.state.value.streamedText.endsWith("[Response truncated]") }
             assertTrue(controller.state.value.streamedText.length < 263_000)
@@ -117,6 +129,123 @@ class ForegroundSessionControllerTest {
 
             controller.authenticate()
             await { fake.authenticateCount.get() == 2 }
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun freshChatIsLazyAndRepeatedFreshActionsDoNotCreateEmptyThreads(): Unit = runBlocking {
+        val fake = FakeAgentClient()
+        val controller = controller(fake)
+        try {
+            fake.emit(AgentEvent.Authenticated)
+            await { controller.state.value.authenticated }
+
+            assertTrue(controller.freshChat())
+            assertTrue(controller.freshChat())
+            assertEquals(0, fake.openSessionCount.get())
+
+            assertTrue(controller.submit("first"))
+            await { fake.promptCount.get() == 1 }
+            fake.emit(AgentEvent.TurnCompleted(SESSION))
+            await { !controller.state.value.turnActive }
+
+            assertTrue(controller.freshChat())
+            assertTrue(controller.freshChat())
+            assertNull(controller.state.value.sessionId)
+            assertEquals(1, fake.openSessionCount.get())
+
+            assertTrue(controller.submit("second"))
+            await { fake.promptCount.get() == 2 }
+            assertEquals(2, fake.openSessionCount.get())
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun typedTurnSnapshotsModelEffortAndCapabilityBeforeGeneration(): Unit = runBlocking {
+        val fake = FakeAgentClient()
+        val controller = controller(fake)
+        try {
+            fake.emit(AgentEvent.Authenticated)
+            await { controller.state.value.authenticated }
+            val first = AgentTurnRequest(
+                prompt = "current request",
+                clientMessageId = "message-1",
+                model = "model-a",
+                effort = "high",
+                capabilities = setOf(AgentCapability.WEB_SEARCH),
+            )
+            assertTrue(controller.submit(first))
+            await { fake.requests.size == 1 }
+
+            assertEquals(first, fake.requests.single())
+            assertTrue(controller.state.value.turnActive)
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun stopRequestedDuringLazySessionCreationCancelsTheStartedTurn(): Unit = runBlocking {
+        val fake = FakeAgentClient().apply { blockOpenSession = true }
+        val controller = controller(fake)
+        try {
+            fake.emit(AgentEvent.Authenticated)
+            await { controller.state.value.authenticated }
+
+            assertTrue(controller.submit("stop this"))
+            fake.openSessionStarted.await()
+            assertNull(controller.state.value.sessionId)
+            controller.cancelTurn()
+            assertEquals("Cancelling…", controller.state.value.status)
+            assertEquals(0, fake.cancelCount.get())
+
+            fake.finishOpenSession.complete(Unit)
+            await { fake.promptCount.get() == 1 && fake.cancelCount.get() == 1 }
+            assertEquals(1, fake.cancelCount.get())
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun stopAfterSessionOpenWaitsForTurnStartBeforeInterrupting(): Unit = runBlocking {
+        val fake = FakeAgentClient().apply { blockSendTurn = true }
+        val controller = controller(fake)
+        try {
+            fake.emit(AgentEvent.Authenticated)
+            await { controller.state.value.authenticated }
+
+            assertTrue(controller.submit("stop after open"))
+            fake.sendTurnStarted.await()
+            await { controller.state.value.sessionId == SESSION }
+            controller.cancelTurn()
+            assertEquals("Cancelling…", controller.state.value.status)
+            assertEquals(0, fake.cancelCount.get())
+
+            fake.finishSendTurn.complete(Unit)
+            await { fake.cancelCount.get() == 1 }
+            assertEquals(1, fake.cancelCount.get())
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun conversationSelectionUsesRuntimeHistoryWithoutAnotherStore(): Unit = runBlocking {
+        val fake = FakeAgentClient()
+        val controller = controller(fake)
+        try {
+            fake.emit(AgentEvent.Authenticated)
+            await { controller.state.value.authenticated }
+
+            assertEquals(listOf(SUMMARY), controller.listConversations())
+            assertTrue(controller.openConversation(SESSION))
+            await { controller.state.value.sessionId == SESSION }
+            assertEquals(CONVERSATION, controller.readConversation(SESSION))
         } finally {
             controller.close()
         }
@@ -225,9 +354,16 @@ class ForegroundSessionControllerTest {
         val finishSignOut = CompletableDeferred<Unit>()
         var blockSignOut = false
         val openSessionCount = AtomicInteger()
+        val openSessionStarted = CompletableDeferred<Unit>()
+        val finishOpenSession = CompletableDeferred<Unit>()
+        var blockOpenSession = false
         val promptCount = AtomicInteger()
+        val sendTurnStarted = CompletableDeferred<Unit>()
+        val finishSendTurn = CompletableDeferred<Unit>()
+        var blockSendTurn = false
         val cancelCount = AtomicInteger()
         val results = CopyOnWriteArrayList<ToolResult>()
+        val requests = CopyOnWriteArrayList<AgentTurnRequest>()
         @Volatile var closed = false
 
         override suspend fun authenticate() {
@@ -246,6 +382,8 @@ class ForegroundSessionControllerTest {
 
         override suspend fun openSession(previous: SessionId?): SessionId {
             openSessionCount.incrementAndGet()
+            openSessionStarted.complete(Unit)
+            if (blockOpenSession) finishOpenSession.await()
             eventChannel.send(AgentEvent.SessionOpened(SESSION))
             return SESSION
         }
@@ -253,6 +391,17 @@ class ForegroundSessionControllerTest {
         override suspend fun sendPrompt(sessionId: SessionId, prompt: String) {
             promptCount.incrementAndGet()
         }
+
+        override suspend fun sendTurn(sessionId: SessionId, request: AgentTurnRequest) {
+            requests += request
+            promptCount.incrementAndGet()
+            sendTurnStarted.complete(Unit)
+            if (blockSendTurn) finishSendTurn.await()
+        }
+
+        override suspend fun listSessions(): List<AgentConversationSummary> = listOf(SUMMARY)
+
+        override suspend fun readSession(sessionId: SessionId): AgentConversation = CONVERSATION
 
         override suspend fun cancelTurn(sessionId: SessionId) {
             cancelCount.incrementAndGet()
@@ -274,5 +423,10 @@ class ForegroundSessionControllerTest {
 
     private companion object {
         val SESSION = SessionId("step05-session")
+        val SUMMARY = AgentConversationSummary(SESSION, "Synthetic history", 1L)
+        val CONVERSATION = AgentConversation(
+            SUMMARY,
+            listOf(AgentMessage("message", null, AgentMessageRole.CODEX, "Synthetic response")),
+        )
     }
 }

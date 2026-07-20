@@ -7,8 +7,7 @@ class AgentEventPrivacyTest {
     @Test
     fun authenticationRequiredDoesNotRenderCredentials() {
         val event = AgentEvent.AuthenticationRequired(
-            verificationUrl = "https://example.invalid/do-not-render",
-            userCode = "do-not-render",
+            signInUrl = "https://example.invalid/do-not-render",
         )
 
         assertEquals("AuthenticationRequired", event.toString())
