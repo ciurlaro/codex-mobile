@@ -23,6 +23,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.take
@@ -355,6 +356,8 @@ class Step01ProtocolContractTest {
             readUtf8JsonLines(ByteArrayInputStream("12345".toByteArray()), maxBytes = 4) {}
         }
 
+        val interruptReceived = CountDownLatch(1)
+        val releaseInterrupt = CountDownLatch(1)
         val process = ScriptedProcess { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
@@ -362,7 +365,11 @@ class Step01ProtocolContractTest {
                     message.id,
                     buildJsonObject { putJsonObject("turn") { put("id", "turn-1") } },
                 )
-                "turn/interrupt" -> server.respond(message.id, buildJsonObject {})
+                "turn/interrupt" -> {
+                    interruptReceived.countDown()
+                    check(releaseInterrupt.await(1, TimeUnit.SECONDS))
+                    server.respond(message.id, buildJsonObject {})
+                }
             }
         }
         val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
@@ -370,12 +377,15 @@ class Step01ProtocolContractTest {
             val session = SessionId("thread-1")
             client.sendPrompt(session, "hello")
             coroutineScope {
-                val first = async { client.cancelTurn(session) }
-                val second = async { runCatching { client.cancelTurn(session) } }
+                val first = async(start = CoroutineStart.UNDISPATCHED) { client.cancelTurn(session) }
+                assertTrue(interruptReceived.await(1, TimeUnit.SECONDS))
+                val second = runCatching { client.cancelTurn(session) }
+                releaseInterrupt.countDown()
                 first.await()
-                assertTrue(second.await().isFailure)
+                assertTrue(second.isFailure)
             }
         } finally {
+            releaseInterrupt.countDown()
             client.close()
         }
     }
