@@ -40,6 +40,7 @@ data class ApprovalPreview(
     val destination: String,
     val scope: String,
     val conflictBehavior: String,
+    val diff: String? = null,
 )
 
 sealed interface ToolResult {
@@ -48,6 +49,7 @@ sealed interface ToolResult {
     data class Success(
         override val callId: ToolCallId,
         val outputJson: String,
+        val imageUrls: List<String> = emptyList(),
     ) : ToolResult
 
     data class Rejected(

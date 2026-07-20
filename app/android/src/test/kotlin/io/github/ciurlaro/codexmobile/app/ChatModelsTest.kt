@@ -21,4 +21,9 @@ class ChatModelsTest {
         assertEquals("web_search", AgentCapability.WEB_SEARCH.id)
         assertEquals("Web search", AgentCapability.WEB_SEARCH.displayLabel)
     }
+
+    @Test
+    fun approvalDiffKeepsLinesButEscapesMisleadingControls() {
+        assertEquals("-before\n+after    value\\u{202E}", "-before\n+after\tvalue\u202E".toApprovalDiffDisplayText())
+    }
 }

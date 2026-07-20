@@ -19,6 +19,7 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    implementation(libs.mlkit.text.recognition)
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
 }

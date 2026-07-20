@@ -29,6 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import io.github.ciurlaro.codexmobile.core.ApprovalPreview
 import io.github.ciurlaro.codexmobile.core.MutationState
@@ -66,6 +67,11 @@ class MainActivity : ComponentActivity() {
                 ActivityResultContracts.OpenDocumentTree(),
             ) { uri ->
                 if (uri == null) viewModel.scopeSelectionCancelled() else viewModel.selectMutationScope(uri)
+            }
+            val exportScopePicker = rememberLauncherForActivityResult(
+                ActivityResultContracts.OpenDocumentTree(),
+            ) { uri ->
+                if (uri == null) viewModel.scopeSelectionCancelled() else viewModel.selectExportScope(uri)
             }
             val notificationPermission = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission(),
@@ -111,7 +117,9 @@ class MainActivity : ComponentActivity() {
                         ChatUiEvent.ShowEraseConfirmation -> showEraseConfirmation = true
                         ChatUiEvent.SelectScope -> scopePicker.launch(null)
                         ChatUiEvent.SelectMutationScope -> mutationScopePicker.launch(null)
+                        ChatUiEvent.SelectExportScope -> exportScopePicker.launch(null)
                         ChatUiEvent.RevokeScope -> viewModel.revokeScope()
+                        ChatUiEvent.RevokeExportScope -> viewModel.revokeExportScope()
                         is ChatUiEvent.SearchHistory -> viewModel.updateHistorySearch(event.query)
                         is ChatUiEvent.SelectConversation -> viewModel.selectConversation(event.id)
                         is ChatUiEvent.UpdateDraft -> viewModel.updateDraft(event.text)
@@ -132,8 +140,8 @@ class MainActivity : ComponentActivity() {
                         text = {
                             Text(
                                 "This signs you out and permanently erases app credentials, " +
-                                    "conversation history, settings, document access, and recovery records. " +
-                                    "Files in your selected folders are not deleted.",
+                                    "conversation history, private workspace files, settings, document access, " +
+                                    "and recovery records. Files exported to selected folders are not deleted.",
                             )
                         },
                         confirmButton = {
@@ -158,12 +166,16 @@ class MainActivity : ComponentActivity() {
                         title = { Text("Privacy details") },
                         text = {
                             Text(
-                                "Prompts, structured Web Search tags, Codex responses, ChatGPT credentials, " +
-                                    "conversation history, selected-folder access, and mutation recovery records " +
-                                    "stay in app-private storage and are excluded from backup. Prompts, requested " +
-                                    "Web Searches, and Android tool results are sent to OpenAI. Codex Mobile does " +
-                                    "not put prompt or document content in its logs. Erasing app data removes this " +
-                                    "local data and access without deleting your documents.",
+                                "Prompts, Codex responses, ChatGPT credentials, conversation history, private " +
+                                    "workspace files, selected-folder access, and mutation recovery records stay " +
+                                    "in app-private storage and are excluded from backup. Prompts, requested Web " +
+                                    "Searches, extracted document text, OCR text, rendered PDF pages, images, and " +
+                                    "other Android tool results are sent to OpenAI. Original files are not uploaded " +
+                                    "as files. Bundled Google ML Kit OCR processes images on-device; Google states " +
+                                    "that ML Kit may send app, device, performance, and usage metrics—but not input " +
+                                    "images or recognized text—to Google. Codex Mobile does not put prompt or " +
+                                    "document content in its logs. Erasing app data removes private workspace files " +
+                                    "and access without deleting documents already exported to Android folders.",
                             )
                         },
                         confirmButton = {
@@ -220,6 +232,9 @@ internal fun MutationApprovalDialog(
                 ApprovalField("Destination", preview.destination)
                 ApprovalField("Scope", preview.scope)
                 ApprovalField("Conflict behavior", preview.conflictBehavior)
+                preview.diff?.let { diff ->
+                    Text("Diff:\n${diff.toApprovalDiffDisplayText()}", fontFamily = FontFamily.Monospace)
+                }
             }
         },
         confirmButton = {
@@ -256,6 +271,23 @@ internal fun String.toApprovalDisplayText(): String = buildString {
             append("\\u{").append(codePoint.toString(16).uppercase()).append('}')
         } else {
             appendCodePoint(codePoint)
+        }
+        offset += Character.charCount(codePoint)
+    }
+}
+
+internal fun String.toApprovalDiffDisplayText(): String = buildString {
+    var offset = 0
+    while (offset < this@toApprovalDiffDisplayText.length) {
+        val codePoint = this@toApprovalDiffDisplayText.codePointAt(offset)
+        val type = Character.getType(codePoint)
+        when {
+            codePoint == '\n'.code -> append('\n')
+            codePoint == '\t'.code -> append("    ")
+            Character.isISOControl(codePoint) || type == Character.FORMAT.toInt() ||
+                type == Character.LINE_SEPARATOR.toInt() || type == Character.PARAGRAPH_SEPARATOR.toInt() ->
+                append("\\u{").append(codePoint.toString(16).uppercase()).append('}')
+            else -> appendCodePoint(codePoint)
         }
         offset += Character.charCount(codePoint)
     }

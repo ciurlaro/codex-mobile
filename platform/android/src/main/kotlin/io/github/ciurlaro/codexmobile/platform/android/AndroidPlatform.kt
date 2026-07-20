@@ -67,7 +67,10 @@ class AndroidPlatform internal constructor(
     constructor(context: Context) : this(context, null)
 
     private val appContext = context.applicationContext
+    private val workspaceStore = WorkspaceStore(appContext)
+    private val workspaceAuthority = WorkspaceAuthority(workspaceStore)
     private val readAuthority = SafReadAuthority(appContext)
+    private val exportAuthority = WorkspaceExportAuthority(appContext, workspaceStore)
     private val journal by lazy { AndroidMutationJournal(appContext) }
 
     fun launchProcess(command: List<String>, environment: Map<String, String>): Process {
@@ -110,22 +113,47 @@ class AndroidPlatform internal constructor(
     }
 
     suspend fun persistScope(treeUri: Uri): ResourceScopeId = withContext(Dispatchers.IO) {
-        readAuthority.persist(treeUri)
+        readAuthority.persist(treeUri, exportAuthority.currentTreeUri())
     }
 
     suspend fun persistMutationScope(treeUri: Uri): ResourceScopeId = withContext(Dispatchers.IO) {
-        readAuthority.persistMutation(treeUri)
+        readAuthority.persistMutation(treeUri, exportAuthority.currentTreeUri())
+    }
+
+    suspend fun persistExportScope(treeUri: Uri): ResourceScopeId = withContext(Dispatchers.IO) {
+        exportAuthority.persist(
+            treeUri,
+            readAuthority.currentTreeUri(),
+            readAuthority.currentScopeAllowsMutations(),
+        )
     }
 
     suspend fun revokeScope(scopeId: ResourceScopeId) = withContext(Dispatchers.IO) {
-        readAuthority.revoke(scopeId)
+        readAuthority.revoke(scopeId, exportAuthority.currentTreeUri())
+    }
+
+    suspend fun revokeExportScope(scopeId: ResourceScopeId) = withContext(Dispatchers.IO) {
+        exportAuthority.revoke(
+            scopeId,
+            readAuthority.currentTreeUri(),
+            readAuthority.currentScopeAllowsMutations(),
+        )
     }
 
     fun currentScopeId(): ResourceScopeId? = readAuthority.currentScopeId()
 
     fun currentScopeAllowsMutations(): Boolean = readAuthority.currentScopeAllowsMutations()
 
-    fun deviceTools(): List<DeviceTool> = readAuthority.tools
+    fun currentExportScopeId(): ResourceScopeId? = exportAuthority.currentScopeId()
+
+    fun scopeIdForTool(toolName: String): ResourceScopeId? =
+        when {
+            workspaceAuthority.handles(toolName) -> workspaceAuthority.scopeId
+            exportAuthority.handles(toolName) -> exportAuthority.currentScopeId()
+            else -> readAuthority.currentScopeId()
+        }
+
+    fun deviceTools(): List<DeviceTool> = readAuthority.tools + workspaceAuthority.tools + exportAuthority.tools
 
     fun mutationJournal(): MutationJournal = journal
 
@@ -200,15 +228,18 @@ class AndroidPlatform internal constructor(
 private class SafReadAuthority(context: Context) {
     private val resolver = context.contentResolver
     private val preferences = context.getSharedPreferences(SCOPE_PREFERENCES, Context.MODE_PRIVATE)
+    private val documentReader = DocumentReader(context)
     private val lock = Any()
 
     val tools: List<DeviceTool> = listOf(ListDocumentsTool(), ReadDocumentTool(), RenameDocumentTool())
 
-    fun persist(treeUri: Uri): ResourceScopeId = persist(treeUri, allowMutations = false)
+    fun persist(treeUri: Uri, protectedUri: Uri? = null): ResourceScopeId =
+        persist(treeUri, allowMutations = false, protectedUri = protectedUri)
 
-    fun persistMutation(treeUri: Uri): ResourceScopeId = persist(treeUri, allowMutations = true)
+    fun persistMutation(treeUri: Uri, protectedUri: Uri? = null): ResourceScopeId =
+        persist(treeUri, allowMutations = true, protectedUri = protectedUri)
 
-    private fun persist(treeUri: Uri, allowMutations: Boolean): ResourceScopeId {
+    private fun persist(treeUri: Uri, allowMutations: Boolean, protectedUri: Uri?): ResourceScopeId {
         require(
             treeUri.scheme == ContentResolver.SCHEME_CONTENT &&
                 treeUri.authority?.isNotBlank() == true &&
@@ -246,23 +277,25 @@ private class SafReadAuthority(context: Context) {
                 else if (previous.allowsMutations != true) releasePersistedWriteGrant(treeUri)
                 error("Unable to save document scope")
             }
-            if (!allowMutations) releasePersistedWriteGrant(treeUri)
-            if (previous != null && previous.treeUri != treeUri) {
+            if (!allowMutations && treeUri != protectedUri) releasePersistedWriteGrant(treeUri)
+            if (previous != null && previous.treeUri != treeUri && previous.treeUri != protectedUri) {
                 releasePersistedGrant(previous.treeUri)
             }
             return id
         }
     }
 
-    fun revoke(scopeId: ResourceScopeId) = synchronized(lock) {
+    fun revoke(scopeId: ResourceScopeId, protectedUri: Uri? = null) = synchronized(lock) {
         val scope = scopeOrNullLocked()
             ?: throw ToolRejectedException("Document scope is unavailable")
         if (scope.id != scopeId) throw ToolRejectedException("Document scope does not match")
         preferences.edit().clear().commit()
-        releasePersistedGrant(scope.treeUri)
+        if (scope.treeUri != protectedUri) releasePersistedGrant(scope.treeUri)
     }
 
     fun currentScopeId(): ResourceScopeId? = synchronized(lock) { scopeOrNullLocked()?.id }
+
+    fun currentTreeUri(): Uri? = synchronized(lock) { scopeOrNullLocked()?.treeUri }
 
     fun currentScopeAllowsMutations(): Boolean = synchronized(lock) {
         scopeOrNullLocked()?.let { it.allowsMutations && hasWriteGrant(it.treeUri) } == true
@@ -372,57 +405,74 @@ private class SafReadAuthority(context: Context) {
     private inner class ReadDocumentTool : DeviceTool {
         override val definition = ToolDefinition(
             name = READ_TOOL_NAME,
-            description = "Read one bounded UTF-8 text document by its opaque ID from the selected folder.",
+            description = "Read one bounded document segment by opaque ID. Supports text, PDF, images, DOCX, PPTX, XLSX, and CSV; pass nextCursor until absent.",
             inputSchemaJson = READ_SCHEMA,
         )
         override val effect = ToolEffect.READ
 
         override suspend fun prepare(call: ToolCall, scopeId: ResourceScopeId): ToolPlan {
             val scope = requireScope(scopeId)
-            val arguments = strictArguments(call.argumentsJson, setOf(DOCUMENT_ID_ARGUMENT), requireAll = true)
+            val arguments = strictArguments(call.argumentsJson, setOf(DOCUMENT_ID_ARGUMENT, CURSOR_ARGUMENT))
             val path = decodePath(arguments.requiredString(DOCUMENT_ID_ARGUMENT), scope)
             if (path.isEmpty()) throw ToolRejectedException("A document ID is required")
+            arguments.optionalString(CURSOR_ARGUMENT)?.let {
+                decodeCursor(it, arguments.requiredString(DOCUMENT_ID_ARGUMENT), scope)
+            }
             return readPlan(call, scopeId, "Read selected document")
         }
 
         override suspend fun execute(plan: ToolPlan): ToolResult = withContext(Dispatchers.IO) {
-            observedResult(plan) { scope ->
+            try {
+                val scope = requireScope(plan.scopeId)
                 val arguments = strictArguments(
                     plan.call.argumentsJson,
-                    setOf(DOCUMENT_ID_ARGUMENT),
-                    requireAll = true,
+                    setOf(DOCUMENT_ID_ARGUMENT, CURSOR_ARGUMENT),
                 )
-                val path = decodePath(arguments.requiredString(DOCUMENT_ID_ARGUMENT), scope)
+                val documentId = arguments.requiredString(DOCUMENT_ID_ARGUMENT)
+                val path = decodePath(documentId, scope)
                 if (path.isEmpty()) throw ToolRejectedException("A document ID is required")
                 val resolved = resolvePath(scope, path)
                 if (resolved.isDirectory) throw ToolRejectedException("Document ID refers to a folder")
-                if (!resolved.mimeType.isSupportedText()) {
-                    throw SafFailure("unsupported_binary", "Only UTF-8 text documents can be read")
-                }
-                if (resolved.size != null && resolved.size > MAX_DOCUMENT_BYTES) {
-                    throw SafFailure("document_too_large", "Document exceeds the read limit")
-                }
-
                 val uri = DocumentsContract.buildDocumentUriUsingTree(scope.treeUri, resolved.id)
                 val current = querySingleDocument(uri, resolved.id)
                 if (current != resolved) {
                     throw SafFailure("document_changed", "Document changed before it could be opened")
                 }
-                val bytes = resolver.openInputStream(uri)?.use(::readBounded)
-                    ?: throw SafFailure("open_failed", "Document provider did not open the document")
-                if (resolved.size != null && resolved.size != bytes.size.toLong()) {
-                    throw SafFailure("size_mismatch", "Document ended before its declared size")
+                val cursor = arguments.optionalString(CURSOR_ARGUMENT)?.let {
+                    decodeCursor(it, documentId, scope)
                 }
-                val text = runCatching {
-                    StandardCharsets.UTF_8.newDecoder()
-                        .onMalformedInput(CodingErrorAction.REPORT)
-                        .onUnmappableCharacter(CodingErrorAction.REPORT)
-                        .decode(ByteBuffer.wrap(bytes))
-                        .toString()
-                }.getOrElse {
-                    throw SafFailure("invalid_utf8", "Document is not valid UTF-8 text")
+                val read = documentReader.read(uri, resolved.size, cursor?.position ?: 0)
+                if (cursor != null && cursor.sha256 != read.sha256) {
+                    throw SafFailure("document_changed", "Document changed since the previous segment")
                 }
-                JSONObject().put("text", text).put("byteCount", bytes.size).toString()
+                val output = JSONObject()
+                    .put("name", resolved.name)
+                    .put("format", read.format)
+                    .put("sha256", read.sha256)
+                    .put("position", read.position)
+                    .put("text", read.text)
+                    .put("byteCount", read.text.toByteArray(StandardCharsets.UTF_8).size)
+                    .put("warnings", JSONArray(read.warnings))
+                read.nextPosition?.let {
+                    output.put("nextCursor", encodeCursor(documentId, read.sha256, it, scope))
+                }
+                ToolResult.Success(plan.call.id, output.toString(), read.imageUrls)
+            } catch (error: ToolRejectedException) {
+                ToolResult.Rejected(plan.call.id, error.message ?: "Document request was rejected")
+            } catch (error: DocumentReadFailure) {
+                ToolResult.Failed(plan.call.id, error.code, error.message ?: "Document read failed")
+            } catch (error: SafFailure) {
+                ToolResult.Failed(plan.call.id, error.code, error.publicMessage)
+            } catch (_: SecurityException) {
+                ToolResult.Failed(plan.call.id, "permission_denied", "Document permission is unavailable")
+            } catch (_: FileNotFoundException) {
+                ToolResult.Failed(plan.call.id, "not_found", "Document is unavailable")
+            } catch (_: IOException) {
+                ToolResult.Failed(plan.call.id, "io_failure", "Document stream failed")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                ToolResult.Failed(plan.call.id, "provider_failure", "Document provider failed")
             }
         }
     }
@@ -986,18 +1036,49 @@ private class SafReadAuthority(context: Context) {
         }.getOrElse { throw ToolRejectedException("Document ID is invalid") }
     }
 
+    private fun encodeCursor(documentId: String, sha256: String, position: Int, scope: Scope): String {
+        val payload = ByteArrayOutputStream().also { bytes ->
+            DataOutputStream(bytes).use { output ->
+                output.writeUTF(documentId)
+                output.writeUTF(sha256)
+                output.writeInt(position)
+            }
+        }.toByteArray()
+        val signature = hmac(payload, scope.secret)
+        return BASE64_URL.encodeToString(payload) + "." + BASE64_URL.encodeToString(signature)
+    }
+
+    private fun decodeCursor(token: String, documentId: String, scope: Scope): ReadCursor {
+        if (token.length > MAX_TOKEN_CHARS) throw ToolRejectedException("Document cursor is invalid")
+        val parts = token.split('.', limit = 3)
+        if (parts.size != 2) throw ToolRejectedException("Document cursor is invalid")
+        val payload = runCatching { BASE64_URL_DECODER.decode(parts[0]) }.getOrNull()
+            ?: throw ToolRejectedException("Document cursor is invalid")
+        val supplied = runCatching { BASE64_URL_DECODER.decode(parts[1]) }.getOrNull()
+            ?: throw ToolRejectedException("Document cursor is invalid")
+        if (
+            payload.size > MAX_TOKEN_PAYLOAD_BYTES || supplied.size != SCOPE_SECRET_BYTES ||
+            !MessageDigest.isEqual(hmac(payload, scope.secret), supplied)
+        ) {
+            throw ToolRejectedException("Document cursor does not belong to the current scope")
+        }
+        return runCatching {
+            DataInputStream(ByteArrayInputStream(payload)).use { input ->
+                val encodedDocumentId = input.readUTF()
+                val sha256 = input.readUTF()
+                val position = input.readInt()
+                require(input.read() == -1 && encodedDocumentId == documentId)
+                require(sha256.matches(Regex("[0-9a-f]{64}")) && position >= 0)
+                ReadCursor(sha256, position)
+            }
+        }.getOrElse { throw ToolRejectedException("Document cursor is invalid") }
+    }
+
     private fun hmac(payload: ByteArray, secret: ByteArray): ByteArray =
         Mac.getInstance(HMAC_ALGORITHM).run {
             init(SecretKeySpec(secret, HMAC_ALGORITHM))
             doFinal(payload)
         }
-
-    private fun String.isSupportedText(): Boolean {
-        val normalized = lowercase()
-        return normalized.startsWith("text/") || normalized == "application/json" ||
-            normalized == "application/xml" || normalized.endsWith("+json") ||
-            normalized.endsWith("+xml")
-    }
 
     private data class Scope(
         val id: ResourceScopeId,
@@ -1035,6 +1116,8 @@ private class SafReadAuthority(context: Context) {
         val destinationName: String,
     )
 
+    private data class ReadCursor(val sha256: String, val position: Int)
+
     private class SafFailure(val code: String, val publicMessage: String) : Exception(publicMessage)
 
     private companion object {
@@ -1049,6 +1132,7 @@ private class SafReadAuthority(context: Context) {
         const val RENAME_TOOL_NAME = "rename_document"
         const val DIRECTORY_ID_ARGUMENT = "directoryId"
         const val DOCUMENT_ID_ARGUMENT = "documentId"
+        const val CURSOR_ARGUMENT = "cursor"
         const val NEW_NAME_ARGUMENT = "newName"
         const val MAX_DOCUMENT_BYTES = 64 * 1024
         const val MAX_DIRECTORY_ENTRIES = 2_048
@@ -1082,7 +1166,7 @@ private class SafReadAuthority(context: Context) {
         const val LIST_SCHEMA =
             "{\"type\":\"object\",\"properties\":{\"directoryId\":{\"type\":\"string\"}},\"additionalProperties\":false}"
         const val READ_SCHEMA =
-            "{\"type\":\"object\",\"properties\":{\"documentId\":{\"type\":\"string\"}},\"required\":[\"documentId\"],\"additionalProperties\":false}"
+            "{\"type\":\"object\",\"properties\":{\"documentId\":{\"type\":\"string\"},\"cursor\":{\"type\":\"string\"}},\"required\":[\"documentId\"],\"additionalProperties\":false}"
         const val RENAME_SCHEMA =
             "{\"type\":\"object\",\"properties\":{\"documentId\":{\"type\":\"string\"},\"newName\":{\"type\":\"string\"}},\"required\":[\"documentId\",\"newName\"],\"additionalProperties\":false}"
         val DOCUMENT_PROJECTION = arrayOf(

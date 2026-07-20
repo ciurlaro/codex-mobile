@@ -18,6 +18,8 @@ A stock ARM64 Android device can run a bundled Codex app-server, authenticate a 
 | R8 | Recover mutation outcomes after process death without claiming exactly-once execution | Step 04 |
 | R9 | Continue active work outside the visible Activity only when the product needs it | Step 05 |
 | R10 | Meet security, privacy, accessibility, compatibility, and release gates | Step 06 |
+| R11 | Read common documents by bounded content signature, including PDF OCR and model-visible page images | Current reader suite |
+| R12 | Create/replace UTF-8 files transactionally in private storage and export only through a separate approved SAF scope | Workspace/export suite |
 
 ## Hard constraints
 
@@ -28,6 +30,7 @@ A stock ARM64 Android device can run a bundled Codex app-server, authenticate a 
 - Never log tokens, authorization codes, prompt contents, or document contents by default.
 - Keep Android SDK types out of `:core`.
 - Fail visibly on uncertain mutations; do not retry them generically.
+- Keep the app-private workspace authoritative; treat provider export as a separately approved, potentially non-transactional boundary.
 
 ## Not in scope now
 

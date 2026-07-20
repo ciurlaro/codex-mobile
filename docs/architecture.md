@@ -46,7 +46,9 @@ sequenceDiagram
 
 Only the platform result can establish whether an Android operation succeeded. A provider request, response, timeout, or repeated call ID is correlation—not proof of exactly-once execution.
 
-The pinned app-server registers Android capabilities as dynamic tools on the existing session. Read-only plans are allowed by core policy and dispatched directly; mutating plans require an explicit, one-use UI decision bound to the exact resolved plan. The app-server receives only the `ToolResult` produced from Android's observed provider outcome.
+The pinned app-server registers Android capabilities as dynamic tools on the existing session. Source documents are identified by signed SAF IDs and read by content signature. Extracted text is returned as `inputText`; rendered pages and images are returned as bounded `inputImage` items. The app-server never receives a universal filesystem path or arbitrary native file input.
+
+Read-only plans are allowed by core policy and dispatched directly. Text creation/replacement targets an app-private SQLite workspace and commits a whole changeset transactionally. Export crosses a separately selected writable SAF boundary only after a consolidated exact diff approval. Mutating plans require an explicit, one-use UI decision bound to the resolved plan, and optimistic hashes reject stale sources or destinations.
 
 After approval, core requires durable `Prepared` and `Executing` journal transitions before mutation dispatch. Android stores the minimum tool-specific recovery intent in an app-private SQLite database. On restart, a `Prepared` row is safely closed as not dispatched; an `Executing` row becomes `Unknown` before the tool re-observes Android state. Reconciliation never executes the mutation, unresolved outcomes remain user-visible until acknowledged or resolved, and retry remains a tool-specific decision over a fresh plan rather than a call-ID policy.
 
@@ -56,7 +58,7 @@ An explicit UI action starts one non-exported `dataSync` foreground service. Tha
 
 ## Data lifecycle
 
-Credentials, Codex history, scope metadata, and mutation recovery stay in app-private storage excluded from backup. `account/logout` removes ChatGPT authentication while retaining unrelated local state. Scope revocation releases only the current SAF grant. Confirmed full erasure delegates to Android's native app-data reset, which removes private state, runtime permissions, notifications, and persisted grants without deleting provider-owned user files.
+Credentials, Codex history, private workspace files, scope metadata, and mutation recovery stay in app-private storage excluded from backup. `account/logout` removes ChatGPT authentication while retaining unrelated local state. Source and export revocation release their grants independently. Confirmed full erasure delegates to Android's native app-data reset, which removes private state, runtime permissions, notifications, and persisted grants without deleting provider-owned exported files.
 
 ## Dependency rules
 

@@ -59,6 +59,7 @@ data class MainUiState(
     val turnActive: Boolean = false,
     val scopeSelected: Boolean = false,
     val mutationScopeSelected: Boolean = false,
+    val exportScopeSelected: Boolean = false,
     val approvalPreview: ApprovalPreview? = null,
     val recoveryNotices: List<MutationRecoveryNotice> = emptyList(),
     val backgroundActive: Boolean = false,
@@ -80,6 +81,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         MainUiState(
             scopeSelected = graph.platform.currentScopeId() != null,
             mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
+            exportScopeSelected = graph.platform.currentExportScopeId() != null,
             selectedModel = chatPreferences.getString(LAST_MODEL, null),
             selectedEffort = chatPreferences.getString(LAST_EFFORT, null),
         ),
@@ -481,6 +483,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun selectExportScope(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                graph.platform.persistExportScope(uri)
+                mutableState.update {
+                    it.copy(status = "Export folder selected", exportScopeSelected = true)
+                }
+                refreshRecovery(reconcile = true)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                mutableState.update {
+                    it.copy(
+                        status = "Export folder selection failed",
+                        exportScopeSelected = graph.platform.currentExportScopeId() != null,
+                    )
+                }
+            }
+        }
+    }
+
     fun scopeSelectionCancelled() {
         mutableState.update { it.copy(status = "Document folder selection cancelled") }
     }
@@ -511,11 +534,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun revokeExportScope() {
+        val scopeId = graph.platform.currentExportScopeId() ?: return
+        viewModelScope.launch {
+            try {
+                graph.platform.revokeExportScope(scopeId)
+                mutableState.update {
+                    it.copy(status = "Export folder access revoked", exportScopeSelected = false)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                mutableState.update {
+                    it.copy(
+                        status = "Export folder revocation failed",
+                        exportScopeSelected = graph.platform.currentExportScopeId() != null,
+                    )
+                }
+            }
+        }
+    }
+
     fun refreshScope() {
         mutableState.update {
             it.copy(
                 scopeSelected = graph.platform.currentScopeId() != null,
                 mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
+                exportScopeSelected = graph.platform.currentExportScopeId() != null,
                 backgroundNotificationVisible = serviceController?.let {
                     notificationsEnabled?.invoke() ?: false
                 } ?: it.backgroundNotificationVisible,
@@ -613,11 +658,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         controller: ForegroundSessionController?,
     ) {
         mutableState.update { it.copy(status = "Resolving Android document request…") }
-        val scopeId = graph.platform.currentScopeId()
+        val scopeId = graph.platform.scopeIdForTool(event.call.name)
         if (scopeId == null) {
             finishTool(
                 event,
-                ToolResult.Rejected(event.call.id, "No document folder is selected"),
+                ToolResult.Rejected(event.call.id, "No matching document workspace or folder is available"),
                 controller,
             )
             return

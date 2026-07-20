@@ -136,7 +136,11 @@ class Step02DynamicToolBridgeTest {
 
                 client.submitToolResult(
                     session,
-                    ToolResult.Success(requested[0].call.id, "{\"observed\":true}"),
+                    ToolResult.Success(
+                        requested[0].call.id,
+                        "{\"observed\":true}",
+                        listOf("data:image/jpeg;base64,AA=="),
+                    ),
                 )
                 client.submitToolResult(
                     session,
@@ -144,6 +148,14 @@ class Step02DynamicToolBridgeTest {
                 )
                 assertTrue(responseLatch.await(1, TimeUnit.SECONDS))
                 assertTrue(responses.getValue(60)["success"]!!.jsonPrimitive.boolean)
+                val content = responses.getValue(60)["contentItems"]!!.jsonArray
+                assertEquals(listOf("inputText", "inputImage"), content.map {
+                    it.jsonObject["type"]!!.jsonPrimitive.content
+                })
+                assertEquals(
+                    "data:image/jpeg;base64,AA==",
+                    content[1].jsonObject["imageUrl"]!!.jsonPrimitive.content,
+                )
                 assertFalse(responses.getValue(61)["success"]!!.jsonPrimitive.boolean)
                 assertEquals(-32602, malformedCode)
                 assertEquals(-32602, foreignSessionCode)

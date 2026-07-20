@@ -2,6 +2,8 @@
 
 An Android feasibility project for running Codex locally, while Android keeps final authority over device data and side effects.
 
+Selected Android documents can be read by content signature (text, PDF/OCR, images, DOCX, PPTX, XLSX, and CSV). Generated text is created or replaced transactionally in an app-private workspace, then exported to a separately selected Android folder only after an exact diff approval.
+
 **Status:** [Roadmap Steps 01–06](docs/roadmap/README.md) are complete; the bounded Android MVP passes its documented release gates.
 
 ## Ownership

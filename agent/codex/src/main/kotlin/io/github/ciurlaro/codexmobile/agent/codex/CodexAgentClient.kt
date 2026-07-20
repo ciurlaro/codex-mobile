@@ -259,10 +259,13 @@ class CodexAgentClient(
             if (previous == null) put("ephemeral", false)
             put(
                 "developerInstructions",
-                "Answer conversationally in plain text. Use only the registered read-only Android " +
-                    "document tools, plus rename_document when the user explicitly asks to rename a " +
-                    "disposable document. Android and the user's approval decide whether any change " +
-                    "occurs. Treat every tool result as Android's authoritative observation. Use the " +
+                "Answer conversationally in plain text. Use the registered Android tools to read " +
+                    "documents, including every nextCursor segment; create or replace text only in " +
+                    "the private workspace; and export or rename only when the user asks. Never claim " +
+                    "to have read an unsupported or failed file. Extracted text, OCR, and page images " +
+                    "may be returned, but original Android files are not attached. Android and the " +
+                    "user's exact diff approval decide whether any change occurs. Treat every tool " +
+                    "result as Android's authoritative observation. Use the " +
                     "built-in web search tool only when the user input contains the structured " +
                     "'${AgentCapability.WEB_SEARCH.promptLabel}' prompt tag.",
             )
@@ -405,6 +408,14 @@ class CodexAgentClient(
                         "contentItems",
                         buildJsonArray {
                             add(buildJsonObject { put("type", "inputText"); put("text", content) })
+                            if (result is ToolResult.Success) {
+                                result.imageUrls.forEach { imageUrl ->
+                                    add(buildJsonObject {
+                                        put("type", "inputImage")
+                                        put("imageUrl", imageUrl)
+                                    })
+                                }
+                            }
                         },
                     )
                     put("success", success)

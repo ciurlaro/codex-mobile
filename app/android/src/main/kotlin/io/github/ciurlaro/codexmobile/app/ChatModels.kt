@@ -31,7 +31,9 @@ sealed interface ChatUiEvent {
     data object ShowEraseConfirmation : ChatUiEvent
     data object SelectScope : ChatUiEvent
     data object SelectMutationScope : ChatUiEvent
+    data object SelectExportScope : ChatUiEvent
     data object RevokeScope : ChatUiEvent
+    data object RevokeExportScope : ChatUiEvent
     data class SearchHistory(val query: String) : ChatUiEvent
     data class SelectConversation(val id: SessionId) : ChatUiEvent
     data class UpdateDraft(val text: String) : ChatUiEvent

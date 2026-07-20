@@ -8,8 +8,12 @@ import android.provider.DocumentsContract.Document
 import android.provider.DocumentsContract.Root
 import android.provider.DocumentsProvider
 import android.util.Log
+import java.io.ByteArrayOutputStream
 import java.io.FileNotFoundException
+import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
 
 class Step02DocumentsProvider : DocumentsProvider() {
@@ -74,6 +78,17 @@ class Step02DocumentsProvider : DocumentsProvider() {
         if (scenario == Scenario.DELETE_ON_OPEN) {
             throw FileNotFoundException("injected")
         }
+        synchronized(EXPORT_LOCK) {
+            EXPORTS[documentId]?.let { export ->
+                val descriptorMode = if ('w' in mode) {
+                    ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_CREATE or
+                        ParcelFileDescriptor.MODE_TRUNCATE
+                } else {
+                    ParcelFileDescriptor.MODE_READ_ONLY
+                }
+                return ParcelFileDescriptor.open(export.file, descriptorMode)
+            }
+        }
         val document = documents().getValue(documentId)
         if (document.isDirectory) throw FileNotFoundException("directory")
         val bytes = document.bytes()
@@ -95,6 +110,19 @@ class Step02DocumentsProvider : DocumentsProvider() {
             }
         }
         return pipe[0]
+    }
+
+    override fun createDocument(parentDocumentId: String, mimeType: String, displayName: String): String {
+        if (parentDocumentId != ROOT_ID) throw FileNotFoundException("creation outside root")
+        return synchronized(EXPORT_LOCK) {
+            val id = "export-${EXPORT_SEQUENCE.incrementAndGet()}"
+            val file = File(checkNotNull(context).cacheDir, "step02-$id").apply {
+                parentFile?.mkdirs()
+                writeBytes(byteArrayOf())
+            }
+            EXPORTS[id] = ExportRecord(id, displayName, mimeType, file)
+            id
+        }
     }
 
     override fun renameDocument(documentId: String, displayName: String): String? {
@@ -240,7 +268,10 @@ class Step02DocumentsProvider : DocumentsProvider() {
         private val ACTIVE_RENAMES = AtomicInteger()
         private val MAX_ACTIVE_RENAMES = AtomicInteger()
         private val MUTATION_VERSION = AtomicInteger()
+        private val EXPORT_SEQUENCE = AtomicInteger()
         private val MUTATION_LOCK = Any()
+        private val EXPORT_LOCK = Any()
+        private val EXPORTS = LinkedHashMap<String, ExportRecord>()
         @Volatile
         private var preferences: android.content.SharedPreferences? = null
         @Volatile
@@ -276,6 +307,11 @@ class Step02DocumentsProvider : DocumentsProvider() {
             sourcePresent = true
             secondPresent = true
             partialName = null
+            synchronized(EXPORT_LOCK) {
+                EXPORTS.values.forEach { it.file.delete() }
+                EXPORTS.clear()
+                EXPORT_SEQUENCE.set(0)
+            }
         }
 
         fun openCount(): Int = OPEN_COUNT.get()
@@ -295,6 +331,14 @@ class Step02DocumentsProvider : DocumentsProvider() {
             MUTATION_VERSION.incrementAndGet()
         }
 
+        fun exportedText(name: String): String? = synchronized(EXPORT_LOCK) {
+            EXPORTS.values.singleOrNull { it.name == name }?.file?.readText()
+        }
+
+        fun replaceExportText(name: String, content: String) = synchronized(EXPORT_LOCK) {
+            EXPORTS.values.single { it.name == name }.file.writeText(content)
+        }
+
         fun removeMutationSource() = synchronized(MUTATION_LOCK) {
             sourcePresent = false
             MUTATION_VERSION.incrementAndGet()
@@ -311,7 +355,16 @@ class Step02DocumentsProvider : DocumentsProvider() {
         }
 
         private fun documents(): Map<String, TestDocument> = buildMap {
-            put(ROOT_ID, TestDocument(ROOT_ID, null, "Root", Document.MIME_TYPE_DIR))
+            put(
+                ROOT_ID,
+                TestDocument(
+                    ROOT_ID,
+                    null,
+                    "Root",
+                    Document.MIME_TYPE_DIR,
+                    flags = Document.FLAG_DIR_SUPPORTS_CREATE,
+                ),
+            )
             put("empty-dir", TestDocument("empty-dir", ROOT_ID, "empty", Document.MIME_TYPE_DIR))
             put("nested-dir", TestDocument("nested-dir", ROOT_ID, "nested", Document.MIME_TYPE_DIR))
             put("large-dir", TestDocument("large-dir", ROOT_ID, "large", Document.MIME_TYPE_DIR))
@@ -335,6 +388,21 @@ class Step02DocumentsProvider : DocumentsProvider() {
                 TestDocument("invalid-utf8", ROOT_ID, "invalid-utf8.txt", "text/plain") {
                     byteArrayOf(0xc3.toByte(), 0x28)
                 },
+            )
+            put(
+                "misleading-mime",
+                TestDocument("misleading-mime", ROOT_ID, "actually-text.pdf", "application/pdf") {
+                    "content wins over MIME".toByteArray()
+                },
+            )
+            put(
+                "docx",
+                TestDocument(
+                    "docx",
+                    ROOT_ID,
+                    "sample.docx",
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                ) { docxBytes() },
             )
             put(
                 "oversized",
@@ -393,7 +461,29 @@ class Step02DocumentsProvider : DocumentsProvider() {
                 FOREIGN_ID,
                 TestDocument(FOREIGN_ID, null, "foreign.txt", "text/plain") { "outside".toByteArray() },
             )
+            synchronized(EXPORT_LOCK) {
+                EXPORTS.values.forEach { export ->
+                    put(
+                        export.id,
+                        TestDocument(
+                            export.id,
+                            ROOT_ID,
+                            export.name,
+                            export.mimeType,
+                            lastModified = export.file.lastModified(),
+                            flags = Document.FLAG_SUPPORTS_WRITE,
+                        ) { export.file.readBytes() },
+                    )
+                }
+            }
         }
+
+        private data class ExportRecord(
+            val id: String,
+            val name: String,
+            val mimeType: String,
+            val file: File,
+        )
 
         private val ROOT_PROJECTION = arrayOf(
             Root.COLUMN_ROOT_ID,
@@ -414,5 +504,26 @@ class Step02DocumentsProvider : DocumentsProvider() {
         private const val PERSISTED_SOURCE_NAME = "source_name"
         private const val PROCESS_DEATH_TAG = "CodexMobileStep04Dispatch"
         private const val PROCESS_DEATH_BLOCK_MILLIS = 120_000L
+
+        private fun docxBytes(): ByteArray = ByteArrayOutputStream().also { bytes ->
+            ZipOutputStream(bytes).use { zip ->
+                fun entry(name: String, text: String) {
+                    zip.putNextEntry(ZipEntry(name))
+                    zip.write(text.toByteArray())
+                    zip.closeEntry()
+                }
+                entry(
+                    "[Content_Types].xml",
+                    "<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\">" +
+                        "<Override ContentType=\"application/vnd.openxmlformats-officedocument." +
+                        "wordprocessingml.document.main+xml\"/></Types>",
+                )
+                entry(
+                    "word/document.xml",
+                    "<w:document xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">" +
+                        "<w:body><w:p><w:r><w:t>Hello DOCX</w:t></w:r></w:p></w:body></w:document>",
+                )
+            }
+        }.toByteArray()
     }
 }

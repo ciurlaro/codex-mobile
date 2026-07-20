@@ -121,6 +121,12 @@ class Step02ReadOnlyAuthorityTest {
             "Grüezi 👋\n第二行",
             read(platform, scope, tokenFor(root, "עברית/emoji😀.txt")).getString("text"),
         )
+        val misleading = read(platform, scope, tokenFor(root, "actually-text.pdf"))
+        assertEquals("text", misleading.getString("format"))
+        assertEquals("content wins over MIME", misleading.getString("text"))
+        val docx = read(platform, scope, tokenFor(root, "sample.docx"))
+        assertEquals("docx", docx.getString("format"))
+        assertEquals("Hello DOCX", docx.getString("text"))
 
         val binary = execute(
             platform,
@@ -128,7 +134,7 @@ class Step02ReadOnlyAuthorityTest {
             "read_document",
             JSONObject().put("documentId", tokenFor(root, "binary.bin")).toString(),
         )
-        assertEquals("unsupported_binary", assertResult<ToolResult.Failed>(binary).code)
+        assertEquals("unsupported_format", assertResult<ToolResult.Failed>(binary).code)
 
         val invalidUtf8 = execute(
             platform,
@@ -136,7 +142,7 @@ class Step02ReadOnlyAuthorityTest {
             "read_document",
             JSONObject().put("documentId", tokenFor(root, "invalid-utf8.txt")).toString(),
         )
-        assertEquals("invalid_utf8", assertResult<ToolResult.Failed>(invalidUtf8).code)
+        assertEquals("unsupported_format", assertResult<ToolResult.Failed>(invalidUtf8).code)
 
         val opensBeforeOversize = Step02DocumentsProvider.openCount()
         val oversized = execute(
@@ -145,8 +151,9 @@ class Step02ReadOnlyAuthorityTest {
             "read_document",
             JSONObject().put("documentId", tokenFor(root, "oversized.txt")).toString(),
         )
-        assertEquals("document_too_large", assertResult<ToolResult.Failed>(oversized).code)
-        assertEquals(opensBeforeOversize, Step02DocumentsProvider.openCount())
+        val oversizedOutput = JSONObject(assertResult<ToolResult.Success>(oversized).outputJson)
+        assertTrue(oversizedOutput.has("nextCursor"))
+        assertTrue(Step02DocumentsProvider.openCount() > opensBeforeOversize)
 
         Step02DocumentsProvider.scenario = Step02DocumentsProvider.Scenario.SHORT_READ
         val short = execute(
@@ -256,7 +263,12 @@ class Step02ReadOnlyAuthorityTest {
         val scope = platform.persistScope(grantTree())
         val tools = platform.deviceTools()
         assertEquals(
-            setOf("list_documents", "read_document"),
+            setOf(
+                "list_documents",
+                "read_document",
+                WorkspaceAuthority.LIST_TOOL,
+                WorkspaceAuthority.READ_TOOL,
+            ),
             tools.filter { it.effect == ToolEffect.READ }.map { it.name }.toSet(),
         )
         val rename = tools.single { it.name == "rename_document" }
@@ -378,7 +390,7 @@ class Step02ReadOnlyAuthorityTest {
     }
 
     private inline fun <reified T> assertResult(value: Any?): T {
-        assertTrue("Expected ${T::class.java.name}, got ${value?.javaClass?.name}", value is T)
+        assertTrue("Expected ${T::class.java.name}, got $value", value is T)
         @Suppress("UNCHECKED_CAST")
         return value as T
     }

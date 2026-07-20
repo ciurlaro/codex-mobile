@@ -5,7 +5,9 @@
 - ARM64 (`arm64-v8a`) stock Android API 26–37.
 - One ChatGPT account through Codex-managed browser authentication.
 - Android `DocumentsProvider` trees selected with SAF.
-- Scoped listing/read and one explicitly approved rename in a disposable writable tree.
+- Content-signature reads for UTF-8/CSV, PDF (embedded text or bundled OCR), images, DOCX, PPTX, and XLSX.
+- Transactional private UTF-8 workspace create/replace changesets and separately approved Android-folder exports.
+- One legacy explicitly approved rename in a disposable writable tree.
 - Debug and release APKs; additional providers, CPUs, iOS, KMP, shell, general automation, and runtime updating are unsupported.
 
 ## Reproducible signed build
@@ -65,8 +67,9 @@ The command performs the verified signed release above, updates the existing app
 | Visible streamed response | 256 Ki characters, then an explicit truncation marker |
 | JSON-RPC message | 4 MiB |
 | Tool arguments | 72 Ki characters |
-| Document/list result | 64 KiB document; 2,048 entries and 512 KiB listing metadata |
-| Mutation recovery | 64 pending plans/renames; 64 KiB recovery payload; resolved acknowledged rows retained 30 days |
+| Source document/list result | 50 MiB source; 500 PDF pages; 100 MiB Office expansion/10,000 entries; 64 KiB text segment; 1,600 px/2 MiB image; 2,048 entries/512 KiB listing metadata |
+| Private workspace | 2,048 UTF-8 files; 256 KiB each; 10 changes/1 MiB per transaction; 512 KiB approval diff |
+| Mutation recovery | Bounded pending plans and recovery payloads; resolved acknowledged rows retained 30 days |
 
 The release record must contain measured startup/session/first-token, long-stream/listing, PSS/CPU, FD/thread/process/grant, APK size/hash, and API/device results. A budget failure blocks release; the budget is not raised to fit a failing build.
 
@@ -80,4 +83,4 @@ The release record must contain measured startup/session/first-token, long-strea
 | Provider/revoked grant/offline | UI reports the bounded Android/provider or network failure. Re-select/revoke scope, reconnect, or retry a fresh read. Unknown mutations remain visible and are never generically retried. |
 | App crash report request | Collect Android's content-free crash category/stack and the visible diagnostic reference only. Never request credentials, codes, prompts, document content, Codex private files, or the runtime diagnostic database. |
 
-The release operator verifies a clean stock install, user-controlled authentication, one read, one approved disposable rename, sign-out, app-data erasure, and an upgrade from version code 1 to 2 before distribution. Production signing/upload and publication are intentionally not performed by this repository's CI.
+The release operator verifies a clean stock install, user-controlled authentication, text/PDF/Office reads, one approved private changeset and export, the legacy disposable rename, keyboard resize behavior, sign-out, app-data erasure, and an upgrade before distribution. Production signing/upload and publication are intentionally not performed by this repository's CI.

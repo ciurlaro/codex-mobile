@@ -605,7 +605,6 @@ private fun Composer(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .imePadding()
             .navigationBarsPadding()
             .padding(horizontal = ChatDimensions.ScreenPadding, vertical = 10.dp)
             .background(ChatColors.Elevated, RoundedCornerShape(ChatDimensions.ComposerCorner))
@@ -1004,6 +1003,26 @@ private fun SettingsScreen(
                         subtitle = "Use only a dedicated disposable test folder",
                         onClick = { onEvent(ChatUiEvent.SelectMutationScope) },
                     )
+                    SettingsDivider()
+                    SettingsRow(
+                        glyph = IconGlyph.FOLDER,
+                        title = if (state.exportScopeSelected) "Change export folder" else "Select export folder",
+                        subtitle = if (state.exportScopeSelected) {
+                            "Approved workspace exports write here"
+                        } else {
+                            "Required only when exporting generated files"
+                        },
+                        onClick = { onEvent(ChatUiEvent.SelectExportScope) },
+                    )
+                    if (state.exportScopeSelected) {
+                        SettingsDivider()
+                        SettingsRow(
+                            glyph = IconGlyph.CLOSE,
+                            title = "Revoke export access",
+                            danger = true,
+                            onClick = { onEvent(ChatUiEvent.RevokeExportScope) },
+                        )
+                    }
                     if (state.scopeSelected) {
                         SettingsDivider()
                         SettingsRow(

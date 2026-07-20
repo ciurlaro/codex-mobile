@@ -1,6 +1,7 @@
 package io.github.ciurlaro.codexmobile.app
 
 import android.app.ActivityManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -10,6 +11,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -62,6 +64,11 @@ class Step06MvpReadinessTest {
         )
         assertEquals(0, applicationInfo.flags and ApplicationInfo.FLAG_ALLOW_BACKUP)
         assertEquals(0, applicationInfo.flags and ApplicationInfo.FLAG_USES_CLEARTEXT_TRAFFIC)
+        val activity = context.packageManager.getActivityInfo(ComponentName(context, MainActivity::class.java), 0)
+        assertEquals(
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+            activity.softInputMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST,
+        )
         listOf(context.filesDir, context.noBackupFilesDir, context.cacheDir).forEach { directory ->
             assertTrue(directory.canonicalPath.startsWith(File(applicationInfo.dataDir).canonicalPath + "/"))
         }
