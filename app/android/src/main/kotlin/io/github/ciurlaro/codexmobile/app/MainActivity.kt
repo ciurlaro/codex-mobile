@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -15,11 +16,19 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -29,9 +38,13 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
-import io.github.ciurlaro.codexmobile.core.ApprovalPreview
-import io.github.ciurlaro.codexmobile.core.MutationState
+import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthPrompt
+import java.io.File
 
 class MainActivity : ComponentActivity() {
     private val viewModel by viewModels<MainViewModel>()
@@ -46,6 +59,12 @@ class MainActivity : ComponentActivity() {
             val state by viewModel.state.collectAsState()
             var showEraseConfirmation by rememberSaveable { mutableStateOf(false) }
             var showPrivacyDisclosure by rememberSaveable { mutableStateOf(false) }
+            var showIntegrations by rememberSaveable { mutableStateOf(false) }
+            var showWorkspaceBrowser by rememberSaveable { mutableStateOf(false) }
+            var telegramPhone by rememberSaveable { mutableStateOf("") }
+            var telegramAnswer by rememberSaveable { mutableStateOf("") }
+            var workspaceBrowserPath by rememberSaveable { mutableStateOf<String?>(null) }
+            var pendingWorkspaceSelection by rememberSaveable { mutableStateOf(false) }
             var openedSignInUrl by rememberSaveable { mutableStateOf<String?>(null) }
             fun openSignIn(rawUrl: String?) {
                 val signInUri = rawUrl?.toOfficialSignInUri()
@@ -57,16 +76,9 @@ class MainActivity : ComponentActivity() {
                     }.onFailure { viewModel.browserUnavailable() }
                 }
             }
-            val scopePicker = rememberLauncherForActivityResult(
-                ActivityResultContracts.OpenDocumentTree(),
-            ) { uri ->
-                if (uri == null) viewModel.scopeSelectionCancelled() else viewModel.selectScope(uri)
-            }
-            val mutationScopePicker = rememberLauncherForActivityResult(
-                ActivityResultContracts.OpenDocumentTree(),
-            ) { uri ->
-                if (uri == null) viewModel.scopeSelectionCancelled() else viewModel.selectMutationScope(uri)
-            }
+            val legacyStoragePermission = rememberLauncherForActivityResult(
+                ActivityResultContracts.RequestMultiplePermissions(),
+            ) { viewModel.refreshStorage() }
             val notificationPermission = rememberLauncherForActivityResult(
                 ActivityResultContracts.RequestPermission(),
             ) {
@@ -76,6 +88,30 @@ class MainActivity : ComponentActivity() {
                 state.signInUrl?.takeIf { it != openedSignInUrl }?.let {
                     openedSignInUrl = it
                     openSignIn(it)
+                }
+            }
+            LaunchedEffect(state.storagePermissionGranted, pendingWorkspaceSelection) {
+                if (state.storagePermissionGranted && pendingWorkspaceSelection) {
+                    workspaceBrowserPath = state.workspacePath ?: viewModel.workspaceRoots().firstOrNull()
+                    showWorkspaceBrowser = workspaceBrowserPath != null
+                    pendingWorkspaceSelection = false
+                }
+            }
+            fun openStorageSettings(selectAfter: Boolean) {
+                pendingWorkspaceSelection = selectAfter
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    val appUri = Uri.parse("package:$packageName")
+                    val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, appUri)
+                    runCatching { startActivity(intent) }.onFailure {
+                        startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                    }
+                } else {
+                    legacyStoragePermission.launch(
+                        arrayOf(
+                            Manifest.permission.READ_EXTERNAL_STORAGE,
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE,
+                        ),
+                    )
                 }
             }
             CodexMobileTheme {
@@ -88,6 +124,8 @@ class MainActivity : ComponentActivity() {
                         ChatUiEvent.CloseSettings -> viewModel.closeSettings()
                         ChatUiEvent.ShowEffort -> viewModel.showEffortSelector()
                         ChatUiEvent.ShowModels -> viewModel.showModelSelector()
+                        ChatUiEvent.ShowSpeed -> viewModel.showSpeedSelector()
+                        ChatUiEvent.ShowApproval -> viewModel.showApprovalSelector()
                         ChatUiEvent.ShowTags -> viewModel.showTagPicker()
                         ChatUiEvent.DismissPopup -> viewModel.dismissPopup()
                         ChatUiEvent.Send -> viewModel.sendMessage()
@@ -108,32 +146,181 @@ class MainActivity : ComponentActivity() {
                         ChatUiEvent.StopBackground -> viewModel.stopBackgroundWork()
                         ChatUiEvent.SignOut -> viewModel.signOut()
                         ChatUiEvent.ShowPrivacy -> showPrivacyDisclosure = true
+                        ChatUiEvent.ShowIntegrations -> showIntegrations = true
+                        ChatUiEvent.DisconnectTelegram -> viewModel.disconnectTelegram()
+                        ChatUiEvent.CancelTelegramAuthentication -> viewModel.cancelTelegramAuthentication()
                         ChatUiEvent.ShowEraseConfirmation -> showEraseConfirmation = true
-                        ChatUiEvent.SelectScope -> scopePicker.launch(null)
-                        ChatUiEvent.SelectMutationScope -> mutationScopePicker.launch(null)
-                        ChatUiEvent.RevokeScope -> viewModel.revokeScope()
+                        ChatUiEvent.SelectScope -> if (state.storagePermissionGranted) {
+                            workspaceBrowserPath = state.workspacePath ?: viewModel.workspaceRoots().firstOrNull()
+                            showWorkspaceBrowser = workspaceBrowserPath != null
+                        } else {
+                            openStorageSettings(selectAfter = true)
+                        }
+                        ChatUiEvent.ManageStorage -> openStorageSettings(selectAfter = false)
+                        ChatUiEvent.ClearWorkspace -> viewModel.clearWorkspace()
                         is ChatUiEvent.SearchHistory -> viewModel.updateHistorySearch(event.query)
                         is ChatUiEvent.SelectConversation -> viewModel.selectConversation(event.id)
                         is ChatUiEvent.UpdateDraft -> viewModel.updateDraft(event.text)
                         is ChatUiEvent.SelectModel -> viewModel.selectModel(event.id)
                         is ChatUiEvent.SelectEffort -> viewModel.selectEffort(event.effort)
+                        is ChatUiEvent.SelectSpeed -> viewModel.selectSpeed(event.tier)
+                        is ChatUiEvent.SelectApproval -> viewModel.selectApproval(event.preset)
+                        is ChatUiEvent.ConnectTelegram -> viewModel.connectTelegram(event.phoneNumber)
+                        is ChatUiEvent.SubmitTelegramAuthentication -> {
+                            viewModel.submitTelegramAuthentication(event.value)
+                            telegramAnswer = ""
+                        }
+                        is ChatUiEvent.ResolveCodexApproval -> viewModel.resolveCodexApproval(
+                            event.requestId,
+                            event.accept,
+                        )
                         is ChatUiEvent.AddCapability -> viewModel.addCapability(event.capability)
                         is ChatUiEvent.RemoveCapability -> viewModel.removeCapability(event.capability)
-                        is ChatUiEvent.AcknowledgeMutation -> viewModel.acknowledgeMutation(event.id)
                     }
                 }
-                val preview = state.approvalPreview
-                if (preview != null) {
-                    MutationApprovalDialog(preview, viewModel::approveMutation, viewModel::denyMutation)
+                val codexApproval = state.codexApproval
+                if (codexApproval != null) {
+                    AlertDialog(
+                        onDismissRequest = {
+                            viewModel.resolveCodexApproval(codexApproval.requestId, false)
+                        },
+                        title = { Text(codexApproval.title.toApprovalDisplayText()) },
+                        text = {
+                            Text(
+                                codexApproval.details.toApprovalDisplayText(),
+                                fontFamily = FontFamily.Monospace,
+                            )
+                        },
+                        confirmButton = {
+                            Button(onClick = {
+                                viewModel.resolveCodexApproval(codexApproval.requestId, true)
+                            }) { Text("Allow") }
+                        },
+                        dismissButton = {
+                            Button(onClick = {
+                                viewModel.resolveCodexApproval(codexApproval.requestId, false)
+                            }) { Text("Deny") }
+                        },
+                    )
+                } else if (showWorkspaceBrowser) {
+                    WorkspacePickerDialog(
+                        currentPath = workspaceBrowserPath,
+                        directories = viewModel.workspaceDirectories(workspaceBrowserPath),
+                        parent = workspaceBrowserPath?.let(viewModel::workspaceParent),
+                        onOpen = { workspaceBrowserPath = it },
+                        onSelect = {
+                            workspaceBrowserPath?.let(viewModel::selectWorkspace)
+                            showWorkspaceBrowser = false
+                        },
+                        onDismiss = { showWorkspaceBrowser = false },
+                    )
+                } else if (showIntegrations) {
+                    AlertDialog(
+                        onDismissRequest = {
+                            if (!state.telegramConnected &&
+                                (state.telegramBusy || state.telegramAuthPrompt != null)
+                            ) {
+                                viewModel.cancelTelegramAuthentication()
+                            }
+                            showIntegrations = false
+                        },
+                        title = { Text("Integrations") },
+                        text = {
+                            Column {
+                                when {
+                                    !state.telegramAvailable -> Text(
+                                        "No integrations are available in this build.",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    state.telegramConnected -> Text(
+                                        buildString {
+                                            append("Telegram is connected")
+                                            state.telegramUsername?.let { append(" as @$it") }
+                                            append(". Codex can use tgcli directly under your approval policy.")
+                                        },
+                                    )
+                                    state.telegramAuthPrompt == TelegramAuthPrompt.CODE -> OutlinedTextField(
+                                        value = telegramAnswer,
+                                        onValueChange = { telegramAnswer = it },
+                                        label = { Text("Code from Telegram") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                        singleLine = true,
+                                    )
+                                    state.telegramAuthPrompt == TelegramAuthPrompt.PASSWORD -> OutlinedTextField(
+                                        value = telegramAnswer,
+                                        onValueChange = { telegramAnswer = it },
+                                        label = { Text("Telegram 2FA password") },
+                                        visualTransformation = PasswordVisualTransformation(),
+                                        singleLine = true,
+                                    )
+                                    state.telegramBusy -> Text("Connecting to Telegram…")
+                                    else -> {
+                                        Text("Connect directly with Telegram. No browser or installed Telegram app is required.")
+                                        Spacer(Modifier.height(12.dp))
+                                        OutlinedTextField(
+                                            value = telegramPhone,
+                                            onValueChange = { telegramPhone = it },
+                                            label = { Text("Phone number (+…)") },
+                                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                                            singleLine = true,
+                                        )
+                                    }
+                                }
+                                state.telegramError?.let {
+                                    Spacer(Modifier.height(10.dp))
+                                    Text(it, color = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            when {
+                                !state.telegramAvailable -> Button(onClick = { showIntegrations = false }) {
+                                    Text("Close")
+                                }
+                                state.telegramConnected -> Button(
+                                    onClick = { viewModel.disconnectTelegram() },
+                                    enabled = !state.telegramBusy,
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error,
+                                    ),
+                                ) { Text("Disconnect Telegram") }
+                                state.telegramAuthPrompt != null -> Button(
+                                    onClick = {
+                                        viewModel.submitTelegramAuthentication(telegramAnswer)
+                                        telegramAnswer = ""
+                                    },
+                                    enabled = !state.telegramBusy && telegramAnswer.isNotBlank(),
+                                ) { Text("Continue") }
+                                else -> Button(
+                                    onClick = { viewModel.connectTelegram(telegramPhone) },
+                                    enabled = !state.telegramBusy && telegramPhone.isNotBlank(),
+                                ) {
+                                    Text(if (state.telegramBusy) "Connecting…" else "Connect Telegram")
+                                }
+                            }
+                        },
+                        dismissButton = if (state.telegramAvailable) {
+                            {
+                                Button(onClick = {
+                                    if (!state.telegramConnected &&
+                                        (state.telegramBusy || state.telegramAuthPrompt != null)
+                                    ) {
+                                        viewModel.cancelTelegramAuthentication()
+                                    }
+                                    showIntegrations = false
+                                }) { Text(if (state.telegramAuthPrompt != null) "Cancel" else "Done") }
+                            }
+                        } else null,
+                    )
                 } else if (showEraseConfirmation) {
                     AlertDialog(
                         onDismissRequest = { showEraseConfirmation = false },
                         title = { Text("Erase all Codex Mobile data?") },
                         text = {
                             Text(
-                                "This signs you out and permanently erases app credentials, " +
-                                    "conversation history, settings, document access, and recovery records. " +
-                                    "Files in your selected folders are not deleted.",
+                                "This signs you out and permanently erases app credentials, conversation " +
+                                    "history, settings, and integration data. Files in shared " +
+                                    "storage are not deleted.",
                             )
                         },
                         confirmButton = {
@@ -157,14 +344,7 @@ class MainActivity : ComponentActivity() {
                         onDismissRequest = { showPrivacyDisclosure = false },
                         title = { Text("Privacy details") },
                         text = {
-                            Text(
-                                "Prompts, structured Web Search tags, Codex responses, ChatGPT credentials, " +
-                                    "conversation history, selected-folder access, and mutation recovery records " +
-                                    "stay in app-private storage and are excluded from backup. Prompts, requested " +
-                                    "Web Searches, and Android tool results are sent to OpenAI. Codex Mobile does " +
-                                    "not put prompt or document content in its logs. Erasing app data removes this " +
-                                    "local data and access without deleting your documents.",
-                            )
+                            PrivacyDisclosure()
                         },
                         confirmButton = {
                             Button(
@@ -180,9 +360,101 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        viewModel.refreshScope()
+        viewModel.refreshStorage()
     }
 
+}
+
+@androidx.compose.runtime.Composable
+private fun WorkspacePickerDialog(
+    currentPath: String?,
+    directories: List<String>,
+    parent: String?,
+    onOpen: (String) -> Unit,
+    onSelect: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Choose workspace") },
+        text = {
+            Column(
+                Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(currentPath ?: "Shared storage", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                parent?.let { path ->
+                    Text(
+                        "↑ Parent folder",
+                        modifier = Modifier.fillMaxWidth().clickable { onOpen(path) }.padding(vertical = 12.dp),
+                    )
+                }
+                directories.forEach { path ->
+                    Text(
+                        "📁 ${File(path).name.ifBlank { path }}",
+                        modifier = Modifier.fillMaxWidth().clickable { onOpen(path) }.padding(vertical = 12.dp),
+                    )
+                }
+                if (directories.isEmpty()) {
+                    Text("No subfolders", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = { Button(onClick = onSelect, enabled = currentPath != null) { Text("Use this folder") } },
+        dismissButton = { Button(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@androidx.compose.runtime.Composable
+private fun PrivacyDisclosure() {
+    Column(
+        Modifier
+            .heightIn(max = 440.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        PrivacySection(
+            "OpenAI",
+            "Prompts, responses, shell output, file text or bytes requested by Codex, rendered pages, " +
+                "images, and tool results are sent to OpenAI as part of the Codex session.",
+        )
+        PrivacySection(
+            "Storage access",
+            "The selected workspace is Codex's starting folder, not a sandbox. With all-files access, " +
+                "Codex can navigate to other accessible shared-storage locations. Manage the permission in Android Settings.",
+        )
+        PrivacySection(
+            "On-device document processing",
+            "PDF, image, and Office work runs locally through the bundled mutool, tesseract, and " +
+                "officecli commands. Files or extracted content are sent to OpenAI only when Codex includes " +
+                "them in the session.",
+        )
+        PrivacySection(
+            "Local storage and logs",
+            "ChatGPT credentials, conversation state, settings, and integration data stay in app-private " +
+                "storage excluded from Android backup. Prompt and document contents are " +
+                "not written to Codex Mobile logs.",
+        )
+        PrivacySection(
+            "Integrations",
+            "An integration receives only requests explicitly tagged for it. Connected services keep their " +
+                "own authorization until you disconnect them or erase app data.",
+        )
+    }
+}
+
+@androidx.compose.runtime.Composable
+private fun PrivacySection(title: String, body: String) {
+    var expanded by rememberSaveable(title) { mutableStateOf(false) }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+            .padding(vertical = 6.dp),
+    ) {
+        Text(if (expanded) "− $title" else "+ $title")
+        if (expanded) Text(body, modifier = Modifier.padding(top = 6.dp))
+    }
 }
 
 internal fun String.toOfficialSignInUri(): Uri? = runCatching { Uri.parse(this) }
@@ -194,55 +466,6 @@ internal fun String.toOfficialSignInUri(): Uri? = runCatching { Uri.parse(this) 
             (host == "openai.com" || host.endsWith(".openai.com") ||
                 host == "chatgpt.com" || host.endsWith(".chatgpt.com"))
     }
-
-@androidx.compose.runtime.Composable
-internal fun MutationApprovalDialog(
-    preview: ApprovalPreview,
-    onApprove: () -> Unit,
-    onDeny: () -> Unit,
-) {
-    var decided by remember(preview) { mutableStateOf(false) }
-    fun decide(action: () -> Unit) {
-        if (decided) return
-        decided = true
-        action()
-    }
-    AlertDialog(
-        onDismissRequest = { decide(onDeny) },
-        title = { Text("Approve Android change?") },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                ApprovalField("Operation", preview.operation)
-                ApprovalField("Source", preview.source)
-                ApprovalField("Destination", preview.destination)
-                ApprovalField("Scope", preview.scope)
-                ApprovalField("Conflict behavior", preview.conflictBehavior)
-            }
-        },
-        confirmButton = {
-            Button(
-                onClick = { decide(onApprove) },
-                modifier = Modifier.heightIn(min = 48.dp),
-                enabled = !decided,
-            ) { Text("Approve once") }
-        },
-        dismissButton = {
-            Button(
-                onClick = { decide(onDeny) },
-                modifier = Modifier.heightIn(min = 48.dp),
-                enabled = !decided,
-            ) { Text("Deny") }
-        },
-    )
-}
-
-@androidx.compose.runtime.Composable
-private fun ApprovalField(label: String, value: String) {
-    Text("$label: ${value.toApprovalDisplayText()}")
-}
 
 internal fun String.toApprovalDisplayText(): String = buildString {
     var offset = 0
@@ -259,11 +482,4 @@ internal fun String.toApprovalDisplayText(): String = buildString {
         }
         offset += Character.charCount(codePoint)
     }
-}
-
-internal fun MutationState.recoveryDisplayText(): String = when (this) {
-    MutationState.PREPARED, MutationState.EXECUTING -> "Android mutation recovery is pending"
-    MutationState.UNKNOWN -> "Android mutation outcome is unknown"
-    MutationState.SUCCEEDED -> "Android mutation was recovered as succeeded"
-    MutationState.FAILED -> "Android mutation was recovered as not completed"
 }

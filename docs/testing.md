@@ -17,12 +17,12 @@ Ignored skeleton tests are specifications only. They never count as passing evid
 | Layer | Proves |
 |---|---|
 | JVM unit | Protocol framing, event translation, policy, state transitions |
-| Android instrumentation | SAF, permissions, process mechanics, lifecycle, UI approval |
+| Android instrumentation | Storage permission, workspace selection, process mechanics, lifecycle, UI behavior |
 | Stock-device experiment | Runtime compatibility, authentication, process death, background limits |
-| Fault injection | Partial I/O, crashes, revoked grants, provider failures, uncertain mutations |
+| Fault injection | Parser limits, process failures, permission changes, protocol failures |
 | Inspection | APK contents, manifest, logs, secrets, dependencies, release configuration |
 
-Use the smallest layer that crosses the real boundary. Mocking `ContentResolver` cannot finish a SAF case; a happy-path emulator cannot finish a stock ARM64 runtime case.
+Use the smallest layer that crosses the real boundary. Mocking a path cannot prove all-files access or turn `cwd`; a happy-path emulator cannot finish a stock ARM64 runtime case.
 
 ## Commands
 

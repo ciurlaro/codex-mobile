@@ -2,37 +2,36 @@
 
 ## Product hypothesis
 
-A stock ARM64 Android device can run a bundled Codex app-server, authenticate a ChatGPT subscriber, stream a conversation, and execute only Android-authorized tools over user-selected resources.
+A stock ARM64 Android device can run a bundled Codex app-server with a desktop-like shell rooted initially in a user-selected shared-storage workspace, while Android supplies only the capabilities the shell cannot provide.
 
 ## Required outcomes
 
-| ID | Outcome | Proven in |
-|---|---|---|
-| R1 | Package and start the required Codex runtime in a debug APK | Step 01 |
-| R2 | Exchange app-server JSON-RPC over standard input/output | Step 01 |
-| R3 | Complete subscription authentication without exposing credentials | Step 01 |
-| R4 | Start a session, submit a prompt, stream text, cancel, and restart safely | Step 01 |
-| R5 | Read only resources inside a user-selected SAF tree | Step 02 |
-| R6 | Require an accurate, explicit approval before every mutation | Step 03 |
-| R7 | Treat Android's observed result as the truth for every tool call | Steps 02–04 |
-| R8 | Recover mutation outcomes after process death without claiming exactly-once execution | Step 04 |
-| R9 | Continue active work outside the visible Activity only when the product needs it | Step 05 |
-| R10 | Meet security, privacy, accessibility, compatibility, and release gates | Step 06 |
+| ID | Outcome |
+|---|---|
+| R1 | Package, authenticate, converse, stream, cancel, and restart the pinned Codex runtime. |
+| R2 | Let the user grant all-files access and choose the absolute `cwd` sent with every turn. |
+| R3 | Let Codex perform ordinary file CRUD and overwrite through its shell. |
+| R4 | Put `mutool`, `tesseract`, and `officecli` on Codex's `PATH` for PDF, OCR, and Office work. |
+| R5 | Let users choose Never, Auto review, Ask me, or Strict approval; default to Never. |
+| R6 | Let users choose model, reasoning level, and supported speed tier. |
+| R7 | Render standard Markdown safely, including code, headings, lists, tables, and HTTPS links. |
+| R8 | Keep the composer visible with the keyboard and visibly animate active thinking. |
+| R9 | Offer a browserless Telegram login in Settings and put `tgcli` on Codex's `PATH`. |
+| R10 | Show an operation-specific foreground notification only while work is active. |
+| R11 | Meet security, privacy, accessibility, compatibility, and release gates. |
 
 ## Hard constraints
 
-- Default-deny every device operation not registered by Android.
-- Scope resource access with SAF grants; do not treat filesystem paths as universal identifiers.
-- Validate tool name, arguments, scope, approval, and current permission at execution time.
-- Never accept Codex's belief as proof that an Android operation completed.
-- Never log tokens, authorization codes, prompt contents, or document contents by default.
+- Never log credentials, authorization codes, prompts, responses, or document contents by default.
 - Keep Android SDK types out of `:core`.
-- Fail visibly on uncertain mutations; do not retry them generically.
+- Reject malformed app-server frames and approval requests.
+- Keep native tool versions and downloads pinned; teach Codex to scope expensive document extraction.
+- Accept only HTTP(S) links from rendered model Markdown.
+- Explain clearly that all-files access is broad and the selected workspace is a starting directory, not a sandbox.
 
-## Not in scope now
+## Not in scope
 
-- General shell access to user data.
 - Accessibility-service automation.
-- MCP versus dynamic-tool selection before Step 02 evidence.
-- A foreground service before Step 05.
-- Additional providers, iOS, KMP, runtime updating, or polished UI before the Android premise passes.
+- General background scheduling or an idle persistent notification.
+- Additional messaging integrations before a concrete use case.
+- KMP, iOS, or runtime self-update.

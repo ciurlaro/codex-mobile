@@ -2,6 +2,11 @@ package io.github.ciurlaro.codexmobile.app
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -51,6 +56,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -61,6 +67,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -73,6 +80,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -80,6 +89,8 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
@@ -90,8 +101,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentModel
+import com.mikepenz.markdown.m3.Markdown
 import kotlinx.coroutines.flow.drop
 
 private object ChatColors {
@@ -379,7 +392,9 @@ private fun ChatScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(ChatColors.Background)
-            .statusBarsPadding(),
+            .statusBarsPadding()
+            .navigationBarsPadding()
+            .imePadding(),
     ) {
         ChatTopBar(state, onEvent)
         ConversationList(
@@ -572,11 +587,7 @@ private fun CodexMessage(message: ChatMessage) {
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         when {
-            message.text.isNotEmpty() -> Text(
-                text = message.text,
-                color = ChatColors.Primary,
-                style = MaterialTheme.typography.bodyLarge.copy(lineHeight = 25.sp),
-            )
+            message.text.isNotEmpty() -> MessageText(message.text)
 
             message.streaming -> ThinkingMessage()
         }
@@ -584,12 +595,38 @@ private fun CodexMessage(message: ChatMessage) {
 }
 
 @Composable
+private fun MessageText(text: String) {
+    val delegate = LocalUriHandler.current
+    val safeLinks = remember(delegate) {
+        object : UriHandler {
+            override fun openUri(uri: String) {
+                val scheme = android.net.Uri.parse(uri).scheme?.lowercase()
+                if (scheme == "http" || scheme == "https") delegate.openUri(uri)
+            }
+        }
+    }
+    CompositionLocalProvider(LocalUriHandler provides safeLinks) {
+        Markdown(text)
+    }
+}
+
+@Composable
 private fun ThinkingMessage() {
+    val transition = rememberInfiniteTransition(label = "thinking")
+    val alpha by transition.animateFloat(
+        initialValue = 0.45f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(tween(850), RepeatMode.Reverse),
+        label = "thinking-alpha",
+    )
     Text(
         text = "Thinking",
         color = ChatColors.Secondary,
         style = MaterialTheme.typography.bodyLarge,
-        modifier = Modifier.semantics { contentDescription = "Codex is thinking" },
+        modifier = Modifier.alpha(alpha).semantics {
+            contentDescription = "Codex is thinking"
+            progressBarRangeInfo = ProgressBarRangeInfo.Indeterminate
+        },
     )
 }
 
@@ -605,8 +642,6 @@ private fun Composer(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .imePadding()
-            .navigationBarsPadding()
             .padding(horizontal = ChatDimensions.ScreenPadding, vertical = 10.dp)
             .background(ChatColors.Elevated, RoundedCornerShape(ChatDimensions.ComposerCorner))
             .border(
@@ -767,6 +802,8 @@ private fun SelectorOverlay(
                 ChatPopup.EFFORT -> EffortSelector(state, onEvent)
                 ChatPopup.MODEL -> ModelSelector(state, onEvent)
                 ChatPopup.TAGS -> TagSelector(state, onEvent)
+                ChatPopup.SPEED -> SpeedSelector(state, onEvent)
+                ChatPopup.APPROVAL -> ApprovalSelector(state, onEvent)
                 ChatPopup.NONE -> Unit
             }
         }
@@ -786,6 +823,15 @@ private fun EffortSelector(
             selected = false,
             trailing = IconGlyph.CHEVRON_RIGHT,
             onClick = { onEvent(ChatUiEvent.ShowModels) },
+        )
+        HorizontalDivider(color = ChatColors.Border, modifier = Modifier.padding(horizontal = 20.dp))
+        SelectorRow(
+            title = "Speed",
+            subtitle = model?.serviceTiers?.firstOrNull { it.id == state.selectedServiceTier }?.name
+                ?: "Default",
+            selected = false,
+            trailing = IconGlyph.CHEVRON_RIGHT,
+            onClick = { onEvent(ChatUiEvent.ShowSpeed) },
         )
         HorizontalDivider(color = ChatColors.Border, modifier = Modifier.padding(horizontal = 20.dp))
         Text(
@@ -847,13 +893,70 @@ private fun ModelSelector(
 }
 
 @Composable
+private fun SpeedSelector(
+    state: MainUiState,
+    onEvent: (ChatUiEvent) -> Unit,
+) {
+    val model = selectedModel(state)
+    Column(Modifier.padding(vertical = 12.dp)) {
+        Text(
+            "Speed",
+            color = ChatColors.Secondary,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+        )
+        SelectorRow(
+            title = "Default",
+            subtitle = "Use the model's default service tier",
+            selected = state.selectedServiceTier == null,
+            onClick = { onEvent(ChatUiEvent.SelectSpeed(null)) },
+        )
+        model?.serviceTiers.orEmpty().forEach { tier ->
+            SelectorRow(
+                title = tier.name,
+                subtitle = tier.description.takeIf(String::isNotBlank),
+                selected = tier.id == state.selectedServiceTier,
+                onClick = { onEvent(ChatUiEvent.SelectSpeed(tier.id)) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun ApprovalSelector(
+    state: MainUiState,
+    onEvent: (ChatUiEvent) -> Unit,
+) {
+    Column(Modifier.padding(vertical = 12.dp)) {
+        Text(
+            "Approvals",
+            color = ChatColors.Secondary,
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+        )
+        AgentApprovalPreset.entries.forEach { preset ->
+            SelectorRow(
+                title = preset.displayName,
+                subtitle = when (preset) {
+                    AgentApprovalPreset.NEVER -> "Run without asking (default)"
+                    AgentApprovalPreset.AUTO_REVIEW -> "Let the model review risky actions"
+                    AgentApprovalPreset.ASK_ME -> "Ask when Codex requests permission"
+                    AgentApprovalPreset.STRICT -> "Ask for commands outside the trusted set"
+                },
+                selected = preset == state.approvalPreset,
+                onClick = { onEvent(ChatUiEvent.SelectApproval(preset)) },
+            )
+        }
+    }
+}
+
+@Composable
 private fun TagSelector(
     state: MainUiState,
     onEvent: (ChatUiEvent) -> Unit,
 ) {
-    val query = selectedTagQuery(state.draft).orEmpty()
-    val tags = remember(query) {
-        AgentCapability.entries.filter { it.displayLabel.contains(query, ignoreCase = true) }
+    val tags = remember(state.selectedCapabilities) {
+        AgentCapability.entries.filter { it !in state.selectedCapabilities }
     }
     Column(Modifier.padding(vertical = 12.dp)) {
         Text(
@@ -863,18 +966,15 @@ private fun TagSelector(
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
         )
         tags.forEach { capability ->
-            val selected = capability in state.selectedCapabilities
             SelectorRow(
                 title = listOfNotNull(capability.icon, capability.displayLabel).joinToString(" "),
-                subtitle = if (selected) "Added" else null,
-                selected = selected,
-                enabled = !selected,
+                selected = false,
                 onClick = { onEvent(ChatUiEvent.AddCapability(capability)) },
             )
         }
         if (tags.isEmpty()) {
             Text(
-                "No tags found",
+                "All available tags are already added",
                 color = ChatColors.Secondary,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
             )
@@ -983,51 +1083,65 @@ private fun SettingsScreen(
                         subtitle = state.selectedEffort?.let(::effortLabel) ?: "Unavailable",
                         onClick = { onEvent(ChatUiEvent.ShowEffort) },
                     )
+                    SettingsDivider()
+                    SettingsRow(
+                        glyph = IconGlyph.SETTINGS,
+                        title = "Default speed",
+                        subtitle = selectedModel(state)?.serviceTiers
+                            ?.firstOrNull { it.id == state.selectedServiceTier }?.name ?: "Default",
+                        onClick = { onEvent(ChatUiEvent.ShowSpeed) },
+                    )
+                    SettingsDivider()
+                    SettingsRow(
+                        glyph = IconGlyph.SHIELD,
+                        title = "Approval policy",
+                        subtitle = state.approvalPreset.displayName,
+                        onClick = { onEvent(ChatUiEvent.ShowApproval) },
+                    )
                 }
             }
             item("access-settings") {
                 SettingsGroup("Android access") {
                     SettingsRow(
                         glyph = IconGlyph.FOLDER,
-                        title = if (state.scopeSelected) "Change document folder" else "Select document folder",
-                        subtitle = if (state.scopeSelected) "Read-only access enabled" else "No folder selected",
+                        title = if (state.workspacePath != null) "Change workspace" else "Select workspace",
+                        subtitle = state.workspacePath ?: "No folder selected",
                         onClick = { onEvent(ChatUiEvent.SelectScope) },
                     )
                     SettingsDivider()
                     SettingsRow(
                         glyph = IconGlyph.SHIELD,
-                        title = if (state.mutationScopeSelected) {
-                            "Change disposable mutation folder"
+                        title = "Manage storage permission",
+                        subtitle = if (state.storagePermissionGranted) {
+                            "All-files access enabled; workspace is the shell starting folder"
                         } else {
-                            "Select disposable mutation folder"
+                            "All-files access is required for shell file operations"
                         },
-                        subtitle = "Use only a dedicated disposable test folder",
-                        onClick = { onEvent(ChatUiEvent.SelectMutationScope) },
+                        onClick = { onEvent(ChatUiEvent.ManageStorage) },
                     )
-                    if (state.scopeSelected) {
+                    if (state.workspacePath != null) {
                         SettingsDivider()
                         SettingsRow(
                             glyph = IconGlyph.CLOSE,
-                            title = "Revoke document access",
+                            title = "Clear workspace selection",
                             danger = true,
-                            onClick = { onEvent(ChatUiEvent.RevokeScope) },
+                            onClick = { onEvent(ChatUiEvent.ClearWorkspace) },
                         )
                     }
                 }
             }
-            if (state.recoveryNotices.isNotEmpty()) {
-                item("recovery-settings") {
-                    SettingsGroup("Recovery") {
-                        state.recoveryNotices.forEachIndexed { index, notice ->
-                            if (index > 0) SettingsDivider()
-                            SettingsRow(
-                                glyph = IconGlyph.RECOVERY,
-                                title = notice.state.recoveryDisplayText(),
-                                subtitle = "Review and acknowledge this recorded outcome",
-                                onClick = { onEvent(ChatUiEvent.AcknowledgeMutation(notice.recordId)) },
-                            )
-                        }
-                    }
+            item("integration-settings") {
+                SettingsGroup("Integrations") {
+                    SettingsRow(
+                        glyph = IconGlyph.SETTINGS,
+                        title = "Integrations",
+                        subtitle = when {
+                            state.telegramConnected -> "Telegram connected"
+                            state.telegramAvailable -> "Telegram available"
+                            else -> "No integrations available"
+                        },
+                        onClick = { onEvent(ChatUiEvent.ShowIntegrations) },
+                    )
                 }
             }
             item("privacy-settings") {
@@ -1251,7 +1365,6 @@ private enum class IconGlyph {
     INFO,
     LOGOUT,
     TRASH,
-    RECOVERY,
 }
 
 @Composable
@@ -1464,19 +1577,6 @@ private fun AppIcon(
                 line(Offset(size.width * .40f, size.height * .14f), Offset(size.width * .60f, size.height * .14f))
             }
 
-            IconGlyph.RECOVERY -> {
-                drawArc(
-                    tint,
-                    -70f,
-                    285f,
-                    false,
-                    Offset(size.width * .16f, size.height * .16f),
-                    Size(size.width * .68f, size.height * .68f),
-                    style = Stroke(stroke, cap = StrokeCap.Round),
-                )
-                line(Offset(size.width * .12f, size.height * .34f), Offset(size.width * .20f, size.height * .14f))
-                line(Offset(size.width * .20f, size.height * .14f), Offset(size.width * .38f, size.height * .24f))
-            }
         }
     }
 }

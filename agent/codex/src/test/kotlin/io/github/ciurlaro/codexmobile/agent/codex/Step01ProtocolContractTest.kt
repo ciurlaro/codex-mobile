@@ -130,7 +130,14 @@ class Step01ProtocolContractTest {
             assertEquals(1, launches.get())
             val params = checkNotNull(threadParams)
             assertEquals("never", params["approvalPolicy"]!!.jsonPrimitive.content)
-            assertEquals("read-only", params["sandbox"]!!.jsonPrimitive.content)
+            assertEquals("user", params["approvalsReviewer"]!!.jsonPrimitive.content)
+            assertEquals("danger-full-access", params["sandbox"]!!.jsonPrimitive.content)
+            val instructions = params["developerInstructions"]!!.jsonPrimitive.content
+            listOf("mutool", "tesseract", "officecli", "tgcli").forEach { command ->
+                assertTrue(command in instructions)
+            }
+            assertFalse("read_document" in instructions)
+            assertFalse("view_document_pages" in instructions)
             val config = params["config"]!!.jsonObject
             assertEquals("live", config["web_search"]!!.jsonPrimitive.content)
             assertEquals(
@@ -140,7 +147,6 @@ class Step01ProtocolContractTest {
             )
             val features = config["features"]!!.jsonObject
             listOf(
-                "shell_tool",
                 "code_mode",
                 "multi_agent",
                 "apps",
@@ -154,6 +160,7 @@ class Step01ProtocolContractTest {
             ).forEach { feature ->
                 assertEquals(false, features[feature]!!.jsonPrimitive.content.toBoolean())
             }
+            assertEquals(true, features["shell_tool"]!!.jsonPrimitive.content.toBoolean())
         } finally {
             client.close()
         }

@@ -6,37 +6,32 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
-import android.net.Uri
 import android.os.IBinder
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentModel
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
-import io.github.ciurlaro.codexmobile.core.ApprovalPreview
-import io.github.ciurlaro.codexmobile.core.MutationRecordId
-import io.github.ciurlaro.codexmobile.core.MutationState
 import io.github.ciurlaro.codexmobile.core.SessionId
-import io.github.ciurlaro.codexmobile.core.ToolEffect
-import io.github.ciurlaro.codexmobile.core.ToolPlan
-import io.github.ciurlaro.codexmobile.core.ToolRejectedException
-import io.github.ciurlaro.codexmobile.core.ToolResult
-import io.github.ciurlaro.codexmobile.core.UserApproval
+import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthEvent
+import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthPrompt
+import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthSession
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class MainUiState(
     val status: String = "Ready to sign in",
@@ -50,6 +45,8 @@ data class MainUiState(
     val selectedCapabilities: Set<AgentCapability> = emptySet(),
     val selectedModel: String? = null,
     val selectedEffort: String? = null,
+    val selectedServiceTier: String? = null,
+    val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.NEVER,
     val drawerOpen: Boolean = false,
     val destination: AppDestination = AppDestination.CHAT,
     val popup: ChatPopup = ChatPopup.NONE,
@@ -57,35 +54,37 @@ data class MainUiState(
     val conversationLoading: Boolean = false,
     val signInUrl: String? = null,
     val turnActive: Boolean = false,
-    val scopeSelected: Boolean = false,
-    val mutationScopeSelected: Boolean = false,
-    val approvalPreview: ApprovalPreview? = null,
-    val recoveryNotices: List<MutationRecoveryNotice> = emptyList(),
+    val storagePermissionGranted: Boolean = false,
+    val workspacePath: String? = null,
+    val codexApproval: AgentEvent.ApprovalRequested? = null,
     val backgroundActive: Boolean = false,
     val backgroundNotificationVisible: Boolean = true,
     val diagnosticCode: String? = null,
-)
-
-data class MutationRecoveryNotice(
-    val recordId: MutationRecordId,
-    val state: MutationState,
+    val telegramAvailable: Boolean = false,
+    val telegramConnected: Boolean = false,
+    val telegramUsername: String? = null,
+    val telegramAuthPrompt: TelegramAuthPrompt? = null,
+    val telegramBusy: Boolean = false,
+    val telegramError: String? = null,
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val graph = (application as CodexMobileApplication).graph
     private val appContext = application.applicationContext
     private val chatPreferences = appContext.getSharedPreferences(CHAT_PREFERENCES, Context.MODE_PRIVATE)
-    private val toolOwner = UUID.randomUUID().toString()
     private val mutableState = MutableStateFlow(
         MainUiState(
-            scopeSelected = graph.platform.currentScopeId() != null,
-            mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
+            storagePermissionGranted = graph.platform.hasStoragePermission(),
+            workspacePath = graph.platform.currentWorkspacePath(),
             selectedModel = chatPreferences.getString(LAST_MODEL, null),
             selectedEffort = chatPreferences.getString(LAST_EFFORT, null),
+            selectedServiceTier = chatPreferences.getString(LAST_SPEED, null),
+            approvalPreset = chatPreferences.getString(APPROVAL_POLICY, null)
+                ?.let { saved -> AgentApprovalPreset.entries.firstOrNull { it.name == saved } }
+                ?: AgentApprovalPreset.NEVER,
+            telegramAvailable = graph.platform.telegramAvailable(),
         ),
     )
-    private var pendingApproval: PendingApproval? = null
-    private var approvalTimeout: Job? = null
     private var serviceController: ForegroundSessionController? = null
     private var serviceStateJob: Job? = null
     private var notificationsEnabled: (() -> Boolean)? = null
@@ -94,6 +93,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var bindingRequested = false
     private var chatDataRequested = false
     private var activeAssistantMessageId: String? = null
+    private var telegramAuthSession: TelegramAuthSession? = null
+    private var telegramJob: Job? = null
     private var pendingConversationId: SessionId? = null
     private var selectionRestoredSessionId: SessionId? = null
     internal var serviceInstanceId: String? = null
@@ -120,11 +121,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         launch { refreshChatData(binder.controller) }
                     }
                     if (session.terminal) releaseServiceBinding()
-                    session.pendingTool?.let { event ->
-                        binder.controller.claimTool(toolOwner, event.call.id)?.let { claimed ->
-                            launch { executeTool(claimed, binder.controller) }
-                        }
-                    }
                 }
             }
         }
@@ -139,7 +135,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<MainUiState> = mutableState.asStateFlow()
 
     init {
-        viewModelScope.launch { refreshRecovery(reconcile = true) }
         viewModelScope.launch {
             graph.backgroundFailure.collect { failure ->
                 failure?.let { message ->
@@ -164,6 +159,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        refreshTelegram()
     }
 
     fun authenticate() {
@@ -217,13 +213,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(status = "Start a background session first") }
             return
         }
+        val workingDirectory = graph.platform.activeWorkspacePath()
+        if (workingDirectory == null) {
+            mutableState.update { it.copy(status = "Select an accessible workspace in Settings") }
+            return
+        }
         val clientMessageId = UUID.randomUUID().toString()
         val request = AgentTurnRequest(
             prompt = before.draft.trim(),
             clientMessageId = clientMessageId,
             model = before.selectedModel,
             effort = before.selectedEffort,
+            serviceTier = before.selectedServiceTier,
+            approvalPreset = before.approvalPreset,
             capabilities = before.selectedCapabilities,
+            workingDirectory = workingDirectory,
         )
         if (!controller.submit(request)) return
 
@@ -256,12 +260,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateDraft(value: String) {
-        mutableState.update {
-            it.copy(
-                draft = value,
-                popup = if (selectedTagQuery(value) != null) ChatPopup.TAGS else it.popup,
-            )
-        }
+        mutableState.update { it.copy(draft = value) }
     }
 
     fun openHistory() {
@@ -356,6 +355,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update { it.copy(popup = ChatPopup.MODEL) }
     }
 
+    fun showSpeedSelector() {
+        mutableState.update { it.copy(popup = ChatPopup.SPEED) }
+    }
+
+    fun showApprovalSelector() {
+        mutableState.update { it.copy(popup = ChatPopup.APPROVAL) }
+    }
+
     fun showTagPicker() {
         mutableState.update { it.copy(popup = ChatPopup.TAGS) }
     }
@@ -369,7 +376,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update {
             val effort = it.selectedEffort?.takeIf(model.supportedEfforts::contains)
                 ?: model.defaultEffort
-            it.copy(selectedModel = model.id, selectedEffort = effort, popup = ChatPopup.EFFORT)
+            val tier = it.selectedServiceTier?.takeIf { selected ->
+                model.serviceTiers.any { option -> option.id == selected }
+            } ?: model.defaultServiceTier
+            it.copy(
+                selectedModel = model.id,
+                selectedEffort = effort,
+                selectedServiceTier = tier,
+                popup = ChatPopup.EFFORT,
+            )
         }
         persistSelection()
     }
@@ -382,11 +397,104 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         persistSelection()
     }
 
+    fun selectSpeed(tier: String?) {
+        val current = mutableState.value
+        val model = current.models.firstOrNull { it.id == current.selectedModel } ?: return
+        if (tier != null && model.serviceTiers.none { it.id == tier }) return
+        mutableState.update { it.copy(selectedServiceTier = tier, popup = ChatPopup.NONE) }
+        persistSelection()
+    }
+
+    fun selectApproval(preset: AgentApprovalPreset) {
+        mutableState.update { it.copy(approvalPreset = preset, popup = ChatPopup.NONE) }
+        persistSelection()
+    }
+
+    fun resolveCodexApproval(requestId: String, accept: Boolean) {
+        serviceController?.resolveApproval(requestId, accept)
+    }
+
+    fun connectTelegram(phoneNumber: String) {
+        if (telegramJob?.isActive == true) return
+        cancelTelegramAuthentication()
+        mutableState.update {
+            it.copy(telegramBusy = true, telegramAuthPrompt = null, telegramError = null)
+        }
+        telegramJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val session = graph.platform.startTelegramAuthentication(phoneNumber)
+                if (!isActive) {
+                    session.close()
+                    return@launch
+                }
+                try {
+                    telegramAuthSession = session
+                    readTelegramEvent(session)
+                } catch (error: Exception) {
+                    session.close()
+                    telegramAuthSession = null
+                    throw error
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                mutableState.update {
+                    it.copy(telegramBusy = false, telegramError = error.message ?: "Telegram login failed")
+                }
+            }
+        }
+    }
+
+    fun disconnectTelegram() {
+        if (telegramJob?.isActive == true) return
+        cancelTelegramAuthentication()
+        mutableState.update { it.copy(telegramBusy = true, telegramError = null) }
+        telegramJob = viewModelScope.launch(Dispatchers.IO) {
+            val disconnected = runCatching { graph.platform.disconnectTelegram() }.getOrDefault(false)
+            mutableState.update {
+                if (disconnected) {
+                    it.copy(
+                        status = "Telegram integration disconnected",
+                        telegramConnected = false,
+                        telegramUsername = null,
+                        telegramBusy = false,
+                    )
+                } else {
+                    it.copy(telegramBusy = false, telegramError = "Telegram could not be disconnected")
+                }
+            }
+        }
+    }
+
+    fun submitTelegramAuthentication(value: String) {
+        val session = telegramAuthSession ?: return
+        if (value.isBlank() || telegramJob?.isActive == true) return
+        mutableState.update { it.copy(telegramBusy = true, telegramError = null) }
+        telegramJob = viewModelScope.launch(Dispatchers.IO) {
+            runCatching { session.answer(value.trim()) }
+                .onSuccess { readTelegramEvent(session) }
+                .onFailure { error ->
+                    mutableState.update {
+                        it.copy(telegramBusy = false, telegramError = error.message ?: "Telegram login failed")
+                    }
+                }
+        }
+    }
+
+    fun cancelTelegramAuthentication() {
+        telegramJob?.cancel()
+        telegramJob = null
+        telegramAuthSession?.close()
+        telegramAuthSession = null
+        mutableState.update {
+            it.copy(telegramBusy = false, telegramAuthPrompt = null, telegramError = null)
+        }
+    }
+
     fun addCapability(capability: AgentCapability) {
         mutableState.update {
             it.copy(
                 selectedCapabilities = it.selectedCapabilities + capability,
-                draft = removeSelectedTagQuery(it.draft),
                 popup = ChatPopup.NONE,
             )
         }
@@ -429,121 +537,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun selectScope(uri: Uri) {
-        viewModelScope.launch {
-            try {
-                graph.platform.persistScope(uri)
+    fun workspaceRoots(): List<String> = runCatching { graph.platform.workspaceRoots() }.getOrDefault(emptyList())
+
+    fun workspaceDirectories(path: String?): List<String> =
+        runCatching { graph.platform.workspaceDirectories(path) }.getOrDefault(emptyList())
+
+    fun workspaceParent(path: String): String? = runCatching { graph.platform.workspaceParent(path) }.getOrNull()
+
+    fun selectWorkspace(path: String) {
+        runCatching { graph.platform.selectWorkspace(path) }
+            .onSuccess { selected ->
                 mutableState.update {
-                    it.copy(
-                        status = "Read-only document folder selected",
-                        scopeSelected = true,
-                        mutationScopeSelected = false,
-                    )
-                }
-                refreshRecovery(reconcile = true)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                mutableState.update {
-                    it.copy(
-                        status = "Document folder selection failed",
-                        scopeSelected = graph.platform.currentScopeId() != null,
-                        mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
-                    )
+                    it.copy(status = "Workspace selected", workspacePath = selected, storagePermissionGranted = true)
                 }
             }
-        }
+            .onFailure { mutableState.update { state -> state.copy(status = "Workspace selection failed") } }
     }
 
-    fun selectMutationScope(uri: Uri) {
-        viewModelScope.launch {
-            try {
-                graph.platform.persistMutationScope(uri)
-                mutableState.update {
-                    it.copy(
-                        status = "Disposable mutation folder selected",
-                        scopeSelected = true,
-                        mutationScopeSelected = true,
-                    )
-                }
-                refreshRecovery(reconcile = true)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                mutableState.update {
-                    it.copy(
-                        status = "Disposable mutation folder selection failed",
-                        scopeSelected = graph.platform.currentScopeId() != null,
-                        mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
-                    )
-                }
-            }
-        }
+    fun clearWorkspace() {
+        runCatching { graph.platform.clearWorkspace() }
+            .onSuccess { mutableState.update { it.copy(status = "Workspace cleared", workspacePath = null) } }
+            .onFailure { mutableState.update { it.copy(status = "Workspace could not be cleared") } }
     }
 
-    fun scopeSelectionCancelled() {
-        mutableState.update { it.copy(status = "Document folder selection cancelled") }
-    }
-
-    fun revokeScope() {
-        val scopeId = graph.platform.currentScopeId() ?: return
-        viewModelScope.launch {
-            try {
-                graph.platform.revokeScope(scopeId)
-                mutableState.update {
-                    it.copy(
-                        status = "Document folder access revoked",
-                        scopeSelected = false,
-                        mutationScopeSelected = false,
-                    )
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                mutableState.update {
-                    it.copy(
-                        status = "Document folder revocation failed",
-                        scopeSelected = graph.platform.currentScopeId() != null,
-                        mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
-                    )
-                }
-            }
-        }
-    }
-
-    fun refreshScope() {
+    fun refreshStorage() {
         mutableState.update {
             it.copy(
-                scopeSelected = graph.platform.currentScopeId() != null,
-                mutationScopeSelected = graph.platform.currentScopeAllowsMutations(),
+                storagePermissionGranted = graph.platform.hasStoragePermission(),
+                workspacePath = graph.platform.currentWorkspacePath(),
                 backgroundNotificationVisible = serviceController?.let {
                     notificationsEnabled?.invoke() ?: false
                 } ?: it.backgroundNotificationVisible,
+                telegramAvailable = graph.platform.telegramAvailable(),
             )
         }
-    }
-
-    fun approveMutation() {
-        val pending = takePendingApproval() ?: return
-        mutableState.update { it.copy(status = "Applying approved Android change…") }
-        viewModelScope.launch {
-            executePrepared(
-                pending.event,
-                pending.plan,
-                UserApproval.grant(pending.plan),
-                pending.controller,
-            )
-        }
-    }
-
-    fun denyMutation() {
-        rejectPendingApproval("User denied the Android change")
+        refreshTelegram()
     }
 
     override fun onCleared() {
-        takePendingApproval()?.let { graph.toolExecutor.abandon(it.plan) }
-        serviceController?.releaseOwner(toolOwner, "Android request UI was closed")
         serviceStateJob?.cancel()
+        telegramJob?.cancel()
+        telegramAuthSession?.close()
         if (bindingRequested) runCatching { appContext.unbindService(serviceConnection) }
         bindingRequested = false
         serviceController = null
@@ -579,6 +613,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     sessionId = event.sessionId,
                     selectedModel = event.model ?: it.selectedModel,
                     selectedEffort = event.effort ?: it.selectedEffort,
+                    selectedServiceTier = event.serviceTier ?: it.selectedServiceTier,
                 )
             }
 
@@ -592,7 +627,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             is AgentEvent.Failure -> {
-                abandonPendingApproval()
                 mutableState.update {
                     it.copy(
                         status = event.message,
@@ -604,186 +638,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            is AgentEvent.ToolRequested -> executeTool(event, null)
-        }
-    }
-
-    private suspend fun executeTool(
-        event: AgentEvent.ToolRequested,
-        controller: ForegroundSessionController?,
-    ) {
-        mutableState.update { it.copy(status = "Resolving Android document request…") }
-        val scopeId = graph.platform.currentScopeId()
-        if (scopeId == null) {
-            finishTool(
-                event,
-                ToolResult.Rejected(event.call.id, "No document folder is selected"),
-                controller,
-            )
-            return
-        }
-        val plan = try {
-            withContext(Dispatchers.IO) { graph.toolExecutor.prepare(event.call, scopeId) }
-        } catch (error: ToolRejectedException) {
-            finishTool(
-                event,
-                ToolResult.Rejected(event.call.id, error.message ?: "Document request was rejected"),
-                controller,
-            )
-            return
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            finishTool(
-                event,
-                ToolResult.Failed(event.call.id, "tool_failure", "Android document tool failed"),
-                controller,
-            )
-            return
-        }
-
-        if (plan.effect == ToolEffect.MUTATION) {
-            requestApproval(event, plan, controller)
-        } else {
-            executePrepared(event, plan, controller = controller)
-        }
-    }
-
-    private suspend fun executePrepared(
-        event: AgentEvent.ToolRequested,
-        plan: ToolPlan,
-        approval: UserApproval? = null,
-        controller: ForegroundSessionController? = null,
-    ) {
-        if (controller != null && !controller.beginTool(toolOwner, event.call.id)) {
-            graph.toolExecutor.abandon(plan)
-            mutableState.update { it.copy(status = "Android request expired before execution") }
-            return
-        }
-        val result = try {
-            withContext(Dispatchers.IO) { graph.toolExecutor.execute(plan, approval) }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            ToolResult.Failed(event.call.id, "tool_failure", "Android document tool failed")
-        }
-        refreshRecovery(reconcile = false)
-        submitToolResult(event, result, controller)
-    }
-
-    fun acknowledgeMutation(recordId: MutationRecordId) {
-        viewModelScope.launch {
-            try {
-                withContext(Dispatchers.IO) { graph.toolExecutor.acknowledgeMutation(recordId) }
-                refreshRecovery(reconcile = false)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (_: Exception) {
-                mutableState.update { it.copy(status = "Mutation recovery acknowledgement failed") }
+            is AgentEvent.ApprovalRequested -> mutableState.update {
+                it.copy(status = "Approval needed", codexApproval = event)
             }
-        }
-    }
 
-    private fun finishTool(
-        event: AgentEvent.ToolRequested,
-        result: ToolResult,
-        controller: ForegroundSessionController?,
-    ) {
-        if (controller != null && !controller.beginTool(toolOwner, event.call.id)) {
-            mutableState.update { it.copy(status = "Android request expired before execution") }
-            return
-        }
-        submitToolResult(event, result, controller)
-    }
-
-    private fun submitToolResult(
-        event: AgentEvent.ToolRequested,
-        result: ToolResult,
-        controller: ForegroundSessionController?,
-    ) {
-        if (controller == null || controller.submitToolResult(toolOwner, event, result)) {
-            mutableState.update { it.copy(status = "Codex is responding…") }
-        } else {
-            mutableState.update { it.copy(status = "Android request expired before its result was accepted") }
-        }
-    }
-
-    private suspend fun requestApproval(
-        event: AgentEvent.ToolRequested,
-        plan: ToolPlan,
-        controller: ForegroundSessionController?,
-    ) {
-        val preview = plan.approvalPreview
-            ?: return executePrepared(event, plan, controller = controller)
-        if (pendingApproval != null) {
-            graph.toolExecutor.abandon(plan)
-            finishTool(
-                event,
-                ToolResult.Rejected(event.call.id, "Another approval is already pending"),
-                controller,
-            )
-            return
-        }
-        pendingApproval = PendingApproval(event, plan, controller)
-        mutableState.update {
-            it.copy(status = "Waiting for explicit approval", approvalPreview = preview)
-        }
-        approvalTimeout?.cancel()
-        approvalTimeout = viewModelScope.launch {
-            delay(APPROVAL_TIMEOUT_MILLIS)
-            rejectPendingApproval("Android change approval timed out")
-        }
-    }
-
-    private fun rejectPendingApproval(reason: String) {
-        val pending = takePendingApproval() ?: return
-        mutableState.update { it.copy(status = reason) }
-        graph.toolExecutor.abandon(pending.plan)
-        finishTool(
-            pending.event,
-            ToolResult.Rejected(pending.event.call.id, reason),
-            pending.controller,
-        )
-    }
-
-    private fun takePendingApproval(): PendingApproval? {
-        val pending = pendingApproval ?: return null
-        pendingApproval = null
-        approvalTimeout?.cancel()
-        approvalTimeout = null
-        mutableState.update { it.copy(approvalPreview = null) }
-        return pending
-    }
-
-    private fun abandonPendingApproval() {
-        val pending = takePendingApproval() ?: return
-        graph.toolExecutor.abandon(pending.plan)
-    }
-
-    private suspend fun refreshRecovery(reconcile: Boolean) {
-        try {
-            val records = withContext(Dispatchers.IO) {
-                if (reconcile) {
-                    graph.toolExecutor.reconcileUnresolved().also {
-                        graph.toolExecutor.pruneResolvedMutations(
-                            System.currentTimeMillis() - RESOLVED_MUTATION_RETENTION_MILLIS,
-                        )
-                    }
-                } else {
-                    graph.toolExecutor.visibleMutationRecords()
-                }
-            }
-            mutableState.update { current ->
-                current.copy(
-                    recoveryNotices = records.map {
-                        MutationRecoveryNotice(it.id, it.state)
-                    },
-                )
-            }
-        } catch (error: CancellationException) {
-            throw error
-        } catch (_: Exception) {
-            mutableState.update { it.copy(status = "Mutation recovery is unavailable") }
+            is AgentEvent.WorkActivityChanged -> Unit
         }
     }
 
@@ -798,11 +657,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 current.selectedEffort?.takeIf(model.supportedEfforts::contains)
                     ?: model.defaultEffort
             }
+            val tier = selected?.let { model ->
+                current.selectedServiceTier?.takeIf { saved ->
+                    model.serviceTiers.any { it.id == saved }
+                } ?: model.defaultServiceTier
+            }
             current.copy(
                 models = models,
                 conversations = conversations,
                 selectedModel = selected?.id ?: current.selectedModel,
                 selectedEffort = effort ?: current.selectedEffort,
+                selectedServiceTier = tier,
             )
         }
         persistSelection()
@@ -830,15 +695,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 else putString(LAST_MODEL, current.selectedModel)
                 if (current.selectedEffort == null) remove(LAST_EFFORT)
                 else putString(LAST_EFFORT, current.selectedEffort)
+                if (current.selectedServiceTier == null) remove(LAST_SPEED)
+                else putString(LAST_SPEED, current.selectedServiceTier)
+                putString(APPROVAL_POLICY, current.approvalPreset.name)
             }
             .apply()
+    }
+
+    private fun refreshTelegram() {
+        if (!graph.platform.telegramAvailable() || telegramAuthSession != null || telegramJob?.isActive == true) {
+            return
+        }
+        telegramJob = viewModelScope.launch(Dispatchers.IO) {
+            val status = runCatching { graph.platform.telegramStatus() }.getOrNull()
+            mutableState.update {
+                it.copy(
+                    telegramAvailable = status?.available ?: graph.platform.telegramAvailable(),
+                    telegramConnected = status?.connected == true,
+                    telegramUsername = status?.username,
+                    telegramBusy = false,
+                )
+            }
+        }
+    }
+
+    private fun readTelegramEvent(session: TelegramAuthSession) {
+        when (val event = session.nextEvent()) {
+            is TelegramAuthEvent.Prompt -> mutableState.update {
+                it.copy(telegramBusy = false, telegramAuthPrompt = event.prompt, telegramError = null)
+            }
+
+            is TelegramAuthEvent.Connected -> {
+                session.close()
+                telegramAuthSession = null
+                val status = runCatching { graph.platform.telegramStatus() }.getOrNull()
+                mutableState.update {
+                    it.copy(
+                        status = "Telegram integration connected",
+                        telegramConnected = true,
+                        telegramUsername = status?.username ?: event.username,
+                        telegramAuthPrompt = null,
+                        telegramBusy = false,
+                        telegramError = null,
+                    )
+                }
+            }
+
+            is TelegramAuthEvent.Failed -> {
+                session.close()
+                telegramAuthSession = null
+                mutableState.update {
+                    it.copy(telegramAuthPrompt = null, telegramBusy = false, telegramError = event.message)
+                }
+            }
+        }
     }
 
     private fun applySessionState(
         session: ForegroundSessionState,
         notificationVisible: Boolean,
     ) {
-        if (session.terminal) abandonPendingApproval()
         val before = mutableState.value
         val finishedTurn = before.turnActive && !session.turnActive
         val assistantId = activeAssistantMessageId
@@ -868,7 +784,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 else current.selectedModel,
                 selectedEffort = if (restoreSelection) session.activeEffort ?: current.selectedEffort
                 else current.selectedEffort,
+                selectedServiceTier = if (restoreSelection) {
+                    session.activeServiceTier ?: current.selectedServiceTier
+                } else current.selectedServiceTier,
                 signInUrl = session.signInUrl,
+                codexApproval = session.pendingApproval,
                 turnActive = session.turnActive,
                 backgroundActive = !session.terminal,
                 backgroundNotificationVisible = notificationVisible,
@@ -910,7 +830,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         serviceInstanceId = null
         bindingRequested = false
         chatDataRequested = false
-        abandonPendingApproval()
         mutableState.update {
             it.copy(
                 status = if (it.backgroundActive) "Background work ended; start again to continue" else it.status,
@@ -923,18 +842,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private data class PendingApproval(
-        val event: AgentEvent.ToolRequested,
-        val plan: ToolPlan,
-        val controller: ForegroundSessionController?,
-    )
-
     private companion object {
         const val CHAT_PREFERENCES = "chat-ui"
         const val LAST_MODEL = "last-model"
         const val LAST_EFFORT = "last-effort"
-        const val APPROVAL_TIMEOUT_MILLIS = 30_000L
+        const val LAST_SPEED = "last-speed"
+        const val APPROVAL_POLICY = "approval-policy"
         const val EXISTING_SERVICE_BIND_TIMEOUT_MILLIS = 1_000L
-        const val RESOLVED_MUTATION_RETENTION_MILLIS = 30L * 24 * 60 * 60 * 1_000
     }
 }

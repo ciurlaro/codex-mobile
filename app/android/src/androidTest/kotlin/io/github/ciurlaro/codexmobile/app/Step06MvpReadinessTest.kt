@@ -1,6 +1,7 @@
 package io.github.ciurlaro.codexmobile.app
 
 import android.app.ActivityManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ApplicationInfo
@@ -10,6 +11,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.View
+import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -56,12 +58,20 @@ class Step06MvpReadinessTest {
                 "android.permission.FOREGROUND_SERVICE",
                 "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
                 "android.permission.INTERNET",
+                "android.permission.MANAGE_EXTERNAL_STORAGE",
                 "android.permission.POST_NOTIFICATIONS",
+                "android.permission.READ_EXTERNAL_STORAGE",
+                "android.permission.WRITE_EXTERNAL_STORAGE",
             ),
             packageInfo.requestedPermissions.orEmpty().filter { it.startsWith("android.permission.") }.toSet(),
         )
         assertEquals(0, applicationInfo.flags and ApplicationInfo.FLAG_ALLOW_BACKUP)
         assertEquals(0, applicationInfo.flags and ApplicationInfo.FLAG_USES_CLEARTEXT_TRAFFIC)
+        val activity = context.packageManager.getActivityInfo(ComponentName(context, MainActivity::class.java), 0)
+        assertEquals(
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+            activity.softInputMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_ADJUST,
+        )
         listOf(context.filesDir, context.noBackupFilesDir, context.cacheDir).forEach { directory ->
             assertTrue(directory.canonicalPath.startsWith(File(applicationInfo.dataDir).canonicalPath + "/"))
         }
@@ -127,11 +137,11 @@ class Step06MvpReadinessTest {
             val settingsTitle = findNode("Settings")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) assertTrue(settingsTitle.isHeading)
             val folderLabel = if (
-                (context.applicationContext as CodexMobileApplication).graph.platform.currentScopeId() == null
+                (context.applicationContext as CodexMobileApplication).graph.platform.currentWorkspacePath() == null
             ) {
-                "Select document folder"
+                "Select workspace"
             } else {
-                "Change document folder"
+                "Change workspace"
             }
             val selectFolder = findButton(folderLabel)
             val signIn = findButton("Sign in with ChatGPT")
@@ -142,7 +152,7 @@ class Step06MvpReadinessTest {
             assertTrue(findButton("Privacy details").performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
             assertWindowContains("sent to OpenAI")
-            assertWindowContains("without deleting")
+            assertWindowContains("starting folder")
             findButton("Close")
         } finally {
             scenario.close()
@@ -182,11 +192,11 @@ class Step06MvpReadinessTest {
             scenario.onActivity { activity -> assertTrue(activity.resources.configuration.fontScale >= 1.9f) }
             val minimumPixels = 48f * context.resources.displayMetrics.density - 1f
             val folderLabel = if (
-                (context.applicationContext as CodexMobileApplication).graph.platform.currentScopeId() == null
+                (context.applicationContext as CodexMobileApplication).graph.platform.currentWorkspacePath() == null
             ) {
-                "Select document folder"
+                "Select workspace"
             } else {
-                "Change document folder"
+                "Change workspace"
             }
             listOf(
                 folderLabel,

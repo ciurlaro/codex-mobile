@@ -7,17 +7,14 @@ import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
+import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
-import io.github.ciurlaro.codexmobile.core.ToolCall
-import io.github.ciurlaro.codexmobile.core.ToolCallId
-import io.github.ciurlaro.codexmobile.core.ToolResult
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlinx.coroutines.CoroutineScope
@@ -65,53 +62,6 @@ class ForegroundSessionControllerTest {
             assertTrue(fake.closed)
             assertTrue(controller.state.value.terminal)
             assertNull(controller.state.value.sessionId)
-        } finally {
-            controller.close()
-        }
-    }
-
-    @Test
-    fun oneUiOwnerClaimsAToolAndLateApprovalIsRejectedAfterStop(): Unit = runBlocking {
-        val fake = FakeAgentClient()
-        val controller = controller(fake)
-        val first = tool("first")
-        val second = tool("second")
-        try {
-            fake.emit(first)
-            await { controller.state.value.pendingTool == first }
-            assertNotNull(controller.claimTool("owner-a", first.call.id))
-            assertNull(controller.claimTool("owner-b", first.call.id))
-
-            fake.emit(second)
-            await { fake.results.any { it is ToolResult.Rejected && it.callId == second.call.id } }
-
-            controller.stopAndClose("Stopped before approval")
-            assertFalse(controller.beginTool("owner-a", first.call.id))
-            assertFalse(
-                controller.submitToolResult(
-                    "owner-a",
-                    first,
-                    ToolResult.Success(first.call.id, "{}"),
-                ),
-            )
-        } finally {
-            controller.close()
-        }
-    }
-
-    @Test
-    fun detachedUiRejectsUnstartedToolWithoutExecutingIt(): Unit = runBlocking {
-        val fake = FakeAgentClient()
-        val controller = controller(fake)
-        val event = tool("detached")
-        try {
-            fake.emit(event)
-            await { controller.state.value.pendingTool == event }
-            assertNotNull(controller.claimTool("owner", event.call.id))
-            controller.releaseOwner("owner", "UI closed")
-
-            await { fake.results.any { it is ToolResult.Rejected && it.callId == event.call.id } }
-            assertNull(controller.state.value.pendingTool)
         } finally {
             controller.close()
         }
@@ -339,11 +289,6 @@ class ForegroundSessionControllerTest {
         while (!condition()) delay(10)
     }
 
-    private fun tool(id: String) = AgentEvent.ToolRequested(
-        SESSION,
-        ToolCall(ToolCallId(id), "list_documents", "{}"),
-    )
-
     private class FakeAgentClient : AgentClient {
         private val eventChannel = Channel<AgentEvent>(Channel.UNLIMITED)
         override val events: Flow<AgentEvent> = eventChannel.receiveAsFlow()
@@ -362,7 +307,6 @@ class ForegroundSessionControllerTest {
         val finishSendTurn = CompletableDeferred<Unit>()
         var blockSendTurn = false
         val cancelCount = AtomicInteger()
-        val results = CopyOnWriteArrayList<ToolResult>()
         val requests = CopyOnWriteArrayList<AgentTurnRequest>()
         @Volatile var closed = false
 
@@ -380,7 +324,7 @@ class ForegroundSessionControllerTest {
             if (blockSignOut) finishSignOut.await()
         }
 
-        override suspend fun openSession(previous: SessionId?): SessionId {
+        override suspend fun openSession(previous: SessionId?, settings: AgentRuntimeSettings): SessionId {
             openSessionCount.incrementAndGet()
             openSessionStarted.complete(Unit)
             if (blockOpenSession) finishOpenSession.await()
@@ -405,10 +349,6 @@ class ForegroundSessionControllerTest {
 
         override suspend fun cancelTurn(sessionId: SessionId) {
             cancelCount.incrementAndGet()
-        }
-
-        override suspend fun submitToolResult(sessionId: SessionId, result: ToolResult) {
-            results += result
         }
 
         override fun close() {

@@ -1,16 +1,20 @@
 # Android MVP release and operations
 
+> **Current status:** GitHub preview release only. Promotion to a production/store release still requires the stock-device, distribution-policy, native-license, hostile-file, emulator, and reproducible-release gates.
+
 ## Supported product
 
 - ARM64 (`arm64-v8a`) stock Android API 26–37.
 - One ChatGPT account through Codex-managed browser authentication.
-- Android `DocumentsProvider` trees selected with SAF.
-- Scoped listing/read and one explicitly approved rename in a disposable writable tree.
-- Debug and release APKs; additional providers, CPUs, iOS, KMP, shell, general automation, and runtime updating are unsupported.
+- Android **All files access** plus one user-selected shared-storage directory used as each turn's starting `cwd`.
+- Shell-visible `mutool`, English-data `tesseract`, and `officecli` commands for PDF, OCR, DOCX, PPTX, and XLSX work.
+- Ordinary shell reads/writes/overwrite/copy/move/delete in shared storage; no duplicate generic Android file tools.
+- Four user-selectable approval policies, model speed tiers, and direct browserless `tgcli` login/use.
+- Debug and release APKs; additional CPUs, iOS, KMP, accessibility automation, and runtime updating are unsupported.
 
 ## Reproducible signed build
 
-Java 17, the checked-in Gradle 9.4.1 wrapper, Android platform 37, and build-tools 36.0.0 are required. On the configured developer Mac, one command retrieves the release password from macOS Keychain, builds every artifact, runs tests and lint, and verifies the signed APK:
+Java 17, Node/npm, CMake, Ninja, make, bsdtar, patch, patchelf, zip, the checked-in Gradle 9.4.1 wrapper, Android platform 37, build-tools 36.0.0, and NDK 29.0.14206865 are required. On the configured developer Mac, one command retrieves the release password from macOS Keychain, builds every artifact, runs tests and lint, and verifies the signed APK:
 
 ```sh
 scripts/release-local.sh
@@ -50,8 +54,9 @@ The command performs the verified signed release above, updates the existing app
 | Codex app-server | `0.144.6`; archive SHA-256 `3539380f431aa72ce1e9ba83cf4d9b2c2a70d12ddf3280bc67c8c59f93bb9eb5`; ARM64 executable SHA-256 `09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd` |
 | Gradle | Wrapper/distribution `9.4.1` with official checksums in `gradle/wrapper` |
 | Maven/plugins | Project lock files plus strict `gradle/verification-metadata.xml` SHA-256 verification |
+| Native tools | Checksum-pinned MuPDF 1.28.0, Tesseract 5.5.2/Leptonica 1.87.0, OfficeCLI 1.0.139, tgcli 2.1.0 commit `649d937`, Node 24.17.0, and runtime libraries in `scripts/prepare-native-tools.sh` |
 | Inventory | Deterministic CycloneDX 1.6 `docs/sbom.cdx.json`, checked by `scripts/generate-sbom.py --check` |
-| License | Upstream Apache-2.0 license and notice packaged under APK assets |
+| License | Packaged third-party notices; MuPDF's AGPL-3.0 obligations are an explicit release gate |
 
 ## Recorded budgets
 
@@ -64,9 +69,7 @@ The command performs the verified signed release above, updates the existing app
 | App plus runtime PSS | 192 MiB during the two-minute background profile; idle CPU below 1% |
 | Visible streamed response | 256 Ki characters, then an explicit truncation marker |
 | JSON-RPC message | 4 MiB |
-| Tool arguments | 72 Ki characters |
-| Document/list result | 64 KiB document; 2,048 entries and 512 KiB listing metadata |
-| Mutation recovery | 64 pending plans/renames; 64 KiB recovery payload; resolved acknowledged rows retained 30 days |
+| Native command run | Must remain cancellable and within the device memory/storage watchdog during recorded hostile-file tests |
 
 The release record must contain measured startup/session/first-token, long-stream/listing, PSS/CPU, FD/thread/process/grant, APK size/hash, and API/device results. A budget failure blocks release; the budget is not raised to fit a failing build.
 
@@ -74,10 +77,10 @@ The release record must contain measured startup/session/first-token, long-strea
 
 | Failure | User/operator diagnosis and recovery |
 |---|---|
-| Runtime crash/EOF | UI shows a bounded failure and stable diagnostic reference; foreground notification requests attention. Stop/restart is explicit; stale mutation/background markers reconcile without automatic restart. |
+| Runtime crash/EOF | UI shows a bounded failure and stable diagnostic reference; foreground notification requests attention. Stop/restart is explicit. |
 | Authentication failure/disabled device authorization | UI retains the bounded app-server error, an authentication diagnostic category, cancel control, and safe retry. The app opens only the validated official browser URL; account consent remains user-controlled. |
-| Protocol mismatch | Invalid frames or server methods fail the client closed with `protocol_failure`, `-32601`, or `-32602`; no device tool executes. Restart after verifying the pinned runtime rather than ignoring the mismatch. |
-| Provider/revoked grant/offline | UI reports the bounded Android/provider or network failure. Re-select/revoke scope, reconnect, or retry a fresh read. Unknown mutations remain visible and are never generically retried. |
+| Protocol mismatch | Invalid frames or server methods fail the client closed with `protocol_failure`, `-32601`, or `-32602`. Restart after verifying the pinned runtime rather than ignoring the mismatch. |
+| Storage permission/workspace/offline | UI reports the bounded permission, file, or network failure. Restore all-files access, reselect the workspace, reconnect, or retry. |
 | App crash report request | Collect Android's content-free crash category/stack and the visible diagnostic reference only. Never request credentials, codes, prompts, document content, Codex private files, or the runtime diagnostic database. |
 
-The release operator verifies a clean stock install, user-controlled authentication, one read, one approved disposable rename, sign-out, app-data erasure, and an upgrade from version code 1 to 2 before distribution. Production signing/upload and publication are intentionally not performed by this repository's CI.
+Before promoting a preview to production, the release operator verifies a clean stock install, all-files permission disclosure, workspace-to-turn `cwd`, shell create/overwrite/copy/move/delete, all four approval modes, speed-tier selection, `mutool` extraction/rendering, bounded English OCR, Office read/write, hostile-file failure behavior, direct Telegram login/read/send/logout, Markdown/link handling, active-only notification behavior, keyboard resize, sign-out, app-data erasure, native licenses, and an in-place upgrade. Publication is intentionally not performed by CI.

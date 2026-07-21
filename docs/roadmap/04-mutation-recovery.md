@@ -1,6 +1,6 @@
 # Step 04 — Mutation recovery
 
-**Status:** Complete
+**Status:** Superseded historical experiment. The current architecture has no Android mutation journal.
 
 ## Question
 

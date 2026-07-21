@@ -18,7 +18,10 @@ interface AgentClient : AutoCloseable {
     suspend fun readSession(sessionId: SessionId): AgentConversation =
         throw UnsupportedOperationException("Conversation history is unavailable")
 
-    suspend fun openSession(previous: SessionId? = null): SessionId
+    suspend fun openSession(
+        previous: SessionId? = null,
+        settings: AgentRuntimeSettings = AgentRuntimeSettings(),
+    ): SessionId
 
     suspend fun sendPrompt(sessionId: SessionId, prompt: String)
 
@@ -28,7 +31,7 @@ interface AgentClient : AutoCloseable {
 
     suspend fun cancelTurn(sessionId: SessionId)
 
-    suspend fun submitToolResult(sessionId: SessionId, result: ToolResult)
+    suspend fun resolveApproval(requestId: String, accept: Boolean) = Unit
 }
 
 @JvmInline
@@ -41,6 +44,30 @@ data class AgentModel(
     val supportedEfforts: List<String>,
     val defaultEffort: String,
     val isDefault: Boolean,
+    val serviceTiers: List<AgentServiceTier> = emptyList(),
+    val defaultServiceTier: String? = null,
+)
+
+data class AgentServiceTier(
+    val id: String,
+    val name: String,
+    val description: String,
+)
+
+enum class AgentApprovalPreset(
+    val displayName: String,
+    val approvalPolicy: String,
+    val approvalsReviewer: String,
+) {
+    NEVER("Never", "never", "user"),
+    AUTO_REVIEW("Auto review", "on-request", "auto_review"),
+    ASK_ME("Ask me", "on-request", "user"),
+    STRICT("Strict", "untrusted", "user"),
+}
+
+data class AgentRuntimeSettings(
+    val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.NEVER,
+    val serviceTier: String? = null,
 )
 
 data class AgentConversationSummary(
@@ -78,7 +105,10 @@ data class AgentTurnRequest(
     val clientMessageId: String? = null,
     val model: String? = null,
     val effort: String? = null,
+    val serviceTier: String? = null,
+    val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.NEVER,
     val capabilities: Set<AgentCapability> = emptySet(),
+    val workingDirectory: String? = null,
 )
 
 fun deriveConversationTitle(
@@ -106,6 +136,7 @@ sealed interface AgentEvent {
         val sessionId: SessionId,
         val model: String? = null,
         val effort: String? = null,
+        val serviceTier: String? = null,
     ) : AgentEvent
 
     data class TextDelta(
@@ -114,7 +145,17 @@ sealed interface AgentEvent {
         val itemId: String? = null,
     ) : AgentEvent
 
-    data class ToolRequested(val sessionId: SessionId, val call: ToolCall) : AgentEvent
+    data class ApprovalRequested(
+        val sessionId: SessionId,
+        val requestId: String,
+        val title: String,
+        val details: String,
+    ) : AgentEvent
+
+    data class WorkActivityChanged(
+        val sessionId: SessionId,
+        val activity: AgentWorkActivity?,
+    ) : AgentEvent
 
     data class TurnCompleted(val sessionId: SessionId) : AgentEvent
 
@@ -124,4 +165,10 @@ sealed interface AgentEvent {
         val message: String,
         val recoverable: Boolean,
     ) : AgentEvent
+}
+
+enum class AgentWorkActivity {
+    RUNNING_COMMAND,
+    READING_FILES,
+    WRITING_FILES,
 }

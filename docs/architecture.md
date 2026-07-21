@@ -5,62 +5,47 @@
 ```mermaid
 flowchart TB
     App[":app:android<br/>UI and composition"] --> Agent[":agent:codex<br/>Codex runtime and protocol"]
-    App --> Platform[":platform:android<br/>Authority and Android I/O"]
-    App --> Core[":core<br/>Coordination and policy"]
+    App --> Platform[":platform:android<br/>Android process and integrations"]
+    App --> Core[":core<br/>Agent contracts"]
     Agent --> Core
     Platform --> Core
 ```
 
-`Agent` and `Platform` do not depend on each other. The app composes them through the narrow process-launch callback owned by `CodexAgentClient`; no generic process abstraction belongs in core.
+| Module | Responsibility |
+|---|---|
+| `:app:android` | Compose UI, settings, workspace picker, foreground lifecycle |
+| `:core` | Provider-neutral agent contracts |
+| `:agent:codex` | Authentication, app-server JSON-RPC, turns, approvals, and shell activity |
+| `:platform:android` | Runtime launch, shared-storage workspace, bundled CLI installation, Telegram login |
 
-## Responsibilities
+## Workspace and shell
 
-| Module | Does | Does not |
-|---|---|---|
-| `:app:android` | Render events, collect prompts and approvals, compose implementations | Grant itself authority or interpret provider protocol |
-| `:core` | Define agent/tool contracts, coordinate calls, enforce approval and recovery policy | Import Android SDK types or perform Android I/O |
-| `:agent:codex` | Start/stop app-server, authenticate, speak JSON-RPC, translate events | Decide whether a device operation is permitted or completed |
-| `:platform:android` | Resolve SAF scopes, launch processes, execute tools, persist Android truth | Own conversation semantics |
+The user grants Android **All files access** and selects a directory from the app's small local picker. Its canonical absolute path is passed as `cwd` on every Codex turn. Codex's ordinary shell therefore lists, reads, creates, overwrites, copies, moves, and deletes files in that workspace without a duplicate Android file API.
 
-## Authority flow
+The bundled app-server process and credentials still live in backup-excluded app-private storage. The selected directory is a starting directory, not a security sandbox: `MANAGE_EXTERNAL_STORAGE` lets the app access shared storage except platform-protected locations such as `Android/data` and `Android/obb`. Codex's own approval policy remains the user-selectable control for shell commands.
 
-```mermaid
-sequenceDiagram
-    actor User
-    participant UI as Android UI
-    participant Agent as Codex
-    participant Core
-    participant Platform as Android platform
+At startup Android installs four ordinary commands into a private directory prepended to the app-server's `PATH`:
 
-    User->>UI: Submit prompt
-    UI->>Agent: Send turn
-    Agent-->>UI: Stream text
-    Agent->>Core: Request tool call
-    Core-->>UI: Resolved approval request
-    User->>UI: Approve or deny
-    UI->>Core: Decision bound to exact resolved plan
-    Core->>Platform: Execute within scope
-    Platform-->>Core: Observed result
-    Core-->>Agent: Tool result
-```
+- `mutool` reads, inspects, renders, and transforms PDFs.
+- `tesseract` performs local OCR on bounded images rendered by `mutool`.
+- `officecli` reads and edits DOCX, XLSX, and PPTX files.
+- `tgcli` reads and sends Telegram content after the user connects an account in Settings.
 
-Only the platform result can establish whether an Android operation succeeded. A provider request, response, timeout, or repeated call ID is correlation—not proof of exactly-once execution.
+Two small local Codex skills explain when to use these familiar command surfaces. They are discovery hints, not another execution layer. Ghostscript and qpdf are intentionally not bundled because the current `mutool` surface covers the required PDF work without two more native distributions.
 
-The pinned app-server registers Android capabilities as dynamic tools on the existing session. Read-only plans are allowed by core policy and dispatched directly; mutating plans require an explicit, one-use UI decision bound to the exact resolved plan. The app-server receives only the `ToolResult` produced from Android's observed provider outcome.
+Telegram login is browserless: the Settings UI starts the bundled `tgcli`, collects the phone code and optional 2FA password, and keeps its session in backup-excluded private storage. Codex then invokes the same `tgcli` command under the selected approval policy.
 
-After approval, core requires durable `Prepared` and `Executing` journal transitions before mutation dispatch. Android stores the minimum tool-specific recovery intent in an app-private SQLite database. On restart, a `Prepared` row is safely closed as not dispatched; an `Executing` row becomes `Unknown` before the tool re-observes Android state. Reconciliation never executes the mutation, unresolved outcomes remain user-visible until acknowledged or resolved, and retry remains a tool-specific decision over a fresh plan rather than a call-ID policy.
+## Session lifetime
 
-## Active session lifetime
-
-An explicit UI action starts one non-exported `dataSync` foreground service. That service owns one `ForegroundSessionController` and one `CodexAgentClient`; Activities bind only to render its bounded state and may disappear without closing it. The controller excludes duplicate turns and gives one visible UI owner a claim on each tool request, but the ViewModel still resolves Android plans and the UI still makes every mutation approval decision. A one-use private start authorization rejects unsolicited starts. Stop, Android timeout, or notification action cancels active work within five seconds, closes the app-server, removes the notification, and does not schedule or reboot-restart anything. Sign-out keeps the UI binding until bounded `account/logout` and client close finish, preventing Android from destroying a bind-only service mid-logout.
+A non-exported foreground service owns the active Codex client while authentication, a turn, an approval, a tool call, or a reported work activity is active. Its private notification states the current category and disappears when the service becomes idle.
 
 ## Data lifecycle
 
-Credentials, Codex history, scope metadata, and mutation recovery stay in app-private storage excluded from backup. `account/logout` removes ChatGPT authentication while retaining unrelated local state. Scope revocation releases only the current SAF grant. Confirmed full erasure delegates to Android's native app-data reset, which removes private state, runtime permissions, notifications, and persisted grants without deleting provider-owned user files.
+Credentials, Codex history, bundled runtime assets, and Telegram session data remain in backup-excluded app-private storage. The workspace preference stores only the selected path. A one-time migration releases obsolete persisted URI grants and removes the former SAF workspace databases. Sign-out removes ChatGPT authentication; confirmed full erasure delegates to Android's native app-data reset and never deletes shared user files.
 
 ## Dependency rules
 
-- Core may use JVM/Kotlin libraries, but no `android.*` or `androidx.*` API.
-- Provider DTOs remain internal to `:agent:codex`.
-- SAF `Uri`, `Context`, `ContentResolver`, services, and persistence remain in Android modules.
-- Extract internal Codex collaborators only after measured complexity or an independent state machine appears.
+- Core contains no Android SDK types.
+- App-server protocol DTOs stay inside `:agent:codex`.
+- Android permission, storage, process, and intent APIs stay inside Android modules.
+- Ordinary filesystem, document, and Telegram work uses the shell-visible CLI surface; Android code is limited to permission, installation, login, and lifecycle mechanics.

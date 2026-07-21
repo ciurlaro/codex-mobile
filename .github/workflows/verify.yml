@@ -24,7 +24,11 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
-      - run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+      - name: Install native build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libarchive-tools ninja-build patchelf zip
+          sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865"
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
       - name: Create ephemeral release key
         run: >-
@@ -38,6 +42,7 @@ jobs:
           CODEX_MOBILE_RELEASE_KEY_ALIAS: ci-release
           CODEX_MOBILE_RELEASE_KEY_PASSWORD: android
         run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
           ./gradlew test assembleDebug assembleDebugAndroidTest lint assembleRelease --stacktrace
           scripts/verify-release.sh
           scripts/verify-reproducible-release.sh

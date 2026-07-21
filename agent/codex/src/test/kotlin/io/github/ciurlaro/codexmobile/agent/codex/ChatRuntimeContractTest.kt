@@ -202,6 +202,7 @@ class ChatRuntimeContractTest {
                     model = "runtime-model-next",
                     effort = "xhigh",
                     capabilities = setOf(AgentCapability.WEB_SEARCH),
+                    workingDirectory = "/storage/emulated/0/Documents",
                 ),
             )
 
@@ -209,6 +210,7 @@ class ChatRuntimeContractTest {
             assertEquals("client-message-1", turn.requiredString("clientUserMessageId"))
             assertEquals("runtime-model-next", turn.requiredString("model"))
             assertEquals("xhigh", turn.requiredString("effort"))
+            assertEquals("/storage/emulated/0/Documents", turn.requiredString("cwd"))
             val input = turn["input"]!!.jsonArray.single().jsonObject
             val expectedText = "${AgentCapability.WEB_SEARCH.promptLabel}\n\nFind the current answer"
             assertEquals(expectedText, input.requiredString("text"))

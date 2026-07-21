@@ -20,6 +20,15 @@ val releaseSigningConfigured = listOf(
 val requestedTaskNames = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }
 val visualCaptureRequested = "visualCapture" in requestedTaskNames
 val visualCheckRequested = "visualCheck" in requestedTaskNames
+val nativeToolsNdk = providers.gradleProperty("codexMobile.androidNdkPath")
+    .orElse(providers.environmentVariable("ANDROID_NDK_HOME"))
+    .orElse(providers.environmentVariable("ANDROID_NDK_ROOT"))
+    .orElse(
+        providers.provider {
+            val sdk = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
+            sdk?.let { "$it/ndk/29.0.14206865" } ?: "/opt/homebrew/share/android-ndk"
+        },
+    )
 
 android {
     namespace = "io.github.ciurlaro.codexmobile.app"
@@ -29,8 +38,8 @@ android {
         applicationId = "io.github.ciurlaro.codexmobile"
         minSdk = 26
         targetSdk = 37
-        versionCode = 2
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.2.0-preview.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         if (visualCaptureRequested || visualCheckRequested) {
             testInstrumentationRunnerArguments["class"] =
@@ -104,8 +113,49 @@ val prepareCodexRuntime = tasks.register<Exec>("prepareCodexRuntime") {
     )
 }
 
+val nativeTools = listOf(
+    "libcodex_mutool.so",
+    "libcodex_tesseract.so",
+    "libcodex_officecli.so",
+    "libcodex_officecli_musl.so",
+    "libcodex_officecli_gcc.so",
+    "libcodex_officecli_cxx.so",
+    "libcodex_tgcli.so",
+    "libcodex_node.so",
+    "libcodex_z.so",
+    "libcodex_cares.so",
+    "libcodex_sqlite3.so",
+    "libcodex_crypto.so",
+    "libcodex_ssl.so",
+    "libcodex_icudata.so",
+    "libcodex_icui18n.so",
+    "libcodex_icuuc.so",
+    "libcodex_cxx.so",
+).map { layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/$it") }
+val nativeToolAssets = layout.projectDirectory.dir("src/main/assets/runtime")
+val prepareNativeTools = tasks.register<Exec>("prepareNativeTools") {
+    inputs.property("bundleVersion", "2026-07-21.2")
+    inputs.files(
+        rootProject.file("scripts/prepare-native-tools.sh"),
+        rootProject.file("scripts/native/tgcli-launcher.c"),
+        rootProject.file("scripts/native/officecli-launcher.c"),
+        rootProject.file("scripts/native/tgcli-package-lock.json"),
+        rootProject.file("scripts/patches/tgcli-android.patch"),
+        rootProject.file("scripts/patches/tesseract-android.patch"),
+    )
+    outputs.files(nativeTools)
+    outputs.dir(nativeToolAssets)
+    commandLine(
+        rootProject.file("scripts/prepare-native-tools.sh"),
+        nativeToolsNdk.get(),
+        layout.projectDirectory.dir("src/main/jniLibs/arm64-v8a").asFile.absolutePath,
+        nativeToolAssets.asFile.absolutePath,
+    )
+}
+
 tasks.named("preBuild").configure {
     dependsOn(prepareCodexRuntime)
+    dependsOn(prepareNativeTools)
 }
 
 val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
@@ -135,6 +185,7 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)
+    implementation(libs.markdown.material3)
 
     testImplementation(kotlin("test-junit"))
     androidTestImplementation(libs.androidx.test.ext.junit)
