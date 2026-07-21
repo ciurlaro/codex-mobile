@@ -2,6 +2,7 @@ package io.github.ciurlaro.codexmobile.app
 
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
+import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.SessionId
@@ -39,6 +40,9 @@ sealed interface ChatUiEvent {
     data object ClearWorkspace : ChatUiEvent
     data class SearchHistory(val query: String) : ChatUiEvent
     data class SelectConversation(val id: SessionId) : ChatUiEvent
+    data class TogglePinConversation(val id: SessionId) : ChatUiEvent
+    data class RenameConversation(val id: SessionId, val title: String) : ChatUiEvent
+    data class DeleteConversation(val id: SessionId) : ChatUiEvent
     data class UpdateDraft(val text: String) : ChatUiEvent
     data class SelectModel(val id: String) : ChatUiEvent
     data class SelectEffort(val effort: String) : ChatUiEvent
@@ -59,6 +63,44 @@ data class ChatMessage(
     val model: String? = null,
     val effort: String? = null,
     val streaming: Boolean = false,
+    val shellCommand: String? = null,
+    val exitCode: Int? = null,
+)
+
+internal fun String.shellCommandOrNull(): String? =
+    takeIf { it.startsWith('!') }?.drop(1)?.trim()
+
+private val bareTaskMarker = Regex("""^(\s*)(\[[ xX]])(?=\s|$)""")
+
+internal fun String.normalizeMarkdownTaskLists(): String {
+    var fence: Char? = null
+    return split('\n').joinToString("\n") { line ->
+        val trimmed = line.trimStart()
+        val marker = trimmed.firstOrNull()
+            ?.takeIf { it == '`' || it == '~' }
+            ?.takeIf { candidate -> trimmed.takeWhile { it == candidate }.length >= 3 }
+        when {
+            marker != null -> {
+                if (fence == null) fence = marker
+                else if (fence == marker && trimmed.dropWhile { it == marker }.isBlank()) fence = null
+                line
+            }
+
+            fence == null -> bareTaskMarker.replaceFirst(line, "\$1- \$2")
+
+            else -> line
+        }
+    }
+}
+
+internal data class ConversationGroups(
+    val pinned: List<AgentConversationSummary>,
+    val recent: List<AgentConversationSummary>,
+)
+
+internal fun List<AgentConversationSummary>.groupedByPins(pinnedIds: Set<String>) = ConversationGroups(
+    pinned = filter { it.sessionId.value in pinnedIds },
+    recent = filterNot { it.sessionId.value in pinnedIds },
 )
 
 internal fun AgentMessage.toChatMessage(): ChatMessage = ChatMessage(

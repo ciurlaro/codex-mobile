@@ -3,6 +3,7 @@ package io.github.ciurlaro.codexmobile.agent.codex
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
+import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import io.github.ciurlaro.codexmobile.core.deriveConversationTitle
@@ -10,10 +11,14 @@ import java.nio.charset.StandardCharsets
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonNull
@@ -27,6 +32,134 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 
 class ChatRuntimeContractTest {
+    @Test
+    fun `renames and deletes conversations through stable thread methods`(): Unit = runBlocking {
+        var renameParams: JsonObject? = null
+        var deleteParams: JsonObject? = null
+        val process = ScriptedProcess { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "thread/name/set" -> {
+                    renameParams = message.params
+                    server.respond(message.id, buildJsonObject {})
+                }
+
+                "thread/delete" -> {
+                    deleteParams = message.params
+                    server.respond(message.id, buildJsonObject {})
+                }
+            }
+        }
+        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        try {
+            val sessionId = SessionId("thread-history")
+            client.renameSession(sessionId, "  Useful name  ")
+            client.deleteSession(sessionId)
+
+            assertEquals("thread-history", checkNotNull(renameParams).requiredString("threadId"))
+            assertEquals("Useful name", checkNotNull(renameParams).requiredString("name"))
+            assertEquals("thread-history", checkNotNull(deleteParams).requiredString("threadId"))
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
+    fun `runs a leading bang through the native user shell stream`(): Unit = runBlocking {
+        var startParams: JsonObject? = null
+        var shellParams: JsonObject? = null
+        val process = ScriptedProcess { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "thread/start" -> {
+                    startParams = message.params
+                    server.respond(
+                        message.id,
+                        buildJsonObject { putJsonObject("thread") { put("id", "thread-shell") } },
+                    )
+                }
+
+                "thread/shellCommand" -> {
+                    shellParams = message.params
+                    server.respond(message.id, buildJsonObject {})
+                    server.notify(
+                        "item/started",
+                        buildJsonObject {
+                            put("threadId", "thread-shell")
+                            put("turnId", "turn-shell")
+                            putJsonObject("item") {
+                                put("id", "command-shell")
+                                put("type", "commandExecution")
+                                put("source", "userShell")
+                                put("status", "inProgress")
+                            }
+                        },
+                    )
+                    server.notify(
+                        "item/commandExecution/outputDelta",
+                        buildJsonObject {
+                            put("threadId", "thread-shell")
+                            put("turnId", "turn-shell")
+                            put("itemId", "command-shell")
+                            put("delta", "one\ntwo\n")
+                        },
+                    )
+                    server.notify(
+                        "item/completed",
+                        buildJsonObject {
+                            put("threadId", "thread-shell")
+                            put("turnId", "turn-shell")
+                            putJsonObject("item") {
+                                put("id", "command-shell")
+                                put("type", "commandExecution")
+                                put("source", "userShell")
+                                put("status", "completed")
+                                put("exitCode", 0)
+                            }
+                        },
+                    )
+                    server.notify(
+                        "turn/completed",
+                        buildJsonObject {
+                            put("threadId", "thread-shell")
+                            putJsonObject("turn") {
+                                put("id", "turn-shell")
+                                put("status", "completed")
+                            }
+                        },
+                    )
+                }
+            }
+        }
+        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        try {
+            val session = client.openSession(
+                settings = AgentRuntimeSettings(workingDirectory = "/storage/emulated/0/Documents"),
+            )
+            val events = async {
+                withTimeout(1_000) {
+                    client.events.filter {
+                        it is AgentEvent.ShellOutputDelta ||
+                            it is AgentEvent.ShellCommandCompleted ||
+                            it is AgentEvent.TurnCompleted
+                    }.take(3).toList()
+                }
+            }
+
+            client.runShellCommand(session, "printf 'one\\ntwo\\n'")
+
+            assertEquals("/storage/emulated/0/Documents", checkNotNull(startParams).requiredString("cwd"))
+            assertEquals("thread-shell", checkNotNull(shellParams).requiredString("threadId"))
+            assertEquals("printf 'one\\ntwo\\n'", checkNotNull(shellParams).requiredString("command"))
+            val received = events.await()
+            assertEquals("one\ntwo\n", assertIs<AgentEvent.ShellOutputDelta>(received[0]).text)
+            assertEquals(0, assertIs<AgentEvent.ShellCommandCompleted>(received[1]).exitCode)
+            assertIs<AgentEvent.TurnCompleted>(received[2])
+        } finally {
+            client.close()
+        }
+    }
+
     @Test
     fun `discovers paged models and conversation history from protocol v2`(): Unit = runBlocking {
         val modelCursors = mutableListOf<String?>()

@@ -1,6 +1,7 @@
 package io.github.ciurlaro.codexmobile.app
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -13,7 +14,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.indication
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -29,6 +34,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -37,13 +43,18 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,8 +64,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -81,6 +94,8 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.LiveRegionMode
@@ -88,6 +103,8 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.onLongClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
@@ -95,16 +112,30 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
+import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentModel
 import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.compose.components.markdownComponents
+import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
+import com.mikepenz.markdown.compose.elements.MarkdownCodeFence
+import com.mikepenz.markdown.m3.elements.MarkdownCheckBox
+import com.mikepenz.markdown.m3.markdownTypography
+import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.drop
 
 private object ChatColors {
@@ -113,12 +144,39 @@ private object ChatColors {
     val Elevated = Color(0xFF202020)
     val ElevatedStrong = Color(0xFF2A2A2A)
     val UserBubble = Color(0xFF3D3D3D)
+    val ShellBubble = Color(0xFF17345C)
+    val CodeSurface = Color(0xFF151515)
     val Border = Color(0xFF3A3A3A)
     val Primary = Color(0xFFF5F5F5)
     val Secondary = Color(0xFFA5A5A5)
     val Accent = Color(0xFF3F83F8)
+    val CodeAccent = Color(0xFF58C77B)
     val Danger = Color(0xFFFF7A83)
     val Scrim = Color(0x99000000)
+}
+
+internal val shellCommandVisualTransformation = VisualTransformation { source ->
+    if (!source.text.startsWith('!')) {
+        TransformedText(source, OffsetMapping.Identity)
+    } else {
+        val text = buildAnnotatedString {
+            withStyle(SpanStyle(color = ChatColors.Accent, fontWeight = FontWeight.Bold)) {
+                append('!')
+            }
+            append("  ")
+            append(source.subSequence(1, source.length))
+        }
+        TransformedText(
+            text,
+            object : OffsetMapping {
+                override fun originalToTransformed(offset: Int): Int =
+                    if (offset == 0) 0 else offset + 2
+
+                override fun transformedToOriginal(offset: Int): Int =
+                    if (offset == 0) 0 else if (offset <= 3) 1 else offset - 2
+            },
+        )
+    }
 }
 
 private object ChatDimensions {
@@ -200,14 +258,26 @@ private fun ChatDrawer(
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val drawerState = rememberDrawerState(DrawerValue.Closed)
         val shouldBeOpen by rememberUpdatedState(state.drawerOpen)
+        val focusManager = LocalFocusManager.current
+        val keyboard = LocalSoftwareKeyboardController.current
         LaunchedEffect(state.drawerOpen) {
-            if (state.drawerOpen) drawerState.open() else drawerState.close()
+            if (state.drawerOpen) {
+                focusManager.clearFocus()
+                keyboard?.hide()
+                drawerState.open()
+            } else {
+                drawerState.close()
+            }
         }
         LaunchedEffect(drawerState) {
-            snapshotFlow { drawerState.currentValue }
+            snapshotFlow { drawerState.currentValue to drawerState.targetValue }
                 .drop(1)
-                .collect { value ->
-                    if (value == DrawerValue.Closed && shouldBeOpen) {
+                .collect { (current, target) ->
+                    if (target == DrawerValue.Open) {
+                        focusManager.clearFocus()
+                        keyboard?.hide()
+                    }
+                    if (current == DrawerValue.Closed && target == DrawerValue.Closed && shouldBeOpen) {
                         onEvent(ChatUiEvent.CloseHistory)
                     }
                 }
@@ -240,10 +310,18 @@ private fun HistoryDrawer(
     onEvent: (ChatUiEvent) -> Unit,
 ) {
     val searchFocusRequester = remember { FocusRequester() }
+    var menuConversation by remember { mutableStateOf<AgentConversationSummary?>(null) }
+    var menuPosition by remember { mutableStateOf(Offset.Zero) }
+    var renameConversation by remember { mutableStateOf<AgentConversationSummary?>(null) }
+    var renameText by remember { mutableStateOf("") }
+    var deleteConversation by remember { mutableStateOf<AgentConversationSummary?>(null) }
     val query = state.historySearch.trim()
     val visibleConversations = remember(state.conversations, query) {
         if (query.isEmpty()) state.conversations
         else state.conversations.filter { it.title.contains(query, ignoreCase = true) }
+    }
+    val groups = remember(visibleConversations, state.pinnedConversationIds) {
+        visibleConversations.groupedByPins(state.pinnedConversationIds)
     }
     Column(
         modifier = Modifier
@@ -291,43 +369,69 @@ private fun HistoryDrawer(
         Spacer(Modifier.height(12.dp))
         LazyColumn(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(1.dp),
             contentPadding = PaddingValues(vertical = 4.dp),
         ) {
-            items(
-                items = visibleConversations,
-                key = { it.sessionId.value },
-            ) { conversation ->
-                val selected = conversation.sessionId == state.sessionId
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(if (selected) ChatColors.ElevatedStrong else Color.Transparent)
-                        .clickable { onEvent(ChatUiEvent.SelectConversation(conversation.sessionId)) }
-                        .semantics(mergeDescendants = true) {
-                            role = Role.Button
-                            if (selected) stateDescription = "Current conversation"
-                        }
-                        .padding(horizontal = 14.dp, vertical = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = conversation.title,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                        color = if (selected) ChatColors.Primary else ChatColors.Secondary,
-                        style = MaterialTheme.typography.bodyLarge,
+            if (groups.pinned.isNotEmpty()) {
+                item("pinned-heading") { ConversationSectionTitle("Pinned") }
+                items(groups.pinned, key = { "pinned-${it.sessionId.value}" }) { conversation ->
+                    HistoryConversationRow(
+                        conversation = conversation,
+                        selected = conversation.sessionId == state.sessionId,
+                        pinned = true,
+                        menuExpanded = menuConversation?.sessionId == conversation.sessionId,
+                        onSelect = { onEvent(ChatUiEvent.SelectConversation(conversation.sessionId)) },
+                        menuPosition = menuPosition,
+                        onOpenMenu = { position ->
+                            menuPosition = position
+                            menuConversation = conversation
+                        },
+                        onDismissMenu = { menuConversation = null },
+                        onTogglePin = {
+                            menuConversation = null
+                            onEvent(ChatUiEvent.TogglePinConversation(conversation.sessionId))
+                        },
+                        onRename = {
+                            menuConversation = null
+                            renameConversation = conversation
+                            renameText = conversation.title
+                        },
+                        onDelete = {
+                            menuConversation = null
+                            deleteConversation = conversation
+                        },
                     )
-                    if (selected) {
-                        Spacer(Modifier.width(8.dp))
-                        Box(
-                            Modifier
-                                .size(7.dp)
-                                .background(ChatColors.Accent, CircleShape),
-                        )
-                    }
+                }
+            }
+            if (groups.recent.isNotEmpty()) {
+                item("recent-heading") { ConversationSectionTitle("Recents") }
+                items(groups.recent, key = { "recent-${it.sessionId.value}" }) { conversation ->
+                    HistoryConversationRow(
+                        conversation = conversation,
+                        selected = conversation.sessionId == state.sessionId,
+                        pinned = false,
+                        menuExpanded = menuConversation?.sessionId == conversation.sessionId,
+                        onSelect = { onEvent(ChatUiEvent.SelectConversation(conversation.sessionId)) },
+                        menuPosition = menuPosition,
+                        onOpenMenu = { position ->
+                            menuPosition = position
+                            menuConversation = conversation
+                        },
+                        onDismissMenu = { menuConversation = null },
+                        onTogglePin = {
+                            menuConversation = null
+                            onEvent(ChatUiEvent.TogglePinConversation(conversation.sessionId))
+                        },
+                        onRename = {
+                            menuConversation = null
+                            renameConversation = conversation
+                            renameText = conversation.title
+                        },
+                        onDelete = {
+                            menuConversation = null
+                            deleteConversation = conversation
+                        },
+                    )
                 }
             }
             if (visibleConversations.isEmpty()) {
@@ -381,6 +485,176 @@ private fun HistoryDrawer(
             AppIcon(IconGlyph.CHEVRON_RIGHT, Modifier.size(20.dp), ChatColors.Secondary)
         }
     }
+    renameConversation?.let { conversation ->
+        AlertDialog(
+            onDismissRequest = { renameConversation = null },
+            title = { Text("Rename conversation") },
+            text = {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it.take(80) },
+                    label = { Text("Name") },
+                    singleLine = true,
+                )
+            },
+            dismissButton = {
+                TextButton(onClick = { renameConversation = null }) { Text("Cancel") }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = renameText.isNotBlank(),
+                    onClick = {
+                        onEvent(ChatUiEvent.RenameConversation(conversation.sessionId, renameText))
+                        renameConversation = null
+                    },
+                ) { Text("Rename") }
+            },
+        )
+    }
+    deleteConversation?.let { conversation ->
+        AlertDialog(
+            onDismissRequest = { deleteConversation = null },
+            title = { Text("Delete conversation?") },
+            text = { Text("“${conversation.title}” will be permanently deleted.") },
+            dismissButton = {
+                TextButton(onClick = { deleteConversation = null }) { Text("Cancel") }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onEvent(ChatUiEvent.DeleteConversation(conversation.sessionId))
+                        deleteConversation = null
+                    },
+                ) { Text("Delete", color = ChatColors.Danger) }
+            },
+        )
+    }
+}
+
+@Composable
+private fun ConversationSectionTitle(title: String) {
+    Text(
+        text = title,
+        color = ChatColors.Primary,
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(start = 14.dp, top = 12.dp, bottom = 4.dp),
+    )
+}
+
+@Composable
+private fun HistoryConversationRow(
+    conversation: AgentConversationSummary,
+    selected: Boolean,
+    pinned: Boolean,
+    menuExpanded: Boolean,
+    menuPosition: Offset,
+    onSelect: () -> Unit,
+    onOpenMenu: (Offset) -> Unit,
+    onDismissMenu: () -> Unit,
+    onTogglePin: () -> Unit,
+    onRename: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val background by animateColorAsState(
+        targetValue = when {
+            pressed -> ChatColors.Elevated
+            selected -> ChatColors.ElevatedStrong
+            else -> Color.Transparent
+        },
+        animationSpec = tween(90),
+        label = "history-press",
+    )
+    Box {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = ChatDimensions.TouchTarget)
+                .clip(RoundedCornerShape(16.dp))
+                .background(background)
+                .indication(interactionSource, ripple(color = ChatColors.Primary.copy(alpha = 0.14f)))
+                .pointerInput(conversation.sessionId) {
+                    detectTapGestures(
+                        onPress = { position ->
+                            val press = PressInteraction.Press(position)
+                            interactionSource.emit(press)
+                            interactionSource.emit(
+                                if (tryAwaitRelease()) PressInteraction.Release(press)
+                                else PressInteraction.Cancel(press),
+                            )
+                        },
+                        onTap = { onSelect() },
+                        onLongPress = onOpenMenu,
+                    )
+                }
+                .semantics(mergeDescendants = true) {
+                    role = Role.Button
+                    if (selected) stateDescription = "Current conversation"
+                    onClick("Open conversation") {
+                        onSelect()
+                        true
+                    }
+                    onLongClick("Conversation actions") {
+                        onOpenMenu(Offset.Zero)
+                        true
+                    }
+                }
+                .padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = conversation.title,
+                modifier = Modifier.weight(1f),
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                color = if (selected) ChatColors.Primary else ChatColors.Secondary,
+                style = MaterialTheme.typography.bodyLarge.copy(
+                    fontSize = 15.sp,
+                    lineHeight = 20.sp,
+                ),
+            )
+            if (selected) {
+                Spacer(Modifier.width(8.dp))
+                Box(
+                    Modifier
+                        .size(7.dp)
+                        .background(ChatColors.Accent, CircleShape),
+                )
+            }
+        }
+        Box(
+            Modifier
+                .offset {
+                    IntOffset(menuPosition.x.roundToInt(), menuPosition.y.roundToInt())
+                }
+                .size(1.dp),
+        ) {
+            DropdownMenu(expanded = menuExpanded, onDismissRequest = onDismissMenu) {
+                DropdownMenuItem(
+                    text = { Text(if (pinned) "Unpin" else "Pin") },
+                    leadingIcon = {
+                        AppIcon(IconGlyph.PIN, Modifier.size(22.dp), ChatColors.Primary)
+                    },
+                    onClick = onTogglePin,
+                )
+                DropdownMenuItem(
+                    text = { Text("Rename") },
+                    leadingIcon = {
+                        AppIcon(IconGlyph.EDIT, Modifier.size(22.dp), ChatColors.Primary)
+                    },
+                    onClick = onRename,
+                )
+                DropdownMenuItem(
+                    text = { Text("Delete", color = ChatColors.Danger) },
+                    leadingIcon = {
+                        AppIcon(IconGlyph.TRASH, Modifier.size(22.dp), ChatColors.Danger)
+                    },
+                    onClick = onDelete,
+                )
+            }
+        }
+    }
 }
 
 @Composable
@@ -425,22 +699,14 @@ private fun ChatTopBar(
             modifier = Modifier.align(Alignment.CenterStart),
         ) { onEvent(ChatUiEvent.OpenHistory) }
         Row(
-            modifier = Modifier
-                .align(Alignment.Center)
-                .clip(RoundedCornerShape(ChatDimensions.ControlCorner))
-                .clickable { onEvent(ChatUiEvent.ShowEffort) }
-                .semantics(mergeDescendants = true) { role = Role.Button }
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.align(Alignment.Center),
         ) {
             Text(
-                "Chat",
+                "Codex Mobile",
                 fontWeight = FontWeight.SemiBold,
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.semantics { heading() },
             )
-            Spacer(Modifier.width(6.dp))
-            AppIcon(IconGlyph.CHEVRON_DOWN, Modifier.size(17.dp), ChatColors.Secondary)
         }
         if (state.sessionId != null || state.messages.isNotEmpty()) {
             CircleIconButton(
@@ -525,6 +791,12 @@ private fun SignInState(
             modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite },
         )
         when {
+            state.authenticationBusy -> CircularProgressIndicator(
+                modifier = Modifier.size(34.dp),
+                color = ChatColors.Accent,
+                strokeWidth = 3.dp,
+            )
+
             state.signInUrl != null -> {
                 Button(
                     onClick = { onEvent(ChatUiEvent.OpenSignIn) },
@@ -547,7 +819,12 @@ private fun SignInState(
 
 @Composable
 private fun UserMessage(message: ChatMessage) {
+    val shellCommand = message.text.shellCommandOrNull()
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        if (shellCommand != null) {
+            SentShellCommand(shellCommand)
+            return@Row
+        }
         Column(
             modifier = Modifier
                 .widthIn(max = 330.dp)
@@ -569,6 +846,55 @@ private fun UserMessage(message: ChatMessage) {
     }
 }
 
+@Composable
+private fun SentShellCommand(command: String) {
+    Column(
+        modifier = Modifier
+            .widthIn(max = 330.dp)
+            .background(ChatColors.ShellBubble, RoundedCornerShape(ChatDimensions.MessageCorner))
+            .border(1.dp, ChatColors.Accent.copy(alpha = 0.65f), RoundedCornerShape(ChatDimensions.MessageCorner))
+            .semantics { contentDescription = "User shell command" }
+            .padding(horizontal = 18.dp, vertical = 15.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        ShellHeader()
+        ShellPrompt(prefix = "!", command = command)
+    }
+}
+
+@Composable
+private fun ShellHeader() {
+    TerminalHeader("SHELL COMMAND", ChatColors.Accent)
+}
+
+@Composable
+private fun TerminalHeader(label: String, color: Color) {
+    Text(
+        text = ">_  $label",
+        color = color,
+        fontFamily = FontFamily.Monospace,
+        fontWeight = FontWeight.SemiBold,
+        style = MaterialTheme.typography.labelMedium,
+    )
+}
+
+@Composable
+private fun ShellPrompt(prefix: String, command: String) {
+    Text(
+        text = buildAnnotatedString {
+            withStyle(SpanStyle(color = ChatColors.Accent, fontWeight = FontWeight.Bold)) {
+                append(prefix)
+            }
+            append("  ")
+            append(command)
+        },
+        color = ChatColors.Primary,
+        fontFamily = FontFamily.Monospace,
+        fontWeight = FontWeight.Medium,
+        style = MaterialTheme.typography.bodyLarge,
+    )
+}
+
 private fun capabilityPrompt(capability: AgentCapability): AnnotatedString = buildAnnotatedString {
     val label = capability.promptLabel
     val prefixLength = label.indexOf(capability.displayLabel, ignoreCase = true).coerceAtLeast(0)
@@ -587,6 +913,8 @@ private fun CodexMessage(message: ChatMessage) {
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         when {
+            message.shellCommand != null -> ShellCommandOutput(message)
+
             message.text.isNotEmpty() -> MessageText(message.text)
 
             message.streaming -> ThinkingMessage()
@@ -595,7 +923,66 @@ private fun CodexMessage(message: ChatMessage) {
 }
 
 @Composable
+private fun ShellCommandOutput(message: ChatMessage) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChatColors.Elevated, RoundedCornerShape(16.dp))
+            .border(1.dp, ChatColors.Border, RoundedCornerShape(16.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        ShellPrompt(prefix = "\$", command = message.shellCommand.orEmpty())
+        HorizontalDivider(color = ChatColors.Border)
+        if (message.text.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(ChatColors.CodeSurface, RoundedCornerShape(10.dp))
+                    .border(1.dp, ChatColors.Border, RoundedCornerShape(10.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = "OUTPUT",
+                    color = ChatColors.Secondary,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+                Text(
+                    text = message.text,
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    color = ChatColors.Primary,
+                    fontFamily = FontFamily.Monospace,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                    ),
+                    softWrap = false,
+                )
+            }
+        }
+        when {
+            message.streaming -> Text(
+                "Running…",
+                color = ChatColors.Secondary,
+                style = MaterialTheme.typography.labelMedium,
+            )
+
+            message.exitCode != null -> Text(
+                "Exit ${message.exitCode}",
+                color = if (message.exitCode == 0) ChatColors.Secondary else ChatColors.Danger,
+                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.labelMedium,
+            )
+        }
+    }
+}
+
+@Composable
 private fun MessageText(text: String) {
+    val markdown = remember(text) { text.normalizeMarkdownTaskLists() }
     val delegate = LocalUriHandler.current
     val safeLinks = remember(delegate) {
         object : UriHandler {
@@ -606,7 +993,67 @@ private fun MessageText(text: String) {
         }
     }
     CompositionLocalProvider(LocalUriHandler provides safeLinks) {
-        Markdown(text)
+        Markdown(
+            content = markdown,
+            typography = markdownTypography(
+                code = MaterialTheme.typography.bodyMedium.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    fontWeight = FontWeight.Medium,
+                ),
+                inlineCode = MaterialTheme.typography.bodyMedium.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Medium,
+                ),
+            ),
+            components = markdownComponents(
+                checkbox = { model ->
+                    MarkdownCheckBox(model.content, model.node, model.typography.text)
+                },
+                codeFence = { model ->
+                    MarkdownCodeFence(model.content, model.node, model.typography.code) { code, language, style ->
+                        TerminalCodeBlock(code, language, style)
+                    }
+                },
+                codeBlock = { model ->
+                    MarkdownCodeBlock(model.content, model.node, model.typography.code) { code, language, style ->
+                        TerminalCodeBlock(code, language, style)
+                    }
+                },
+            ),
+        )
+    }
+}
+
+@Composable
+private fun TerminalCodeBlock(code: String, language: String?, style: TextStyle) {
+    val label = language.orEmpty().trim().ifEmpty { "CODE" }.take(24).uppercase()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(ChatColors.CodeSurface, RoundedCornerShape(16.dp))
+            .border(1.dp, ChatColors.CodeAccent.copy(alpha = 0.65f), RoundedCornerShape(16.dp)),
+    ) {
+        Box(Modifier.padding(horizontal = 14.dp, vertical = 11.dp)) {
+            TerminalHeader(label, ChatColors.CodeAccent)
+        }
+        HorizontalDivider(color = ChatColors.Border)
+        Text(
+            text = code.trimEnd(),
+            modifier = Modifier
+                .horizontalScroll(rememberScrollState())
+                .padding(14.dp),
+            color = ChatColors.Primary,
+            style = style.copy(
+                color = ChatColors.Primary,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+            ),
+            softWrap = false,
+        )
     }
 }
 
@@ -636,21 +1083,37 @@ private fun Composer(
     onEvent: (ChatUiEvent) -> Unit,
 ) {
     var focused by remember { mutableStateOf(false) }
+    val shellMode = state.draft.startsWith('!')
     val expanded = focused || state.draft.contains('\n') || state.selectedCapabilities.isNotEmpty()
     val canSend = state.authenticated &&
-        (state.draft.isNotBlank() || state.selectedCapabilities.isNotEmpty())
+        if (shellMode) state.draft.drop(1).isNotBlank()
+        else state.draft.isNotBlank() || state.selectedCapabilities.isNotEmpty()
+    val composerColor by animateColorAsState(
+        if (shellMode) Color(0xFF182433) else ChatColors.Elevated,
+        label = "composer-mode",
+    )
+    val composerBorder by animateColorAsState(
+        if (shellMode) ChatColors.Accent else ChatColors.Border,
+        label = "composer-border",
+    )
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = ChatDimensions.ScreenPadding, vertical = 10.dp)
-            .background(ChatColors.Elevated, RoundedCornerShape(ChatDimensions.ComposerCorner))
+            .background(composerColor, RoundedCornerShape(ChatDimensions.ComposerCorner))
             .border(
-                BorderStroke(1.dp, ChatColors.Border),
+                BorderStroke(1.dp, composerBorder),
                 RoundedCornerShape(ChatDimensions.ComposerCorner),
             )
+            .semantics {
+                if (shellMode) stateDescription = "Shell command mode"
+            }
             .animateContentSize()
             .padding(horizontal = 10.dp, vertical = 9.dp),
     ) {
+        if (shellMode) {
+            Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) { ShellHeader() }
+        }
         state.selectedCapabilities.forEach { capability ->
             CapabilityChip(capability) { onEvent(ChatUiEvent.RemoveCapability(capability)) }
             Spacer(Modifier.height(4.dp))
@@ -663,15 +1126,30 @@ private fun Composer(
                 .heightIn(min = if (expanded) 52.dp else 38.dp, max = 160.dp)
                 .padding(horizontal = 8.dp, vertical = 6.dp)
                 .onFocusChanged { focused = it.isFocused }
-                .semantics { contentDescription = "Message" },
+                .semantics {
+                    contentDescription = if (shellMode) "Shell command" else "Message"
+                },
             enabled = state.authenticated,
-            textStyle = MaterialTheme.typography.bodyLarge.copy(color = ChatColors.Primary),
+            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                color = ChatColors.Primary,
+                fontFamily = if (shellMode) FontFamily.Monospace else FontFamily.Default,
+                fontWeight = if (shellMode) FontWeight.Medium else FontWeight.Normal,
+            ),
             cursorBrush = SolidColor(ChatColors.Accent),
+            visualTransformation = if (shellMode) {
+                shellCommandVisualTransformation
+            } else {
+                VisualTransformation.None
+            },
             decorationBox = { innerTextField ->
                 Box(contentAlignment = Alignment.TopStart) {
                     if (state.draft.isEmpty()) {
                         Text(
-                            if (state.messages.isEmpty()) "Ask Codex" else "Reply to Codex",
+                            when {
+                                shellMode -> "Run a shell command"
+                                state.messages.isEmpty() -> "Ask Codex"
+                                else -> "Reply to Codex"
+                            },
                             color = ChatColors.Secondary,
                             style = MaterialTheme.typography.bodyLarge,
                         )
@@ -687,6 +1165,7 @@ private fun Composer(
             CircleIconButton(
                 label = "Add prompt tag",
                 glyph = IconGlyph.PLUS,
+                enabled = !shellMode,
                 containerColor = Color.Transparent,
             ) { onEvent(ChatUiEvent.ShowTags) }
             SelectionPill(
@@ -695,7 +1174,11 @@ private fun Composer(
                 onClick = { onEvent(ChatUiEvent.ShowEffort) },
             )
             CircleIconButton(
-                label = if (state.turnActive) "Stop response" else "Send message",
+                label = when {
+                    state.turnActive -> "Stop response"
+                    shellMode -> "Run shell command"
+                    else -> "Send message"
+                },
                 glyph = if (state.turnActive) IconGlyph.STOP else IconGlyph.SEND,
                 enabled = state.turnActive || canSend,
                 containerColor = if (state.turnActive || canSend) ChatColors.Accent else ChatColors.ElevatedStrong,
@@ -768,6 +1251,12 @@ private fun SelectorOverlay(
     aboveComposer: Boolean,
 ) {
     val interaction = remember { MutableInteractionSource() }
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(state.popup) {
+        focusManager.clearFocus()
+        keyboard?.hide()
+    }
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -784,7 +1273,8 @@ private fun SelectorOverlay(
         Surface(
             modifier = Modifier
                 .align(if (aboveComposer) Alignment.BottomEnd else Alignment.Center)
-                .then(if (aboveComposer) Modifier.imePadding().navigationBarsPadding() else Modifier)
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(
                     end = ChatDimensions.ScreenPadding,
                     start = ChatDimensions.ScreenPadding,
@@ -816,7 +1306,11 @@ private fun EffortSelector(
     onEvent: (ChatUiEvent) -> Unit,
 ) {
     val model = state.models.firstOrNull { it.id == state.selectedModel }
-    Column(Modifier.padding(vertical = 12.dp)) {
+    Column(
+        Modifier
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 12.dp),
+    ) {
         SelectorRow(
             title = "Model",
             subtitle = model?.displayName ?: state.selectedModel ?: "Unavailable",
@@ -863,30 +1357,30 @@ private fun ModelSelector(
     state: MainUiState,
     onEvent: (ChatUiEvent) -> Unit,
 ) {
-    Column(Modifier.padding(vertical = 12.dp)) {
-        Text(
-            "Model",
-            color = ChatColors.Secondary,
-            style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
-        )
-        LazyColumn(Modifier.heightIn(max = 430.dp)) {
-            items(state.models, key = AgentModel::id) { model ->
-                SelectorRow(
-                    title = model.displayName,
-                    subtitle = model.description.takeIf(String::isNotBlank),
-                    selected = model.id == state.selectedModel,
-                    onClick = { onEvent(ChatUiEvent.SelectModel(model.id)) },
+    LazyColumn(Modifier.padding(vertical = 12.dp)) {
+        item("model-heading") {
+            Text(
+                "Model",
+                color = ChatColors.Secondary,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp),
+            )
+        }
+        items(state.models, key = AgentModel::id) { model ->
+            SelectorRow(
+                title = model.displayName,
+                subtitle = model.description.takeIf(String::isNotBlank),
+                selected = model.id == state.selectedModel,
+                onClick = { onEvent(ChatUiEvent.SelectModel(model.id)) },
+            )
+        }
+        if (state.models.isEmpty()) {
+            item("models-unavailable") {
+                Text(
+                    "Models load after sign-in",
+                    color = ChatColors.Secondary,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
                 )
-            }
-            if (state.models.isEmpty()) {
-                item("models-unavailable") {
-                    Text(
-                        "Models load after sign-in",
-                        color = ChatColors.Secondary,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                    )
-                }
             }
         }
     }
@@ -898,7 +1392,11 @@ private fun SpeedSelector(
     onEvent: (ChatUiEvent) -> Unit,
 ) {
     val model = selectedModel(state)
-    Column(Modifier.padding(vertical = 12.dp)) {
+    Column(
+        Modifier
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 12.dp),
+    ) {
         Text(
             "Speed",
             color = ChatColors.Secondary,
@@ -927,7 +1425,11 @@ private fun ApprovalSelector(
     state: MainUiState,
     onEvent: (ChatUiEvent) -> Unit,
 ) {
-    Column(Modifier.padding(vertical = 12.dp)) {
+    Column(
+        Modifier
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 12.dp),
+    ) {
         Text(
             "Approvals",
             color = ChatColors.Secondary,
@@ -958,7 +1460,11 @@ private fun TagSelector(
     val tags = remember(state.selectedCapabilities) {
         AgentCapability.entries.filter { it !in state.selectedCapabilities }
     }
-    Column(Modifier.padding(vertical = 12.dp)) {
+    Column(
+        Modifier
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 12.dp),
+    ) {
         Text(
             "Prompt tags",
             color = ChatColors.Secondary,
@@ -1067,7 +1573,6 @@ private fun SettingsScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
-            item("profile") { SettingsProfile() }
             item("model-settings") {
                 SettingsGroup("Codex") {
                     SettingsRow(
@@ -1085,7 +1590,7 @@ private fun SettingsScreen(
                     )
                     SettingsDivider()
                     SettingsRow(
-                        glyph = IconGlyph.SETTINGS,
+                        glyph = IconGlyph.SPEED,
                         title = "Default speed",
                         subtitle = selectedModel(state)?.serviceTiers
                             ?.firstOrNull { it.id == state.selectedServiceTier }?.name ?: "Default",
@@ -1110,7 +1615,7 @@ private fun SettingsScreen(
                     )
                     SettingsDivider()
                     SettingsRow(
-                        glyph = IconGlyph.SHIELD,
+                        glyph = IconGlyph.STORAGE,
                         title = "Manage storage permission",
                         subtitle = if (state.storagePermissionGranted) {
                             "All-files access enabled; workspace is the shell starting folder"
@@ -1133,7 +1638,7 @@ private fun SettingsScreen(
             item("integration-settings") {
                 SettingsGroup("Integrations") {
                     SettingsRow(
-                        glyph = IconGlyph.SETTINGS,
+                        glyph = IconGlyph.LINK,
                         title = "Integrations",
                         subtitle = when {
                             state.telegramConnected -> "Telegram connected"
@@ -1190,7 +1695,7 @@ private fun SettingsScreen(
                             )
                             SettingsDivider()
                             SettingsRow(
-                                glyph = IconGlyph.CLOSE,
+                                glyph = IconGlyph.BACK,
                                 title = "Cancel sign-in",
                                 onClick = { onEvent(ChatUiEvent.CancelAuthentication) },
                             )
@@ -1219,26 +1724,6 @@ private fun SettingsScreen(
 
 private fun selectedModel(state: MainUiState): AgentModel? =
     state.models.firstOrNull { it.id == state.selectedModel }
-
-@Composable
-private fun SettingsProfile() {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Box(
-            modifier = Modifier
-                .size(88.dp)
-                .background(ChatColors.ElevatedStrong, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("CM", fontSize = 26.sp, fontWeight = FontWeight.SemiBold)
-        }
-        Text("Codex Mobile", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        Text("Android settings", color = ChatColors.Secondary)
-    }
-}
 
 @Composable
 private fun SettingsGroup(
@@ -1358,12 +1843,17 @@ private enum class IconGlyph {
     STOP,
     CLOSE,
     SETTINGS,
+    SPEED,
     INTELLIGENCE,
     FOLDER,
+    STORAGE,
     SHIELD,
+    LINK,
     LOCK,
     INFO,
     LOGOUT,
+    PIN,
+    EDIT,
     TRASH,
 }
 
@@ -1451,13 +1941,9 @@ private fun AppIcon(
             }
 
             IconGlyph.SEND -> {
-                val path = Path().apply {
-                    moveTo(size.width * .16f, size.height * .20f)
-                    lineTo(size.width * .86f, size.height * .50f)
-                    lineTo(size.width * .16f, size.height * .80f)
-                    close()
-                }
-                drawPath(path, tint)
+                line(Offset(center.x, size.height * .78f), Offset(center.x, size.height * .22f))
+                line(Offset(size.width * .27f, size.height * .45f), Offset(center.x, size.height * .22f))
+                line(Offset(center.x, size.height * .22f), Offset(size.width * .73f, size.height * .45f))
             }
 
             IconGlyph.STOP -> drawRoundRect(
@@ -1492,6 +1978,19 @@ private fun AppIcon(
                 }
             }
 
+            IconGlyph.SPEED -> {
+                drawArc(
+                    tint,
+                    200f,
+                    140f,
+                    false,
+                    Offset(size.width * .16f, size.height * .20f),
+                    Size(size.width * .68f, size.height * .68f),
+                    style = Stroke(stroke, cap = StrokeCap.Round),
+                )
+                line(center, Offset(size.width * .70f, size.height * .36f))
+            }
+
             IconGlyph.INTELLIGENCE -> {
                 for (index in 0..4) {
                     val x = size.width * (.22f + index * .14f)
@@ -1513,6 +2012,26 @@ private fun AppIcon(
                 drawPath(path, tint, style = Stroke(stroke, cap = StrokeCap.Round))
             }
 
+            IconGlyph.STORAGE -> {
+                drawOval(
+                    color = tint,
+                    topLeft = Offset(size.width * .18f, size.height * .15f),
+                    size = Size(size.width * .64f, size.height * .25f),
+                    style = Stroke(stroke),
+                )
+                drawArc(
+                    color = tint,
+                    startAngle = 0f,
+                    sweepAngle = 180f,
+                    useCenter = false,
+                    topLeft = Offset(size.width * .18f, size.height * .49f),
+                    size = Size(size.width * .64f, size.height * .25f),
+                    style = Stroke(stroke, cap = StrokeCap.Round),
+                )
+                line(Offset(size.width * .18f, size.height * .28f), Offset(size.width * .18f, size.height * .62f))
+                line(Offset(size.width * .82f, size.height * .28f), Offset(size.width * .82f, size.height * .62f))
+            }
+
             IconGlyph.SHIELD -> {
                 val path = Path().apply {
                     moveTo(center.x, size.height * .12f)
@@ -1523,6 +2042,28 @@ private fun AppIcon(
                     close()
                 }
                 drawPath(path, tint, style = Stroke(stroke, cap = StrokeCap.Round))
+            }
+
+            IconGlyph.LINK -> {
+                drawArc(
+                    color = tint,
+                    startAngle = 120f,
+                    sweepAngle = 220f,
+                    useCenter = false,
+                    topLeft = Offset(size.width * .10f, size.height * .18f),
+                    size = Size(size.width * .48f, size.height * .48f),
+                    style = Stroke(stroke, cap = StrokeCap.Round),
+                )
+                drawArc(
+                    color = tint,
+                    startAngle = -60f,
+                    sweepAngle = 220f,
+                    useCenter = false,
+                    topLeft = Offset(size.width * .42f, size.height * .34f),
+                    size = Size(size.width * .48f, size.height * .48f),
+                    style = Stroke(stroke, cap = StrokeCap.Round),
+                )
+                line(Offset(size.width * .39f, size.height * .58f), Offset(size.width * .61f, size.height * .42f))
             }
 
             IconGlyph.LOCK -> {
@@ -1563,6 +2104,22 @@ private fun AppIcon(
                 line(Offset(size.width * .42f, center.y), Offset(size.width * .88f, center.y))
                 line(Offset(size.width * .70f, size.height * .33f), Offset(size.width * .88f, center.y))
                 line(Offset(size.width * .88f, center.y), Offset(size.width * .70f, size.height * .67f))
+            }
+
+            IconGlyph.PIN -> {
+                line(Offset(size.width * .30f, size.height * .20f), Offset(size.width * .70f, size.height * .20f))
+                line(Offset(size.width * .38f, size.height * .20f), Offset(size.width * .42f, size.height * .50f))
+                line(Offset(size.width * .62f, size.height * .20f), Offset(size.width * .58f, size.height * .50f))
+                line(Offset(size.width * .28f, size.height * .50f), Offset(size.width * .72f, size.height * .50f))
+                line(Offset(center.x, size.height * .50f), Offset(center.x, size.height * .86f))
+            }
+
+            IconGlyph.EDIT -> {
+                line(Offset(size.width * .20f, size.height * .72f), Offset(size.width * .68f, size.height * .24f))
+                line(Offset(size.width * .31f, size.height * .83f), Offset(size.width * .79f, size.height * .35f))
+                line(Offset(size.width * .68f, size.height * .24f), Offset(size.width * .79f, size.height * .35f))
+                line(Offset(size.width * .20f, size.height * .72f), Offset(size.width * .17f, size.height * .86f))
+                line(Offset(size.width * .17f, size.height * .86f), Offset(size.width * .31f, size.height * .83f))
             }
 
             IconGlyph.TRASH -> {

@@ -139,6 +139,31 @@ class ForegroundSessionControllerTest {
     }
 
     @Test
+    fun shellCommandStreamsRawOutputAndKeepsItsWorkspace(): Unit = runBlocking {
+        val fake = FakeAgentClient()
+        val controller = controller(fake)
+        try {
+            fake.emit(AgentEvent.Authenticated)
+            await { controller.state.value.authenticated }
+            val settings = AgentRuntimeSettings(workingDirectory = "/storage/emulated/0/Documents")
+
+            assertTrue(controller.submitShell("printf 'a\\nb\\n'", settings))
+            await { fake.shellCommands.size == 1 }
+            assertEquals(settings, fake.openSettings.single())
+            assertEquals("printf 'a\\nb\\n'", fake.shellCommands.single())
+
+            fake.emit(AgentEvent.ShellOutputDelta(SESSION, "a\nb\n"))
+            fake.emit(AgentEvent.ShellCommandCompleted(SESSION, 0))
+            fake.emit(AgentEvent.TurnCompleted(SESSION))
+            await { !controller.state.value.turnActive }
+            assertEquals("a\nb\n", controller.state.value.streamedText)
+            assertEquals(0, controller.state.value.shellExitCode)
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
     fun stopRequestedDuringLazySessionCreationCancelsTheStartedTurn(): Unit = runBlocking {
         val fake = FakeAgentClient().apply { blockOpenSession = true }
         val controller = controller(fake)
@@ -196,6 +221,10 @@ class ForegroundSessionControllerTest {
             assertTrue(controller.openConversation(SESSION))
             await { controller.state.value.sessionId == SESSION }
             assertEquals(CONVERSATION, controller.readConversation(SESSION))
+            controller.renameConversation(SESSION, "Renamed")
+            controller.deleteConversation(SESSION)
+            assertEquals(listOf(SESSION to "Renamed"), fake.renamedSessions)
+            assertEquals(listOf(SESSION), fake.deletedSessions)
         } finally {
             controller.close()
         }
@@ -299,6 +328,7 @@ class ForegroundSessionControllerTest {
         val finishSignOut = CompletableDeferred<Unit>()
         var blockSignOut = false
         val openSessionCount = AtomicInteger()
+        val openSettings = CopyOnWriteArrayList<AgentRuntimeSettings>()
         val openSessionStarted = CompletableDeferred<Unit>()
         val finishOpenSession = CompletableDeferred<Unit>()
         var blockOpenSession = false
@@ -308,6 +338,9 @@ class ForegroundSessionControllerTest {
         var blockSendTurn = false
         val cancelCount = AtomicInteger()
         val requests = CopyOnWriteArrayList<AgentTurnRequest>()
+        val shellCommands = CopyOnWriteArrayList<String>()
+        val renamedSessions = CopyOnWriteArrayList<Pair<SessionId, String>>()
+        val deletedSessions = CopyOnWriteArrayList<SessionId>()
         @Volatile var closed = false
 
         override suspend fun authenticate() {
@@ -326,6 +359,7 @@ class ForegroundSessionControllerTest {
 
         override suspend fun openSession(previous: SessionId?, settings: AgentRuntimeSettings): SessionId {
             openSessionCount.incrementAndGet()
+            openSettings += settings
             openSessionStarted.complete(Unit)
             if (blockOpenSession) finishOpenSession.await()
             eventChannel.send(AgentEvent.SessionOpened(SESSION))
@@ -343,9 +377,21 @@ class ForegroundSessionControllerTest {
             if (blockSendTurn) finishSendTurn.await()
         }
 
+        override suspend fun runShellCommand(sessionId: SessionId, command: String) {
+            shellCommands += command
+        }
+
         override suspend fun listSessions(): List<AgentConversationSummary> = listOf(SUMMARY)
 
         override suspend fun readSession(sessionId: SessionId): AgentConversation = CONVERSATION
+
+        override suspend fun renameSession(sessionId: SessionId, name: String) {
+            renamedSessions += sessionId to name
+        }
+
+        override suspend fun deleteSession(sessionId: SessionId) {
+            deletedSessions += sessionId
+        }
 
         override suspend fun cancelTurn(sessionId: SessionId) {
             cancelCount.incrementAndGet()

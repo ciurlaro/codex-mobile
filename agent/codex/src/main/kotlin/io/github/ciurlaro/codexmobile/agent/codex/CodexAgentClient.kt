@@ -70,6 +70,7 @@ class CodexAgentClient(
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
     private val pendingApprovalRequests = ConcurrentHashMap<String, JsonElement>()
     private val workItems = ConcurrentHashMap<String, Pair<SessionId, AgentWorkActivity>>()
+    private val userShellItems = ConcurrentHashMap.newKeySet<String>()
     private val openedSessions = ConcurrentHashMap.newKeySet<SessionId>()
     private val turnStateLock = Any()
     private val activeTurns = mutableMapOf<SessionId, String>()
@@ -191,6 +192,7 @@ class CodexAgentClient(
             terminalDuringStart.clear()
             cancellingTurns.clear()
         }
+        userShellItems.clear()
         openedSessions.clear()
     }
 
@@ -245,6 +247,32 @@ class CodexAgentClient(
         return AgentConversation(conversationSummary(thread), messages)
     }
 
+    override suspend fun renameSession(sessionId: SessionId, name: String) {
+        val snapshot = name.trim()
+        require(snapshot.isNotEmpty()) { "Conversation name must not be blank" }
+        request(
+            "thread/name/set",
+            buildJsonObject {
+                put("threadId", sessionId.value)
+                put("name", snapshot)
+            },
+        )
+    }
+
+    override suspend fun deleteSession(sessionId: SessionId) {
+        request(
+            "thread/delete",
+            buildJsonObject { put("threadId", sessionId.value) },
+        )
+        openedSessions -= sessionId
+        synchronized(turnStateLock) {
+            activeTurns -= sessionId
+            startingTurns -= sessionId
+            terminalDuringStart -= sessionId
+            cancellingTurns -= sessionId
+        }
+    }
+
     override suspend fun openSession(previous: SessionId?, settings: AgentRuntimeSettings): SessionId {
         val params = buildJsonObject {
             previous?.let { put("threadId", it.value) }
@@ -252,6 +280,7 @@ class CodexAgentClient(
             put("approvalsReviewer", settings.approvalPreset.approvalsReviewer)
             put("sandbox", "danger-full-access")
             settings.serviceTier?.let { put("serviceTier", it) }
+            settings.workingDirectory?.let { put("cwd", it) }
             if (previous == null) put("ephemeral", false)
             put(
                 "developerInstructions",
@@ -352,6 +381,33 @@ class CodexAgentClient(
         }
     }
 
+    override suspend fun runShellCommand(sessionId: SessionId, command: String) {
+        val snapshot = command.trim()
+        require(snapshot.isNotEmpty()) { "Shell command must not be blank" }
+        require(snapshot.length <= MAX_PROMPT_CHARS) { "Shell command is too large" }
+        check(sessionId in openedSessions) { "Session is not open" }
+        synchronized(turnStateLock) {
+            check(sessionId !in startingTurns && !activeTurns.containsKey(sessionId)) {
+                "A turn is already active for this session"
+            }
+            startingTurns += sessionId
+        }
+        try {
+            request(
+                "thread/shellCommand",
+                buildJsonObject {
+                    put("threadId", sessionId.value)
+                    put("command", snapshot)
+                },
+            )
+        } finally {
+            synchronized(turnStateLock) {
+                startingTurns -= sessionId
+                terminalDuringStart.remove(sessionId)
+            }
+        }
+    }
+
     override suspend fun cancelTurn(sessionId: SessionId) {
         val turnId = synchronized(turnStateLock) {
             val active = activeTurns[sessionId] ?: error("No active turn for this session")
@@ -394,6 +450,7 @@ class CodexAgentClient(
         pending.clear()
         pendingApprovalRequests.clear()
         workItems.clear()
+        userShellItems.clear()
         openedSessions.clear()
         stopProcess(process)
         eventsChannel.close()
@@ -668,9 +725,24 @@ class CodexAgentClient(
                 )
             }
 
+            "item/commandExecution/outputDelta" -> {
+                val itemId = params.requiredString("itemId")
+                if (itemId in userShellItems) {
+                    emitBlocking(
+                        AgentEvent.ShellOutputDelta(
+                            sessionId = SessionId(params.requiredString("threadId")),
+                            text = params.requiredString("delta"),
+                        ),
+                    )
+                }
+            }
+
             "item/started" -> updateItemActivity(params, started = true)
 
-            "item/completed" -> updateItemActivity(params, started = false)
+            "item/completed" -> {
+                completeUserShellItem(params)
+                updateItemActivity(params, started = false)
+            }
 
             "turn/completed" -> {
                 val sessionId = SessionId(params.requiredString("threadId"))
@@ -748,6 +820,12 @@ class CodexAgentClient(
         val sessionId = params.optionalString("threadId")?.let(::SessionId) ?: return
         val item = params["item"] as? JsonObject ?: return
         val itemId = item.optionalString("id") ?: return
+        if (started && item.optionalString("source") == "userShell") {
+            userShellItems += itemId
+            params.optionalString("turnId")?.let { turnId ->
+                synchronized(turnStateLock) { activeTurns[sessionId] = turnId }
+            }
+        }
         val activity = when (item.optionalString("type")) {
             "commandExecution" -> AgentWorkActivity.RUNNING_COMMAND
             "fileChange" -> AgentWorkActivity.WRITING_FILES
@@ -761,6 +839,20 @@ class CodexAgentClient(
                 AgentEvent.WorkActivityChanged(
                     sessionId,
                     workItems.values.lastOrNull { it.first == sessionId }?.second,
+                ),
+            )
+        }
+    }
+
+    private fun completeUserShellItem(params: JsonObject) {
+        val sessionId = params.optionalString("threadId")?.let(::SessionId) ?: return
+        val item = params["item"] as? JsonObject ?: return
+        val itemId = item.optionalString("id") ?: return
+        if (userShellItems.remove(itemId)) {
+            emitBlocking(
+                AgentEvent.ShellCommandCompleted(
+                    sessionId = sessionId,
+                    exitCode = item["exitCode"]?.jsonPrimitive?.longOrNull?.toInt(),
                 ),
             )
         }
@@ -795,6 +887,7 @@ class CodexAgentClient(
         pending.clear()
         pendingApprovalRequests.clear()
         workItems.clear()
+        userShellItems.clear()
         openedSessions.clear()
         stopProcess(failed)
         eventsChannel.send(AgentEvent.Failure(null, code, message, recoverable))
