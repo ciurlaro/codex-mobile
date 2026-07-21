@@ -18,6 +18,14 @@ interface AgentClient : AutoCloseable {
     suspend fun readSession(sessionId: SessionId): AgentConversation =
         throw UnsupportedOperationException("Conversation history is unavailable")
 
+    suspend fun renameSession(sessionId: SessionId, name: String) {
+        throw UnsupportedOperationException("Conversation rename is unavailable")
+    }
+
+    suspend fun deleteSession(sessionId: SessionId) {
+        throw UnsupportedOperationException("Conversation deletion is unavailable")
+    }
+
     suspend fun openSession(
         previous: SessionId? = null,
         settings: AgentRuntimeSettings = AgentRuntimeSettings(),
@@ -27,6 +35,10 @@ interface AgentClient : AutoCloseable {
 
     suspend fun sendTurn(sessionId: SessionId, request: AgentTurnRequest) {
         sendPrompt(sessionId, request.prompt)
+    }
+
+    suspend fun runShellCommand(sessionId: SessionId, command: String) {
+        throw UnsupportedOperationException("Shell commands are unavailable")
     }
 
     suspend fun cancelTurn(sessionId: SessionId)
@@ -68,6 +80,7 @@ enum class AgentApprovalPreset(
 data class AgentRuntimeSettings(
     val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.NEVER,
     val serviceTier: String? = null,
+    val workingDirectory: String? = null,
 )
 
 data class AgentConversationSummary(
@@ -143,6 +156,16 @@ sealed interface AgentEvent {
         val sessionId: SessionId,
         val text: String,
         val itemId: String? = null,
+    ) : AgentEvent
+
+    data class ShellOutputDelta(
+        val sessionId: SessionId,
+        val text: String,
+    ) : AgentEvent
+
+    data class ShellCommandCompleted(
+        val sessionId: SessionId,
+        val exitCode: Int?,
     ) : AgentEvent
 
     data class ApprovalRequested(

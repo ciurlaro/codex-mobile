@@ -15,6 +15,7 @@ import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentModel
+import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthEvent
@@ -39,6 +40,7 @@ data class MainUiState(
     val sessionId: SessionId? = null,
     val authenticated: Boolean = false,
     val conversations: List<AgentConversationSummary> = emptyList(),
+    val pinnedConversationIds: Set<String> = emptySet(),
     val messages: List<ChatMessage> = emptyList(),
     val models: List<AgentModel> = emptyList(),
     val draft: String = "",
@@ -53,6 +55,7 @@ data class MainUiState(
     val historySearch: String = "",
     val conversationLoading: Boolean = false,
     val signInUrl: String? = null,
+    val authenticationBusy: Boolean = false,
     val turnActive: Boolean = false,
     val storagePermissionGranted: Boolean = false,
     val workspacePath: String? = null,
@@ -79,6 +82,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             selectedModel = chatPreferences.getString(LAST_MODEL, null),
             selectedEffort = chatPreferences.getString(LAST_EFFORT, null),
             selectedServiceTier = chatPreferences.getString(LAST_SPEED, null),
+            pinnedConversationIds = chatPreferences
+                .getStringSet(PINNED_CONVERSATIONS, emptySet())
+                .orEmpty()
+                .toSet(),
             approvalPreset = chatPreferences.getString(APPROVAL_POLICY, null)
                 ?.let { saved -> AgentApprovalPreset.entries.firstOrNull { it.name == saved } }
                 ?: AgentApprovalPreset.NEVER,
@@ -138,8 +145,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             graph.backgroundFailure.collect { failure ->
                 failure?.let { message ->
+                    setAuthenticationHandoffPending(false)
                     mutableState.update {
-                        it.copy(status = message, backgroundActive = false)
+                        it.copy(status = message, backgroundActive = false, authenticationBusy = false)
                     }
                 }
             }
@@ -159,12 +167,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        if (authenticationHandoffPending()) {
+            mutableState.update {
+                it.copy(status = "Completing sign-in…", authenticationBusy = true)
+            }
+            authenticate()
+        }
         refreshTelegram()
     }
 
     fun authenticate() {
+        setAuthenticationHandoffPending(true)
+        if (
+            serviceController != null &&
+            (!mutableState.value.backgroundActive || serviceController?.state?.value?.terminal == true)
+        ) {
+            releaseServiceBinding()
+        }
         mutableState.update {
-            it.copy(status = "Starting protected background work…", signInUrl = null)
+            it.copy(
+                status = "Starting protected background work…",
+                signInUrl = null,
+                authenticationBusy = true,
+            )
         }
         serviceController?.let {
             it.authenticate()
@@ -178,23 +203,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             bindService(Context.BIND_AUTO_CREATE)
         } catch (_: Exception) {
             graph.revokeForegroundStart(authorization)
+            setAuthenticationHandoffPending(false)
             mutableState.update {
                 it.copy(
                     status = "Android could not start background work; keep Codex Mobile visible and try again",
                     backgroundActive = false,
+                    authenticationBusy = false,
                 )
             }
         }
     }
 
     fun cancelAuthentication() {
-        mutableState.update { it.copy(status = "Cancelling sign-in…") }
+        setAuthenticationHandoffPending(false)
+        mutableState.update { it.copy(status = "Cancelling sign-in…", authenticationBusy = false) }
         serviceController?.cancelAuthentication()
             ?: mutableState.update { it.copy(status = "Ready to sign in") }
     }
 
     fun browserUnavailable() {
-        mutableState.update { it.copy(status = "No browser can open the ChatGPT sign-in page") }
+        setAuthenticationHandoffPending(false)
+        mutableState.update {
+            it.copy(status = "No browser can open the ChatGPT sign-in page", authenticationBusy = false)
+        }
     }
 
     fun submit(prompt: String) {
@@ -204,6 +235,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendMessage() {
         val before = mutableState.value
+        val shellCommand = before.draft.shellCommandOrNull()
         if (before.draft.isBlank() && before.selectedCapabilities.isEmpty()) {
             mutableState.update { it.copy(status = "Enter a message or add a prompt tag") }
             return
@@ -229,19 +261,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             capabilities = before.selectedCapabilities,
             workingDirectory = workingDirectory,
         )
-        if (!controller.submit(request)) return
+        val submitted = if (shellCommand != null) {
+            controller.submitShell(
+                shellCommand,
+                AgentRuntimeSettings(
+                    approvalPreset = before.approvalPreset,
+                    serviceTier = before.selectedServiceTier,
+                    workingDirectory = workingDirectory,
+                ),
+            )
+        } else {
+            controller.submit(request)
+        }
+        if (!submitted) return
 
         val assistantId = "stream-$clientMessageId"
         activeAssistantMessageId = assistantId
         mutableState.update {
             it.copy(
-                status = "Thinking",
+                status = if (shellCommand == null) "Thinking" else "Running command",
                 messages = it.messages + listOf(
                     ChatMessage(
                         id = "user-$clientMessageId",
                         role = AgentMessageRole.USER,
                         text = request.prompt,
-                        capabilities = request.capabilities,
+                        capabilities = if (shellCommand == null) request.capabilities else emptySet(),
                         model = request.model,
                         effort = request.effort,
                     ),
@@ -250,6 +294,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         role = AgentMessageRole.CODEX,
                         text = "",
                         streaming = true,
+                        shellCommand = shellCommand,
                     ),
                 ),
                 draft = "",
@@ -300,7 +345,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectConversation(sessionId: SessionId) {
         val controller = serviceController ?: return
-        if (!controller.openConversation(sessionId)) return
+        val current = mutableState.value
+        if (
+            !controller.openConversation(
+                sessionId,
+                AgentRuntimeSettings(
+                    approvalPreset = current.approvalPreset,
+                    serviceTier = current.selectedServiceTier,
+                    workingDirectory = graph.platform.activeWorkspacePath(),
+                ),
+            )
+        ) return
         pendingConversationId = sessionId
         selectionRestoredSessionId = null
         activeAssistantMessageId = null
@@ -333,6 +388,93 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         it.copy(status = "Conversation history could not be loaded", conversationLoading = false)
                     }
                 }
+            }
+        }
+    }
+
+    fun togglePinConversation(sessionId: SessionId) {
+        val current = mutableState.value
+        if (current.conversations.none { it.sessionId == sessionId }) return
+        val updated = current.pinnedConversationIds.toMutableSet().apply {
+            if (!add(sessionId.value)) remove(sessionId.value)
+        }.toSet()
+        mutableState.update { it.copy(pinnedConversationIds = updated) }
+        persistPinnedConversations(updated)
+    }
+
+    fun renameConversation(sessionId: SessionId, title: String) {
+        val snapshot = title.trim().take(MAX_CONVERSATION_TITLE_LENGTH)
+        if (snapshot.isEmpty()) {
+            mutableState.update { it.copy(status = "Conversation name cannot be empty") }
+            return
+        }
+        val controller = serviceController ?: return
+        viewModelScope.launch {
+            try {
+                controller.renameConversation(sessionId, snapshot)
+                mutableState.update { current ->
+                    current.copy(
+                        status = "Conversation renamed",
+                        conversations = current.conversations.map { conversation ->
+                            if (conversation.sessionId == sessionId) conversation.copy(title = snapshot)
+                            else conversation
+                        },
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                mutableState.update { it.copy(status = "Conversation could not be renamed") }
+            }
+        }
+    }
+
+    fun deleteConversation(sessionId: SessionId) {
+        val controller = serviceController ?: return
+        val current = mutableState.value
+        if (current.turnActive && current.sessionId == sessionId) {
+            mutableState.update { it.copy(status = "Stop the current response before deleting this chat") }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                controller.deleteConversation(sessionId)
+                val updatedPins = mutableState.value.pinnedConversationIds - sessionId.value
+                persistPinnedConversations(updatedPins)
+                if (mutableState.value.sessionId == sessionId) {
+                    controller.freshChat()
+                    pendingConversationId = null
+                    selectionRestoredSessionId = null
+                    activeAssistantMessageId = null
+                    mutableState.update {
+                        it.copy(
+                            status = "Conversation deleted",
+                            streamedText = "",
+                            sessionId = null,
+                            conversations = it.conversations.filterNot { item -> item.sessionId == sessionId },
+                            pinnedConversationIds = updatedPins,
+                            messages = emptyList(),
+                            draft = "",
+                            selectedCapabilities = emptySet(),
+                            drawerOpen = false,
+                            popup = ChatPopup.NONE,
+                            historySearch = "",
+                            conversationLoading = false,
+                        )
+                    }
+                } else {
+                    mutableState.update {
+                        it.copy(
+                            status = "Conversation deleted",
+                            conversations = it.conversations.filterNot { item -> item.sessionId == sessionId },
+                            pinnedConversationIds = updatedPins,
+                        )
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                mutableState.update { it.copy(status = "Conversation could not be deleted") }
             }
         }
     }
@@ -509,6 +651,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun stopBackgroundWork() {
+        setAuthenticationHandoffPending(false)
         runCatching { appContext.startService(CodexForegroundService.stopIntent(appContext)) }
             .onFailure {
                 mutableState.update { state -> state.copy(status = "Background work could not be stopped") }
@@ -516,6 +659,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun signOut() {
+        setAuthenticationHandoffPending(false)
         mutableState.update {
             it.copy(status = "Signing out…", signInUrl = null)
         }
@@ -529,6 +673,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun eraseAppData() {
+        setAuthenticationHandoffPending(false)
         mutableState.update { it.copy(status = "Erasing Codex Mobile data…") }
         val accepted = appContext.getSystemService(ActivityManager::class.java)
             .clearApplicationUserData()
@@ -589,32 +734,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     internal suspend fun reduce(event: AgentEvent) {
         when (event) {
-            is AgentEvent.AuthenticationRequired -> mutableState.update {
-                it.copy(
-                    status = "Finish sign-in in your browser",
-                    signInUrl = event.signInUrl,
-                )
+            is AgentEvent.AuthenticationRequired -> {
+                setAuthenticationHandoffPending(true)
+                mutableState.update {
+                    it.copy(
+                        status = "Finish sign-in in your browser",
+                        signInUrl = event.signInUrl,
+                        authenticationBusy = false,
+                    )
+                }
             }
 
             AgentEvent.Authenticated -> {
+                setAuthenticationHandoffPending(false)
                 mutableState.update {
                     it.copy(
                         status = "Signed in",
                         authenticated = true,
                         signInUrl = null,
+                        authenticationBusy = false,
                     )
                 }
             }
 
-            is AgentEvent.SessionOpened -> mutableState.update {
-                it.copy(
-                    status = "Ready",
-                    authenticated = true,
-                    sessionId = event.sessionId,
-                    selectedModel = event.model ?: it.selectedModel,
-                    selectedEffort = event.effort ?: it.selectedEffort,
-                    selectedServiceTier = event.serviceTier ?: it.selectedServiceTier,
-                )
+            is AgentEvent.SessionOpened -> {
+                setAuthenticationHandoffPending(false)
+                mutableState.update {
+                    it.copy(
+                        status = "Ready",
+                        authenticated = true,
+                        authenticationBusy = false,
+                        sessionId = event.sessionId,
+                        selectedModel = event.model ?: it.selectedModel,
+                        selectedEffort = event.effort ?: it.selectedEffort,
+                        selectedServiceTier = event.serviceTier ?: it.selectedServiceTier,
+                    )
+                }
             }
 
             is AgentEvent.TextDelta -> mutableState.update {
@@ -622,16 +777,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 else it
             }
 
+            is AgentEvent.ShellOutputDelta -> mutableState.update {
+                if (it.sessionId == event.sessionId) it.copy(streamedText = it.streamedText + event.text)
+                else it
+            }
+
+            is AgentEvent.ShellCommandCompleted -> Unit
+
             is AgentEvent.TurnCompleted -> mutableState.update {
                 it.copy(status = "Ready", turnActive = false)
             }
 
             is AgentEvent.Failure -> {
+                setAuthenticationHandoffPending(false)
                 mutableState.update {
                     it.copy(
                         status = event.message,
                         sessionId = if (event.sessionId == null) null else it.sessionId,
                         signInUrl = null,
+                        authenticationBusy = false,
                         turnActive = false,
                         diagnosticCode = event.code,
                     )
@@ -702,6 +866,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .apply()
     }
 
+    private fun persistPinnedConversations(ids: Set<String>) {
+        chatPreferences.edit().putStringSet(PINNED_CONVERSATIONS, ids.toSet()).apply()
+    }
+
     private fun refreshTelegram() {
         if (!graph.platform.telegramAvailable() || telegramAuthSession != null || telegramJob?.isActive == true) {
             return
@@ -755,6 +923,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         session: ForegroundSessionState,
         notificationVisible: Boolean,
     ) {
+        when {
+            session.authenticated -> setAuthenticationHandoffPending(false)
+            session.signInUrl != null -> setAuthenticationHandoffPending(true)
+            session.terminal || session.diagnosticCode != null -> setAuthenticationHandoffPending(false)
+        }
         val before = mutableState.value
         val finishedTurn = before.turnActive && !session.turnActive
         val assistantId = activeAssistantMessageId
@@ -767,12 +940,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (assistantId != null) {
                 messages = messages.map { message ->
                     if (message.id == assistantId) {
-                        message.copy(text = session.streamedText, streaming = session.turnActive)
+                        message.copy(
+                            text = session.streamedText,
+                            streaming = session.turnActive,
+                            exitCode = session.shellExitCode,
+                        )
                     } else {
                         message
                     }
                 }
-                if (finishedTurn) messages = messages.filterNot { it.id == assistantId && it.text.isEmpty() }
+                if (finishedTurn) {
+                    messages = messages.filterNot {
+                        it.id == assistantId && it.text.isEmpty() && it.shellCommand == null
+                    }
+                }
             }
             current.copy(
                 status = session.status,
@@ -788,6 +969,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     session.activeServiceTier ?: current.selectedServiceTier
                 } else current.selectedServiceTier,
                 signInUrl = session.signInUrl,
+                authenticationBusy = current.authenticationBusy &&
+                    !session.authenticated &&
+                    session.signInUrl == null &&
+                    session.diagnosticCode == null &&
+                    !session.terminal,
                 codexApproval = session.pendingApproval,
                 turnActive = session.turnActive,
                 backgroundActive = !session.terminal,
@@ -821,6 +1007,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun serviceEnded() {
+        val recoverAuthentication = authenticationHandoffPending()
         serviceStateJob?.cancel()
         serviceStateJob = null
         serviceController = null
@@ -832,14 +1019,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         chatDataRequested = false
         mutableState.update {
             it.copy(
-                status = if (it.backgroundActive) "Background work ended; start again to continue" else it.status,
+                status = when {
+                    recoverAuthentication -> "Completing sign-in…"
+                    it.backgroundActive -> "Background work ended"
+                    else -> it.status
+                },
                 sessionId = null,
                 authenticated = false,
                 signInUrl = null,
+                authenticationBusy = recoverAuthentication,
                 turnActive = false,
                 backgroundActive = false,
             )
         }
+        if (recoverAuthentication) {
+            viewModelScope.launch {
+                delay(AUTHENTICATION_RECOVERY_DELAY_MILLIS)
+                if (serviceController == null && authenticationHandoffPending()) authenticate()
+            }
+        }
+    }
+
+    private fun authenticationHandoffPending(): Boolean =
+        chatPreferences.getBoolean(AUTHENTICATION_HANDOFF_PENDING, false)
+
+    @Suppress("ApplySharedPref")
+    private fun setAuthenticationHandoffPending(pending: Boolean) {
+        chatPreferences.edit().putBoolean(AUTHENTICATION_HANDOFF_PENDING, pending).commit()
     }
 
     private companion object {
@@ -848,6 +1054,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         const val LAST_EFFORT = "last-effort"
         const val LAST_SPEED = "last-speed"
         const val APPROVAL_POLICY = "approval-policy"
+        const val PINNED_CONVERSATIONS = "pinned-conversations"
+        const val AUTHENTICATION_HANDOFF_PENDING = "authentication-handoff-pending"
+        const val MAX_CONVERSATION_TITLE_LENGTH = 80
         const val EXISTING_SERVICE_BIND_TIMEOUT_MILLIS = 1_000L
+        const val AUTHENTICATION_RECOVERY_DELAY_MILLIS = 150L
     }
 }

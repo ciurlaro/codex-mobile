@@ -5,6 +5,7 @@ import io.github.ciurlaro.codexmobile.core.AgentConversation
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentModel
+import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
 import io.github.ciurlaro.codexmobile.core.SessionId
@@ -23,6 +24,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 internal data class ForegroundSessionState(
     val status: String = "Starting background session…",
     val streamedText: String = "",
+    val shellExitCode: Int? = null,
     val sessionId: SessionId? = null,
     val authenticated: Boolean = false,
     val activeModel: String? = null,
@@ -88,6 +90,38 @@ internal class ForegroundSessionController(
             mutableState.update { it.copy(status = "Enter a prompt first") }
             return false
         }
+        if (!beginTurn("Codex is responding…")) return false
+        launchVisibleFailure(resetTurn = true) {
+            val sessionId = state.value.sessionId ?: agentClient.openSession(
+                settings = AgentRuntimeSettings(
+                    approvalPreset = request.approvalPreset,
+                    serviceTier = request.serviceTier,
+                    workingDirectory = request.workingDirectory,
+                ),
+            )
+            agentClient.sendTurn(sessionId, request)
+            turnStartCompleted.set(true)
+            if (cancellationStarted.get()) dispatchCancellation(sessionId)
+        }
+        return true
+    }
+
+    fun submitShell(command: String, settings: AgentRuntimeSettings): Boolean {
+        if (command.isBlank()) {
+            mutableState.update { it.copy(status = "Enter a shell command after !") }
+            return false
+        }
+        if (!beginTurn("Running command…")) return false
+        launchVisibleFailure(resetTurn = true) {
+            val sessionId = agentClient.openSession(state.value.sessionId, settings)
+            agentClient.runShellCommand(sessionId, command)
+            turnStartCompleted.set(true)
+            if (cancellationStarted.get()) dispatchCancellation(sessionId)
+        }
+        return true
+    }
+
+    private fun beginTurn(status: String): Boolean {
         if (!state.value.authenticated) {
             mutableState.update { it.copy(status = "Sign in before sending a message") }
             return false
@@ -96,21 +130,15 @@ internal class ForegroundSessionController(
         cancellationStarted.set(false)
         cancellationDispatched.set(false)
         turnStartCompleted.set(false)
-
         mutableState.update {
             it.copy(
-                status = "Codex is responding…",
+                status = status,
                 streamedText = "",
+                shellExitCode = null,
                 turnActive = true,
                 attentionRequired = false,
                 diagnosticCode = null,
             )
-        }
-        launchVisibleFailure(resetTurn = true) {
-            val sessionId = state.value.sessionId ?: agentClient.openSession()
-            agentClient.sendTurn(sessionId, request)
-            turnStartCompleted.set(true)
-            if (cancellationStarted.get()) dispatchCancellation(sessionId)
         }
         return true
     }
@@ -142,12 +170,15 @@ internal class ForegroundSessionController(
         return true
     }
 
-    fun openConversation(sessionId: SessionId): Boolean {
+    fun openConversation(
+        sessionId: SessionId,
+        settings: AgentRuntimeSettings = AgentRuntimeSettings(),
+    ): Boolean {
         if (!state.value.authenticated || state.value.turnActive || closed.get()) return false
         mutableState.update {
             it.copy(status = "Loading conversation…", streamedText = "", diagnosticCode = null)
         }
-        launchVisibleFailure { agentClient.openSession(sessionId) }
+        launchVisibleFailure { agentClient.openSession(sessionId, settings) }
         return true
     }
 
@@ -157,6 +188,12 @@ internal class ForegroundSessionController(
 
     suspend fun readConversation(sessionId: SessionId): AgentConversation =
         agentClient.readSession(sessionId)
+
+    suspend fun renameConversation(sessionId: SessionId, title: String) =
+        agentClient.renameSession(sessionId, title)
+
+    suspend fun deleteConversation(sessionId: SessionId) =
+        agentClient.deleteSession(sessionId)
 
     fun cancelTurn() {
         if (
@@ -270,17 +307,12 @@ internal class ForegroundSessionController(
                 )
             }
 
-            is AgentEvent.TextDelta -> mutableState.update {
-                if (it.sessionId != event.sessionId || it.streamedText.endsWith(TRUNCATION_MARKER)) {
-                    it
-                } else {
-                    val remaining = MAX_STREAMED_TEXT_CHARS - it.streamedText.length
-                    if (event.text.length <= remaining) {
-                        it.copy(streamedText = it.streamedText + event.text)
-                    } else {
-                        it.copy(streamedText = it.streamedText + event.text.take(remaining) + TRUNCATION_MARKER)
-                    }
-                }
+            is AgentEvent.TextDelta -> appendStreamedText(event.sessionId, event.text)
+
+            is AgentEvent.ShellOutputDelta -> appendStreamedText(event.sessionId, event.text)
+
+            is AgentEvent.ShellCommandCompleted -> mutableState.update {
+                if (it.sessionId == event.sessionId) it.copy(shellExitCode = event.exitCode) else it
             }
 
             is AgentEvent.TurnCompleted -> {
@@ -335,6 +367,21 @@ internal class ForegroundSessionController(
 
             is AgentEvent.WorkActivityChanged -> mutableState.update {
                 if (it.sessionId == event.sessionId) it.copy(workActivity = event.activity) else it
+            }
+        }
+    }
+
+    private fun appendStreamedText(sessionId: SessionId, text: String) {
+        mutableState.update {
+            if (it.sessionId != sessionId || it.streamedText.endsWith(TRUNCATION_MARKER)) {
+                it
+            } else {
+                val remaining = MAX_STREAMED_TEXT_CHARS - it.streamedText.length
+                if (text.length <= remaining) {
+                    it.copy(streamedText = it.streamedText + text)
+                } else {
+                    it.copy(streamedText = it.streamedText + text.take(remaining) + TRUNCATION_MARKER)
+                }
             }
         }
     }

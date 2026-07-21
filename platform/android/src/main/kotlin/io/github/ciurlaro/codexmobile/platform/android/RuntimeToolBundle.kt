@@ -4,6 +4,7 @@ import android.content.Context
 import android.system.Os
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.file.Files
 import java.util.zip.ZipInputStream
 
 internal class RuntimeToolBundle(private val context: Context) {
@@ -101,7 +102,7 @@ internal class RuntimeToolBundle(private val context: Context) {
             check(target.isFile && target.canExecute()) { "Bundled command is missing: $name" }
             val alias = File(binDirectory, name)
             if (runCatching { alias.canonicalFile == target.canonicalFile }.getOrDefault(false)) return@forEach
-            check(!alias.exists() || alias.delete()) { "Unable to replace command alias: $name" }
+            Files.deleteIfExists(alias.toPath())
             Os.symlink(target.absolutePath, alias.absolutePath)
         }
     }
