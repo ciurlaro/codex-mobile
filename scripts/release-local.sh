@@ -27,6 +27,15 @@ else
 fi
 
 android_home=${ANDROID_HOME:-"$HOME/Library/Android/sdk"}
+if [[ -n ${ANDROID_NDK_HOME:-} ]]; then
+    android_ndk_home=$ANDROID_NDK_HOME
+elif [[ -n ${ANDROID_NDK_ROOT:-} ]]; then
+    android_ndk_home=$ANDROID_NDK_ROOT
+elif [[ -x $android_home/ndk/29.0.14206865/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android26-clang ]]; then
+    android_ndk_home=$android_home/ndk/29.0.14206865
+else
+    android_ndk_home=/opt/homebrew/share/android-ndk
+fi
 store_file=${CODEX_MOBILE_RELEASE_STORE_FILE:-"$HOME/Library/Application Support/Codex Mobile/Signing/codex-mobile-release.jks"}
 key_alias=${CODEX_MOBILE_RELEASE_KEY_ALIAS:-codex-mobile-release}
 keychain_account=${CODEX_MOBILE_RELEASE_KEYCHAIN_ACCOUNT:-$(id -un)}
@@ -36,6 +45,8 @@ keychain_service=${CODEX_MOBILE_RELEASE_KEYCHAIN_SERVICE:-io.github.ciurlaro.cod
 [[ -f $android_home/platforms/android-37/android.jar ||
    -f $android_home/platforms/android-37.0/android.jar ]] ||
     die "Android platform 37 was not found under $android_home"
+[[ -x $android_ndk_home/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android26-clang ]] ||
+    die "Android NDK was not found under $android_ndk_home"
 [[ -f $store_file ]] || die "release keystore was not found at $store_file"
 
 store_password=${CODEX_MOBILE_RELEASE_STORE_PASSWORD:-}
@@ -50,6 +61,7 @@ key_password=${CODEX_MOBILE_RELEASE_KEY_PASSWORD:-$store_password}
 
 export JAVA_HOME=$java_home
 export ANDROID_HOME=$android_home
+export ANDROID_NDK_HOME=$android_ndk_home
 export CODEX_MOBILE_RELEASE_STORE_FILE=$store_file
 export CODEX_MOBILE_RELEASE_STORE_PASSWORD=$store_password
 export CODEX_MOBILE_RELEASE_KEY_ALIAS=$key_alias

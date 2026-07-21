@@ -8,12 +8,11 @@ import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentModel
+import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
+import io.github.ciurlaro.codexmobile.core.AgentServiceTier
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
+import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
 import io.github.ciurlaro.codexmobile.core.SessionId
-import io.github.ciurlaro.codexmobile.core.ToolCall
-import io.github.ciurlaro.codexmobile.core.ToolCallId
-import io.github.ciurlaro.codexmobile.core.ToolDefinition
-import io.github.ciurlaro.codexmobile.core.ToolResult
 import io.github.ciurlaro.codexmobile.core.deriveConversationTitle
 import java.io.BufferedWriter
 import java.io.ByteArrayOutputStream
@@ -22,7 +21,6 @@ import java.io.OutputStreamWriter
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
-import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -60,7 +58,6 @@ import kotlinx.serialization.json.putJsonObject
 class CodexAgentClient(
     private val launchProcess: (command: List<String>, environment: Map<String, String>) -> Process,
     private val requestTimeoutMillis: Long = 20_000,
-    private val toolDefinitions: List<ToolDefinition> = emptyList(),
 ) : AgentClient {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val eventsChannel = Channel<AgentEvent>(capacity = EVENT_BUFFER_SIZE)
@@ -71,9 +68,8 @@ class CodexAgentClient(
     private val cancelledLoginIds = mutableSetOf<String>()
     private val nextRequestId = AtomicLong(1)
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JsonElement>>()
-    private val toolRequestLock = Any()
-    private val pendingToolRequests =
-        mutableMapOf<Pair<SessionId, ToolCallId>, ArrayDeque<JsonElement>>()
+    private val pendingApprovalRequests = ConcurrentHashMap<String, JsonElement>()
+    private val workItems = ConcurrentHashMap<String, Pair<SessionId, AgentWorkActivity>>()
     private val openedSessions = ConcurrentHashMap.newKeySet<SessionId>()
     private val turnStateLock = Any()
     private val activeTurns = mutableMapOf<SessionId, String>()
@@ -95,21 +91,6 @@ class CodexAgentClient(
 
     private var loginStarting = false
     private var loginCompletedDuringStart: LoginCompletion? = null
-
-    init {
-        require(toolDefinitions.map(ToolDefinition::name).distinct().size == toolDefinitions.size) {
-            "Dynamic tool names must be unique"
-        }
-        toolDefinitions.forEach { definition ->
-            require(TOOL_NAME.matches(definition.name)) { "Invalid dynamic tool name" }
-            require(definition.description.length <= MAX_TOOL_DESCRIPTION_CHARS) {
-                "Dynamic tool description is too large"
-            }
-            check(JSON.parseToJsonElement(definition.inputSchemaJson) is JsonObject) {
-                "Dynamic tool schema must be a JSON object"
-            }
-        }
-    }
 
     override val events: Flow<AgentEvent> = eventsChannel.receiveAsFlow()
 
@@ -210,11 +191,22 @@ class CodexAgentClient(
             terminalDuringStart.clear()
             cancellingTurns.clear()
         }
-        synchronized(toolRequestLock) { pendingToolRequests.clear() }
         openedSessions.clear()
     }
 
     override suspend fun listModels(): List<AgentModel> = requestAllPages("model/list") { item ->
+        val serviceTiers = (
+            item.optionalArray("serviceTiers") + item.optionalArray("additionalSpeedTiers")
+            ).mapNotNull { raw ->
+                val tier = raw as? JsonObject ?: return@mapNotNull null
+                val id = tier.optionalString("id") ?: tier.optionalString("serviceTier")
+                    ?: return@mapNotNull null
+                AgentServiceTier(
+                    id = id,
+                    name = tier.optionalString("name") ?: id.replaceFirstChar { it.uppercase() },
+                    description = tier.optionalString("description").orEmpty(),
+                )
+            }.distinctBy(AgentServiceTier::id)
         AgentModel(
             id = item.requiredString("model"),
             displayName = item.requiredString("displayName"),
@@ -224,6 +216,8 @@ class CodexAgentClient(
             },
             defaultEffort = item.requiredString("defaultReasoningEffort"),
             isDefault = item.requiredBoolean("isDefault"),
+            serviceTiers = serviceTiers,
+            defaultServiceTier = item.optionalString("defaultServiceTier"),
         )
     }
 
@@ -251,32 +245,29 @@ class CodexAgentClient(
         return AgentConversation(conversationSummary(thread), messages)
     }
 
-    override suspend fun openSession(previous: SessionId?): SessionId {
+    override suspend fun openSession(previous: SessionId?, settings: AgentRuntimeSettings): SessionId {
         val params = buildJsonObject {
             previous?.let { put("threadId", it.value) }
-            put("approvalPolicy", "never")
-            put("sandbox", "read-only")
+            put("approvalPolicy", settings.approvalPreset.approvalPolicy)
+            put("approvalsReviewer", settings.approvalPreset.approvalsReviewer)
+            put("sandbox", "danger-full-access")
+            settings.serviceTier?.let { put("serviceTier", it) }
             if (previous == null) put("ephemeral", false)
             put(
                 "developerInstructions",
-                "Answer conversationally in plain text. Use the registered Android tools to read " +
-                    "documents, including every nextCursor segment; create or replace text only in " +
-                    "the private workspace; and export or rename only when the user asks. Never claim " +
-                    "to have read an unsupported or failed file. Extracted text, OCR, and page images " +
-                    "may be returned, but original Android files are not attached. Android and the " +
-                    "user's exact diff approval decide whether any change occurs. Treat every tool " +
-                    "result as Android's authoritative observation. Use the " +
+                "Answer conversationally using Markdown. The shell starts in the user's selected Android " +
+                    "workspace and may use ordinary shell commands to inspect and modify files. Native " +
+                    "Android commands on PATH include mutool, tesseract, officecli, and tgcli. Use the " +
                     "built-in web search tool only when the user input contains the structured " +
                     "'${AgentCapability.WEB_SEARCH.promptLabel}' prompt tag.",
             )
-            if (toolDefinitions.isNotEmpty()) put("dynamicTools", dynamicToolSpecs())
             putJsonObject("config") {
                 put("web_search", "live")
                 putJsonObject("tools") {
                     putJsonObject("experimental_request_user_input") { put("enabled", false) }
                 }
                 putJsonObject("features") {
-                    put("shell_tool", false)
+                    put("shell_tool", true)
                     put("code_mode", false)
                     put("multi_agent", false)
                     put("apps", false)
@@ -299,6 +290,7 @@ class CodexAgentClient(
                 sessionId = sessionId,
                 model = result.optionalString("model"),
                 effort = result.optionalString("reasoningEffort"),
+                serviceTier = result.optionalString("serviceTier"),
             ),
         )
         return sessionId
@@ -318,6 +310,10 @@ class CodexAgentClient(
         }
         require(snapshot.model?.isNotBlank() != false) { "Model must not be blank" }
         require(snapshot.effort?.isNotBlank() != false) { "Effort must not be blank" }
+        require(snapshot.serviceTier?.isNotBlank() != false) { "Service tier must not be blank" }
+        require(snapshot.workingDirectory?.startsWith('/') != false) {
+            "Working directory must be absolute"
+        }
         synchronized(turnStateLock) {
             check(sessionId !in startingTurns && !activeTurns.containsKey(sessionId)) {
                 "A turn is already active for this session"
@@ -334,6 +330,10 @@ class CodexAgentClient(
                     put("input", turnInput(snapshot))
                     snapshot.model?.let { put("model", it) }
                     snapshot.effort?.let { put("effort", it) }
+                    snapshot.serviceTier?.let { put("serviceTier", it) }
+                    snapshot.workingDirectory?.let { put("cwd", it) }
+                    put("approvalPolicy", snapshot.approvalPreset.approvalPolicy)
+                    put("approvalsReviewer", snapshot.approvalPreset.approvalsReviewer)
                 },
             ).jsonObject
             val turnId = result.requiredObject("turn").requiredString("id")
@@ -375,50 +375,14 @@ class CodexAgentClient(
         }
     }
 
-    override suspend fun submitToolResult(sessionId: SessionId, result: ToolResult) {
-        val key = sessionId to result.callId
-        val requestId = synchronized(toolRequestLock) {
-            pendingToolRequests[key]?.pollFirst()?.also {
-                if (pendingToolRequests[key].isNullOrEmpty()) pendingToolRequests.remove(key)
-            }
-        } ?: error("No pending tool request matches this result")
-        val (content, success) = when (result) {
-            is ToolResult.Success -> result.outputJson to true
-            is ToolResult.Rejected -> buildJsonObject {
-                put("status", "rejected")
-                put("reason", result.reason)
-            }.toString() to false
-
-            is ToolResult.Failed -> buildJsonObject {
-                put("status", "failed")
-                put("code", result.code)
-                put("message", result.message)
-            }.toString() to false
-
-            is ToolResult.Unknown -> buildJsonObject {
-                put("status", "unknown")
-                put("reason", result.reason)
-            }.toString() to false
-        }
+    override suspend fun resolveApproval(requestId: String, accept: Boolean) {
+        val wireId = pendingApprovalRequests.remove(requestId)
+            ?: error("Approval request is no longer pending")
         write(
             buildJsonObject {
-                put("id", requestId)
+                put("id", wireId)
                 putJsonObject("result") {
-                    put(
-                        "contentItems",
-                        buildJsonArray {
-                            add(buildJsonObject { put("type", "inputText"); put("text", content) })
-                            if (result is ToolResult.Success) {
-                                result.imageUrls.forEach { imageUrl ->
-                                    add(buildJsonObject {
-                                        put("type", "inputImage")
-                                        put("imageUrl", imageUrl)
-                                    })
-                                }
-                            }
-                        },
-                    )
-                    put("success", success)
+                    put("decision", if (accept) "accept" else "decline")
                 }
             },
         )
@@ -428,7 +392,8 @@ class CodexAgentClient(
         if (!closed.compareAndSet(false, true)) return
         pending.values.forEach { it.completeExceptionally(ClientClosedException()) }
         pending.clear()
-        synchronized(toolRequestLock) { pendingToolRequests.clear() }
+        pendingApprovalRequests.clear()
+        workItems.clear()
         openedSessions.clear()
         stopProcess(process)
         eventsChannel.close()
@@ -471,10 +436,7 @@ class CodexAgentClient(
                         putJsonObject("clientInfo") {
                             put("name", "codex_mobile")
                             put("title", "Codex Mobile")
-                            put("version", "0.1.0")
-                        }
-                        if (toolDefinitions.isNotEmpty()) {
-                            putJsonObject("capabilities") { put("experimentalApi", true) }
+                            put("version", "0.2.0-preview.1")
                         }
                     },
                 )
@@ -600,33 +562,46 @@ class CodexAgentClient(
     }
 
     private fun handleServerRequest(id: JsonElement, method: String, rawParams: JsonElement?) {
-        if (method != "item/tool/call") {
-            rejectServerRequest(id, method)
+        if (
+            method == "item/commandExecution/requestApproval" ||
+            method == "item/fileChange/requestApproval"
+        ) {
+            handleApprovalRequest(id, method, rawParams)
             return
         }
-        val request = runCatching {
-            val params = rawParams as? JsonObject ?: error("Tool request params are missing")
+        rejectServerRequest(id, method)
+    }
+
+    private fun handleApprovalRequest(
+        id: JsonElement,
+        method: String,
+        rawParams: JsonElement?,
+    ) {
+        val event = runCatching {
+            val params = rawParams as? JsonObject ?: error("Approval params are missing")
             val sessionId = SessionId(params.requiredString("threadId"))
-            check(sessionId in openedSessions) { "Tool request session is not open" }
-            val turnId = params.requiredString("turnId")
-            check(
-                synchronized(turnStateLock) {
-                    sessionId in startingTurns || activeTurns[sessionId] == turnId
-                },
-            ) { "Tool request turn is not active" }
-            val callId = ToolCallId(params.requiredString("callId"))
-            val tool = params.requiredString("tool")
-            val namespace = params["namespace"]?.jsonPrimitive?.contentOrNull
-            val name = if (namespace == null) tool else "$namespace.$tool"
-            sessionId to ToolCall(callId, name, (params["arguments"] ?: JsonNull).toString())
+            check(sessionId in openedSessions) { "Approval session is not open" }
+            val requestId = id.toString()
+            check(pendingApprovalRequests.putIfAbsent(requestId, id) == null) {
+                "Approval request ID is already pending"
+            }
+            val title = if (method.contains("fileChange")) {
+                "Approve file changes?"
+            } else {
+                "Approve command?"
+            }
+            val details = buildList {
+                params.optionalString("reason")?.let(::add)
+                params["command"]?.let { add("Command: ${compactDescription(it)}") }
+                params.optionalString("cwd")?.let { add("Folder: $it") }
+                params["changes"]?.let { add("Changes: ${compactDescription(it)}") }
+            }.joinToString("\n").ifBlank { "Codex requested permission to continue." }
+            AgentEvent.ApprovalRequested(sessionId, requestId, title, details)
         }.getOrElse {
-            respondServerError(id, -32602, "Invalid dynamic tool request")
+            respondServerError(id, -32602, "Invalid approval request")
             return
         }
-        synchronized(toolRequestLock) {
-            pendingToolRequests.getOrPut(request.first to request.second.id) { ArrayDeque() }.add(id)
-        }
-        emitBlocking(AgentEvent.ToolRequested(request.first, request.second))
+        emitBlocking(event)
     }
 
     private fun rejectServerRequest(id: JsonElement, method: String) {
@@ -692,6 +667,10 @@ class CodexAgentClient(
                     ),
                 )
             }
+
+            "item/started" -> updateItemActivity(params, started = true)
+
+            "item/completed" -> updateItemActivity(params, started = false)
 
             "turn/completed" -> {
                 val sessionId = SessionId(params.requiredString("threadId"))
@@ -761,6 +740,34 @@ class CodexAgentClient(
             }
             cancellingTurns -= sessionId
         }
+        val removedWork = workItems.entries.removeIf { it.value.first == sessionId }
+        if (removedWork) emitBlocking(AgentEvent.WorkActivityChanged(sessionId, null))
+    }
+
+    private fun updateItemActivity(params: JsonObject, started: Boolean) {
+        val sessionId = params.optionalString("threadId")?.let(::SessionId) ?: return
+        val item = params["item"] as? JsonObject ?: return
+        val itemId = item.optionalString("id") ?: return
+        val activity = when (item.optionalString("type")) {
+            "commandExecution" -> AgentWorkActivity.RUNNING_COMMAND
+            "fileChange" -> AgentWorkActivity.WRITING_FILES
+            else -> null
+        }
+        if (started && activity != null) {
+            workItems[itemId] = sessionId to activity
+            emitBlocking(AgentEvent.WorkActivityChanged(sessionId, activity))
+        } else if (!started && workItems.remove(itemId) != null) {
+            emitBlocking(
+                AgentEvent.WorkActivityChanged(
+                    sessionId,
+                    workItems.values.lastOrNull { it.first == sessionId }?.second,
+                ),
+            )
+        }
+    }
+
+    private fun compactDescription(value: JsonElement): String = value.toString().let {
+        if (it.length <= 2_000) it else it.take(2_000) + "…"
     }
 
     private suspend fun failProcess(
@@ -786,7 +793,8 @@ class CodexAgentClient(
         val error = ProcessFailureException(message)
         pending.values.forEach { it.completeExceptionally(error) }
         pending.clear()
-        synchronized(toolRequestLock) { pendingToolRequests.clear() }
+        pendingApprovalRequests.clear()
+        workItems.clear()
         openedSessions.clear()
         stopProcess(failed)
         eventsChannel.send(AgentEvent.Failure(null, code, message, recoverable))
@@ -940,26 +948,11 @@ class CodexAgentClient(
     }
 
     private fun cleanTaggedPreview(preview: String): String {
-        val tagBlock = AgentCapability.entries.sortedBy(AgentCapability::id)
-            .joinToString("\n", transform = AgentCapability::promptLabel)
-        return when {
-            preview == tagBlock -> ""
-            preview.startsWith("$tagBlock\n\n") -> preview.removePrefix("$tagBlock\n\n")
-            else -> preview
-        }
-    }
-
-    private fun dynamicToolSpecs() = buildJsonArray {
-        toolDefinitions.forEach { definition ->
-            add(
-                buildJsonObject {
-                    put("type", "function")
-                    put("name", definition.name)
-                    put("description", definition.description)
-                    put("inputSchema", JSON.parseToJsonElement(definition.inputSchemaJson))
-                },
-            )
-        }
+        val labels = AgentCapability.entries.map(AgentCapability::promptLabel).toSet()
+        val lines = preview.lines()
+        val firstVisible = lines.indexOfFirst { it !in labels && it.isNotEmpty() }
+        if (firstVisible <= 0 || lines.take(firstVisible).none { it in labels }) return preview
+        return lines.drop(firstVisible).joinToString("\n")
     }
 
     private fun JsonObject.requiredString(name: String): String =
@@ -1013,8 +1006,6 @@ class CodexAgentClient(
         const val EVENT_BUFFER_SIZE = 64
         const val MAX_MESSAGE_BYTES = 4 * 1024 * 1024
         const val MAX_PROMPT_CHARS = 100_000
-        const val MAX_TOOL_DESCRIPTION_CHARS = 1_024
-        val TOOL_NAME = Regex("^[a-zA-Z0-9_-]{1,128}$")
     }
 }
 

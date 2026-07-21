@@ -4,8 +4,5 @@
         <activity
             android:name="io.github.ciurlaro.codexmobile.app.VisualScenarioActivity"
             android:exported="false" />
-        <activity
-            android:name="io.github.ciurlaro.codexmobile.app.Step03ApprovalTestActivity"
-            android:exported="false" />
     </application>
 </manifest>

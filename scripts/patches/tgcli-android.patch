@@ -1,0 +1,92 @@
+diff --git a/telegram-client.js b/telegram-client.js
+index e571260..98212cc 100644
+--- a/telegram-client.js
++++ b/telegram-client.js
+@@ -587,6 +587,12 @@ class TelegramClient {
+   }
+ 
+   async _askQuestion(prompt) {
++    if (process.env.TGCLI_AUTH_BRIDGE === '1') {
++      const kind = prompt.toLowerCase().includes('password') ? 'password' : 'code';
++      process.stdout.write(`${JSON.stringify({ type: 'auth_prompt', prompt: kind })}\n`);
++      prompt = '';
++    }
++
+     const rl = readline.createInterface({
+       input: process.stdin,
+       output: process.stdout,
+diff --git a/core/sqlite-compat.js b/core/sqlite-compat.js
+new file mode 100644
+index 0000000..f1bb47e
+--- /dev/null
++++ b/core/sqlite-compat.js
+@@ -0,0 +1,48 @@
++import { DatabaseSync } from 'node:sqlite';
++
++class SqliteDatabase {
++  constructor(filename) {
++    this.database = new DatabaseSync(filename);
++    this.open = true;
++  }
++
++  prepare(sql) {
++    return this.database.prepare(sql);
++  }
++
++  exec(sql) {
++    return this.database.exec(sql);
++  }
++
++  pragma(statement) {
++    return this.database.exec(`PRAGMA ${statement}`);
++  }
++
++  transaction(operation) {
++    return (...args) => {
++      this.database.exec('BEGIN IMMEDIATE');
++      try {
++        const result = operation(...args);
++        this.database.exec('COMMIT');
++        return result;
++      } catch (error) {
++        try {
++          this.database.exec('ROLLBACK');
++        } catch {
++          // Preserve the original operation failure.
++        }
++        throw error;
++      }
++    };
++  }
++
++  close() {
++    if (!this.open) return;
++    this.database.close();
++    this.open = false;
++  }
++}
++
++export default function Database(filename) {
++  return new SqliteDatabase(filename);
++}
+diff --git a/message-sync-service.js b/message-sync-service.js
+index ac313a1..4f64c16 100644
+--- a/message-sync-service.js
++++ b/message-sync-service.js
+@@ -1,4 +1,4 @@
+-import Database from 'better-sqlite3';
++import Database from './core/sqlite-compat.js';
+ import path from 'path';
+ import fs from 'fs';
+ import { setTimeout as delay } from 'timers/promises';
+diff --git a/node_modules/@mtcute/node/sqlite/driver.js b/node_modules/@mtcute/node/sqlite/driver.js
+index 50d0914..c45342f 100644
+--- a/node_modules/@mtcute/node/sqlite/driver.js
++++ b/node_modules/@mtcute/node/sqlite/driver.js
+@@ -1,5 +1,5 @@
+ import { BaseSqliteStorageDriver } from "@mtcute/core";
+-import sqlite3 from "better-sqlite3";
++import sqlite3 from "../../../../core/sqlite-compat.js";
+ class SqliteStorageDriver extends BaseSqliteStorageDriver {
+   constructor(filename = ":memory:", params) {
+     super();

@@ -6,9 +6,8 @@ import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentModel
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
+import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
 import io.github.ciurlaro.codexmobile.core.SessionId
-import io.github.ciurlaro.codexmobile.core.ToolCallId
-import io.github.ciurlaro.codexmobile.core.ToolResult
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -28,9 +27,11 @@ internal data class ForegroundSessionState(
     val authenticated: Boolean = false,
     val activeModel: String? = null,
     val activeEffort: String? = null,
+    val activeServiceTier: String? = null,
     val signInUrl: String? = null,
     val turnActive: Boolean = false,
-    val pendingTool: AgentEvent.ToolRequested? = null,
+    val pendingApproval: AgentEvent.ApprovalRequested? = null,
+    val workActivity: AgentWorkActivity? = null,
     val attentionRequired: Boolean = false,
     val diagnosticCode: String? = null,
     val terminal: Boolean = false,
@@ -48,7 +49,6 @@ internal class ForegroundSessionController(
     private val closed = AtomicBoolean(false)
     private val lock = Any()
     private var authenticationStarted = false
-    private var toolClaim: ToolClaim? = null
     private var eventJob: Job = scope.launch { agentClient.events.collect(::reduce) }
 
     val state: StateFlow<ForegroundSessionState> = mutableState.asStateFlow()
@@ -115,6 +115,19 @@ internal class ForegroundSessionController(
         return true
     }
 
+    fun resolveApproval(requestId: String, accept: Boolean) {
+        val pending = state.value.pendingApproval ?: return
+        if (pending.requestId != requestId || closed.get()) return
+        mutableState.update {
+            it.copy(
+                status = if (accept) "Continuing…" else "Declining…",
+                pendingApproval = null,
+                attentionRequired = false,
+            )
+        }
+        launchVisibleFailure { agentClient.resolveApproval(requestId, accept) }
+    }
+
     fun freshChat(): Boolean {
         if (!state.value.authenticated || state.value.turnActive || closed.get()) return false
         mutableState.update {
@@ -156,62 +169,11 @@ internal class ForegroundSessionController(
         if (turnStartCompleted.get()) state.value.sessionId?.let(::dispatchCancellation)
     }
 
-    fun claimTool(owner: String, callId: ToolCallId): AgentEvent.ToolRequested? = synchronized(lock) {
-        val claim = toolClaim ?: return@synchronized null
-        if (closed.get() || claim.event.call.id != callId || claim.owner != null) return@synchronized null
-        claim.owner = owner
-        claim.event
-    }
-
-    fun beginTool(owner: String, callId: ToolCallId): Boolean = synchronized(lock) {
-        val claim = toolClaim ?: return@synchronized false
-        if (
-            closed.get() || claim.owner != owner || claim.event.call.id != callId || claim.dispatchStarted
-        ) {
-            return@synchronized false
-        }
-        claim.dispatchStarted = true
-        true
-    }
-
-    fun submitToolResult(owner: String, event: AgentEvent.ToolRequested, result: ToolResult): Boolean {
-        val accepted = synchronized(lock) {
-            val claim = toolClaim
-            if (
-                closed.get() || claim?.owner != owner || !claim.dispatchStarted ||
-                claim.event.sessionId != event.sessionId || claim.event.call.id != event.call.id
-            ) {
-                false
-            } else {
-                toolClaim = null
-                true
-            }
-        }
-        if (!accepted) return false
-        mutableState.update { it.copy(pendingTool = null, status = "Codex is responding…") }
-        launchVisibleFailure { agentClient.submitToolResult(event.sessionId, result) }
-        return true
-    }
-
-    fun releaseOwner(owner: String, reason: String) {
-        val claim = synchronized(lock) {
-            toolClaim?.takeIf { it.owner == owner }?.also { toolClaim = null }
-        } ?: return
-        mutableState.update { it.copy(pendingTool = null) }
-        val result = if (claim.dispatchStarted) {
-            ToolResult.Failed(claim.event.call.id, "tool_interrupted", reason)
-        } else {
-            ToolResult.Rejected(claim.event.call.id, reason)
-        }
-        launchVisibleFailure { agentClient.submitToolResult(claim.event.sessionId, result) }
-    }
-
     suspend fun stopAndClose(reason: String, signOut: Boolean = false): Boolean {
         if (!closed.compareAndSet(false, true)) return false
         val before = state.value
         synchronized(lock) {
             authenticationStarted = false
-            toolClaim = null
         }
         turnClaimed.set(false)
         turnStartCompleted.set(false)
@@ -224,7 +186,8 @@ internal class ForegroundSessionController(
                 authenticated = false,
                 signInUrl = null,
                 turnActive = false,
-                pendingTool = null,
+                pendingApproval = null,
+                workActivity = null,
                 diagnosticCode = null,
             )
         }
@@ -251,7 +214,6 @@ internal class ForegroundSessionController(
         if (!closed.compareAndSet(false, true)) return
         synchronized(lock) {
             authenticationStarted = false
-            toolClaim = null
         }
         turnClaimed.set(false)
         turnStartCompleted.set(false)
@@ -264,7 +226,8 @@ internal class ForegroundSessionController(
                 authenticated = false,
                 signInUrl = null,
                 turnActive = false,
-                pendingTool = null,
+                pendingApproval = null,
+                workActivity = null,
                 diagnosticCode = null,
                 terminal = true,
             )
@@ -302,6 +265,7 @@ internal class ForegroundSessionController(
                     authenticated = true,
                     activeModel = event.model ?: it.activeModel,
                     activeEffort = event.effort ?: it.activeEffort,
+                    activeServiceTier = event.serviceTier ?: it.activeServiceTier,
                     diagnosticCode = null,
                 )
             }
@@ -340,7 +304,6 @@ internal class ForegroundSessionController(
                 cancellationDispatched.set(false)
                 synchronized(lock) {
                     authenticationStarted = false
-                    toolClaim = null
                 }
                 mutableState.update {
                     it.copy(
@@ -348,34 +311,30 @@ internal class ForegroundSessionController(
                         sessionId = if (event.sessionId == null) null else it.sessionId,
                         signInUrl = null,
                         turnActive = false,
-                        pendingTool = null,
+                        pendingApproval = null,
+                        workActivity = null,
                         attentionRequired = true,
                         diagnosticCode = event.code,
                     )
                 }
             }
 
-            is AgentEvent.ToolRequested -> receiveTool(event)
-        }
-    }
-
-    private fun receiveTool(event: AgentEvent.ToolRequested) {
-        val accepted = synchronized(lock) {
-            if (toolClaim == null) {
-                toolClaim = ToolClaim(event)
-                true
-            } else {
-                false
+            is AgentEvent.ApprovalRequested -> {
+                if (mutableState.value.pendingApproval == null) {
+                    mutableState.update {
+                        it.copy(
+                            status = "Approval needed",
+                            pendingApproval = event,
+                            attentionRequired = true,
+                        )
+                    }
+                } else {
+                    launchVisibleFailure { agentClient.resolveApproval(event.requestId, false) }
+                }
             }
-        }
-        if (accepted) {
-            mutableState.update { it.copy(status = "Open Codex Mobile to review Android access", pendingTool = event) }
-        } else {
-            launchVisibleFailure {
-                agentClient.submitToolResult(
-                    event.sessionId,
-                    ToolResult.Rejected(event.call.id, "Another Android request is already active"),
-                )
+
+            is AgentEvent.WorkActivityChanged -> mutableState.update {
+                if (it.sessionId == event.sessionId) it.copy(workActivity = event.activity) else it
             }
         }
     }
@@ -416,12 +375,6 @@ internal class ForegroundSessionController(
             }
         }
     }
-
-    private data class ToolClaim(
-        val event: AgentEvent.ToolRequested,
-        var owner: String? = null,
-        var dispatchStarted: Boolean = false,
-    )
 
     private companion object {
         const val MAX_STREAMED_TEXT_CHARS = 256 * 1024

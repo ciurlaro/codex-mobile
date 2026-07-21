@@ -1,6 +1,6 @@
 # Step 06 — Android MVP readiness
 
-**Status:** Complete
+**Status:** Complete for the historical bounded-SAF MVP; superseded storage assumptions are not current release evidence.
 
 ## Goal
 

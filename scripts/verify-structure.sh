@@ -37,8 +37,17 @@ required=(
     app/android/gradle.lockfile
     app/android/proguard-rules.pro
     app/android/src/main/res/xml/network_security_config.xml
+    app/android/src/main/assets/native-tools-NOTICE.txt
+    platform/android/src/main/assets/codex/skills/local-documents/SKILL.md
+    platform/android/src/main/assets/codex/skills/tgcli/SKILL.md
     scripts/generate-sbom.py
     scripts/install-phone.sh
+    scripts/native/officecli-launcher.c
+    scripts/native/tgcli-launcher.c
+    scripts/native/tgcli-package-lock.json
+    scripts/patches/tesseract-android.patch
+    scripts/patches/tgcli-android.patch
+    scripts/prepare-native-tools.sh
     scripts/release-local.sh
     scripts/verify-release.sh
     scripts/verify-reproducible-release.sh
@@ -58,6 +67,12 @@ if grep -R -n 'ProcessHost' core; then
     exit 1
 fi
 
+if grep -R -n -E 'DocumentReader|WorkspaceExport|WorkspaceTools|ToolExecutor|DeviceTool|read_document|view_document_pages' \
+    core/src/main agent/codex/src/main platform/android/src/main app/android/src/main; then
+    echo "obsolete dynamic document/file tool code must not return" >&2
+    exit 1
+fi
+
 if grep -R -n 'org.jetbrains.kotlin.android' --include='*.kts' --include='*.toml' .; then
     echo "AGP built-in Kotlin is used for Android modules" >&2
     exit 1
@@ -68,7 +83,7 @@ for step in docs/roadmap/0[1-6]-*.md; do
     grep -q '^## Test matrix' "$step" || { echo "test matrix missing: $step" >&2; exit 1; }
 done
 
-if grep -R -n -E '@Ignore|TODO[[:space:]]*\(' \
+if grep -R -n -E --include='*.kt' '@Ignore|TODO[[:space:]]*\(' \
     core/src agent/codex/src platform/android/src app/android/src; then
     echo "roadmap gate tests must not be ignored or left as TODO" >&2
     exit 1

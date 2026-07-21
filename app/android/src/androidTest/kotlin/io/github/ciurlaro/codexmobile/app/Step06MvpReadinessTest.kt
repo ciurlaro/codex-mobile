@@ -58,7 +58,10 @@ class Step06MvpReadinessTest {
                 "android.permission.FOREGROUND_SERVICE",
                 "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
                 "android.permission.INTERNET",
+                "android.permission.MANAGE_EXTERNAL_STORAGE",
                 "android.permission.POST_NOTIFICATIONS",
+                "android.permission.READ_EXTERNAL_STORAGE",
+                "android.permission.WRITE_EXTERNAL_STORAGE",
             ),
             packageInfo.requestedPermissions.orEmpty().filter { it.startsWith("android.permission.") }.toSet(),
         )
@@ -134,11 +137,11 @@ class Step06MvpReadinessTest {
             val settingsTitle = findNode("Settings")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) assertTrue(settingsTitle.isHeading)
             val folderLabel = if (
-                (context.applicationContext as CodexMobileApplication).graph.platform.currentScopeId() == null
+                (context.applicationContext as CodexMobileApplication).graph.platform.currentWorkspacePath() == null
             ) {
-                "Select document folder"
+                "Select workspace"
             } else {
-                "Change document folder"
+                "Change workspace"
             }
             val selectFolder = findButton(folderLabel)
             val signIn = findButton("Sign in with ChatGPT")
@@ -149,7 +152,7 @@ class Step06MvpReadinessTest {
             assertTrue(findButton("Privacy details").performAction(AccessibilityNodeInfo.ACTION_CLICK))
             instrumentation.waitForIdleSync()
             assertWindowContains("sent to OpenAI")
-            assertWindowContains("without deleting")
+            assertWindowContains("starting folder")
             findButton("Close")
         } finally {
             scenario.close()
@@ -189,11 +192,11 @@ class Step06MvpReadinessTest {
             scenario.onActivity { activity -> assertTrue(activity.resources.configuration.fontScale >= 1.9f) }
             val minimumPixels = 48f * context.resources.displayMetrics.density - 1f
             val folderLabel = if (
-                (context.applicationContext as CodexMobileApplication).graph.platform.currentScopeId() == null
+                (context.applicationContext as CodexMobileApplication).graph.platform.currentWorkspacePath() == null
             ) {
-                "Select document folder"
+                "Select workspace"
             } else {
-                "Change document folder"
+                "Change workspace"
             }
             listOf(
                 folderLabel,

@@ -1,6 +1,6 @@
 # Step 02 — Read-only Android authority
 
-**Status:** Complete
+**Status:** Superseded historical experiment. The current architecture uses all-files access and Codex's shell.
 
 ## Question
 

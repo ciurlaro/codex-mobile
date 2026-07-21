@@ -1,6 +1,6 @@
 # Step 03 — Controlled mutation
 
-**Status:** Complete
+**Status:** Superseded historical experiment. The current architecture uses Codex's native approval policy.
 
 ## Question
 

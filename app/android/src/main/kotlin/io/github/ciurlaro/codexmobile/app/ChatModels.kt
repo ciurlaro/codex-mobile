@@ -1,14 +1,14 @@
 package io.github.ciurlaro.codexmobile.app
 
 import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
-import io.github.ciurlaro.codexmobile.core.MutationRecordId
 import io.github.ciurlaro.codexmobile.core.SessionId
 
 enum class AppDestination { CHAT, SETTINGS }
 
-enum class ChatPopup { NONE, TAGS, EFFORT, MODEL }
+enum class ChatPopup { NONE, TAGS, EFFORT, MODEL, SPEED, APPROVAL }
 
 sealed interface ChatUiEvent {
     data object OpenHistory : ChatUiEvent
@@ -18,6 +18,8 @@ sealed interface ChatUiEvent {
     data object CloseSettings : ChatUiEvent
     data object ShowEffort : ChatUiEvent
     data object ShowModels : ChatUiEvent
+    data object ShowSpeed : ChatUiEvent
+    data object ShowApproval : ChatUiEvent
     data object ShowTags : ChatUiEvent
     data object DismissPopup : ChatUiEvent
     data object Send : ChatUiEvent
@@ -28,20 +30,25 @@ sealed interface ChatUiEvent {
     data object StopBackground : ChatUiEvent
     data object SignOut : ChatUiEvent
     data object ShowPrivacy : ChatUiEvent
+    data object ShowIntegrations : ChatUiEvent
+    data object DisconnectTelegram : ChatUiEvent
+    data object CancelTelegramAuthentication : ChatUiEvent
     data object ShowEraseConfirmation : ChatUiEvent
     data object SelectScope : ChatUiEvent
-    data object SelectMutationScope : ChatUiEvent
-    data object SelectExportScope : ChatUiEvent
-    data object RevokeScope : ChatUiEvent
-    data object RevokeExportScope : ChatUiEvent
+    data object ManageStorage : ChatUiEvent
+    data object ClearWorkspace : ChatUiEvent
     data class SearchHistory(val query: String) : ChatUiEvent
     data class SelectConversation(val id: SessionId) : ChatUiEvent
     data class UpdateDraft(val text: String) : ChatUiEvent
     data class SelectModel(val id: String) : ChatUiEvent
     data class SelectEffort(val effort: String) : ChatUiEvent
+    data class SelectSpeed(val tier: String?) : ChatUiEvent
+    data class SelectApproval(val preset: AgentApprovalPreset) : ChatUiEvent
+    data class ConnectTelegram(val phoneNumber: String) : ChatUiEvent
+    data class SubmitTelegramAuthentication(val value: String) : ChatUiEvent
+    data class ResolveCodexApproval(val requestId: String, val accept: Boolean) : ChatUiEvent
     data class AddCapability(val capability: AgentCapability) : ChatUiEvent
     data class RemoveCapability(val capability: AgentCapability) : ChatUiEvent
-    data class AcknowledgeMutation(val id: MutationRecordId) : ChatUiEvent
 }
 
 data class ChatMessage(
@@ -70,15 +77,4 @@ internal fun effortLabel(value: String): String = when (value.lowercase()) {
     "xhigh" -> "Extra High"
     "ultra" -> "Ultra"
     else -> value.replaceFirstChar { it.uppercase() }
-}
-
-internal fun selectedTagQuery(text: String): String? {
-    val token = text.substringAfterLast(' ', text).substringAfterLast('\n')
-    return token.takeIf { it.startsWith('@') }?.drop(1)
-}
-
-internal fun removeSelectedTagQuery(text: String): String {
-    val at = text.indexOfLast { it == '@' }
-    if (at < 0 || text.substring(at).any(Char::isWhitespace)) return text
-    return text.removeRange(at, text.length).trimEnd()
 }
