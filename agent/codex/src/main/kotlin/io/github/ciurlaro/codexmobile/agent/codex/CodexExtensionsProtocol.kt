@@ -31,12 +31,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-internal val OFFICIAL_MARKETPLACES = setOf(
-    "openai-curated",
-    "openai-api-curated",
-    "openai-bundled",
-)
-
 internal fun parseSkill(item: JsonObject): AgentSkill {
     val interfaceInfo = item.optionalObject("interface")
     val path = item.requiredString("path")
@@ -100,7 +94,6 @@ internal fun parsePluginMarketplaces(result: JsonObject): List<AgentPluginSummar
     result.requiredArray("marketplaces").flatMap { rawMarketplace ->
         val marketplace = rawMarketplace.jsonObject
         val name = marketplace.requiredString("name")
-        if (name !in OFFICIAL_MARKETPLACES) return@flatMap emptyList()
         val path = marketplace.optionalString("path")
         marketplace.requiredArray("plugins").map {
             parsePluginSummary(it.jsonObject, name, path)
@@ -110,7 +103,6 @@ internal fun parsePluginMarketplaces(result: JsonObject): List<AgentPluginSummar
 internal fun parsePluginDetail(result: JsonObject): AgentPluginDetail {
     val plugin = result.requiredObject("plugin")
     val marketplaceName = plugin.requiredString("marketplaceName")
-    check(marketplaceName in OFFICIAL_MARKETPLACES) { "Plugin is not from an official marketplace" }
     val summary = parsePluginSummary(
         plugin.requiredObject("summary"),
         marketplaceName,

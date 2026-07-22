@@ -5,6 +5,12 @@ data class AgentSkillCatalog(
     val errors: List<String> = emptyList(),
 )
 
+data class AgentSkillChunk(
+    val content: String,
+    val nextOffset: Long?,
+    val totalBytes: Long,
+)
+
 data class AgentSkill(
     val name: String,
     val displayName: String,
@@ -14,6 +20,7 @@ data class AgentSkill(
     val enabled: Boolean,
     val brandColor: String? = null,
     val dependencies: List<String> = emptyList(),
+    val canUninstall: Boolean = false,
 )
 
 enum class AgentSkillScope(val displayName: String) {
@@ -23,6 +30,29 @@ enum class AgentSkillScope(val displayName: String) {
     PLUGIN("Plugin"),
     ADMIN("Managed"),
 }
+
+data class AgentSkillPackageCatalog(
+    val skills: List<AgentSkillPackage>,
+    val freshness: AgentCatalogFreshness = AgentCatalogFreshness.LIVE,
+    val errors: List<String> = emptyList(),
+)
+
+data class AgentSkillPackage(
+    val id: String,
+    val name: String,
+    val displayName: String,
+    val description: String,
+    val source: AgentSkillPackageSource,
+    val sourceUrl: String,
+)
+
+enum class AgentSkillPackageSource(val displayName: String) {
+    OPENAI("OpenAI curated"),
+    CODEX_MOBILE("Codex Mobile"),
+    GITHUB("GitHub"),
+}
+
+enum class AgentCatalogFreshness { LIVE, FRESH_CACHE, STALE_CACHE }
 
 data class AgentPluginReference(
     val id: String,
@@ -36,6 +66,7 @@ data class AgentPluginReference(
 data class AgentPluginCatalog(
     val plugins: List<AgentPluginSummary>,
     val errors: List<String> = emptyList(),
+    val freshness: AgentCatalogFreshness = AgentCatalogFreshness.LIVE,
 )
 
 data class AgentPluginSummary(
@@ -78,6 +109,11 @@ data class AgentPluginInstallResult(
     val authPolicy: AgentPluginAuthPolicy,
     val connectorsNeedingAuthentication: List<AgentConnector>,
 )
+
+class AgentPluginUnavailableException(
+    val pluginId: String,
+    pluginName: String,
+) : IllegalStateException("$pluginName is temporarily unavailable")
 
 data class AgentConnector(
     val id: String,

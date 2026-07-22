@@ -8,14 +8,34 @@ import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentSkill
+import io.github.ciurlaro.codexmobile.core.AgentSkillPackage
 import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
 import io.github.ciurlaro.codexmobile.core.SessionId
 
 enum class AppScreen { CHAT, SETTINGS, CAPABILITIES }
 
-enum class CapabilityTab { SKILLS, PLUGINS }
+enum class CapabilityFilter(val label: String) {
+    ALL("All"), SKILLS("Skills"), PLUGINS("Plugins"),
+}
 
-enum class ChatSelector { TAGS, EFFORT, MODEL, SPEED, APPROVAL }
+enum class CapabilitySection(val label: String) {
+    INSTALLED("Installed"), DISCOVER("Discover"),
+}
+
+sealed interface CapabilityRemoval {
+    val displayName: String
+
+    data class Skill(val skill: AgentSkill) : CapabilityRemoval {
+        override val displayName: String get() = skill.readableTitle()
+    }
+
+    data class Plugin(val id: String, override val displayName: String) : CapabilityRemoval
+}
+
+data class CapabilityActionError(val operationId: String, val message: String)
+
+enum class ChatSelector { TAGS, SKILLS, PLUGINS, EFFORT, MODEL, SPEED, APPROVAL }
 
 sealed interface ChatUiEvent {
     data object OpenHistory : ChatUiEvent
@@ -23,9 +43,14 @@ sealed interface ChatUiEvent {
     data object StartNewChat : ChatUiEvent
     data object OpenSettings : ChatUiEvent
     data object CloseSettings : ChatUiEvent
-    data object OpenCapabilities : ChatUiEvent
+    data class OpenCapabilities(
+        val filter: CapabilityFilter = CapabilityFilter.ALL,
+        val returnScreen: AppScreen = AppScreen.SETTINGS,
+    ) : ChatUiEvent
     data object CloseCapabilities : ChatUiEvent
     data object RefreshCapabilities : ChatUiEvent
+    data object CloseSkillDetails : ChatUiEvent
+    data object LoadMoreSkillSource : ChatUiEvent
     data object ClosePluginDetails : ChatUiEvent
     data class OpenSelector(val selector: ChatSelector) : ChatUiEvent
     data object DismissSelector : ChatUiEvent
@@ -54,12 +79,22 @@ sealed interface ChatUiEvent {
     data class SelectEffort(val effort: String) : ChatUiEvent
     data class SelectSpeed(val tier: String?) : ChatUiEvent
     data class SelectApproval(val preset: AgentApprovalPreset) : ChatUiEvent
-    data class SelectCapabilityTab(val tab: CapabilityTab) : ChatUiEvent
+    data class SelectCapabilityFilter(val filter: CapabilityFilter) : ChatUiEvent
+    data class SelectCapabilitySection(val section: CapabilitySection) : ChatUiEvent
     data class SearchCapabilities(val query: String) : ChatUiEvent
     data class ToggleSkill(val path: String, val enabled: Boolean) : ChatUiEvent
+    data class OpenSkill(val skill: AgentSkill) : ChatUiEvent
+    data class OpenSkillPackage(val skill: AgentSkillPackage) : ChatUiEvent
+    data class OpenGitHubSkill(val url: String) : ChatUiEvent
+    data class SelectGitHubSkill(val skill: AgentSkillPackage) : ChatUiEvent
+    data object DismissGitHubSkillImport : ChatUiEvent
+    data class InstallSkill(val skill: AgentSkillPackage) : ChatUiEvent
+    data class RequestUninstallSkill(val skill: AgentSkill) : ChatUiEvent
     data class OpenPlugin(val plugin: AgentPluginReference) : ChatUiEvent
     data class InstallPlugin(val plugin: AgentPluginReference) : ChatUiEvent
-    data class UninstallPlugin(val pluginId: String) : ChatUiEvent
+    data class RequestUninstallPlugin(val pluginId: String, val displayName: String) : ChatUiEvent
+    data object ConfirmCapabilityRemoval : ChatUiEvent
+    data object DismissCapabilityRemoval : ChatUiEvent
     data class TogglePlugin(val pluginId: String, val enabled: Boolean) : ChatUiEvent
     data class ConnectApp(val connectorId: String) : ChatUiEvent
     data class ConnectMcp(val serverName: String) : ChatUiEvent
@@ -97,30 +132,33 @@ internal fun String.shellCommandOrNull(): String? =
 
 internal fun String.withoutActiveInvocationToken(invocation: AgentInvocation): String {
     val marker = if (invocation is AgentInvocation.Skill) '$' else '@'
-    val match = Regex("(?:^|\\s)([@${'$'}])[A-Za-z0-9_-]*${'$'}").find(this) ?: return this
+    val match = invocationToken.find(this) ?: return this
     if (match.groupValues[1].singleOrNull() != marker) return this
     val markerIndex = match.range.first + match.value.indexOf(marker)
     return removeRange(markerIndex, length).trimEnd()
 }
 
-internal fun MainUiState.suggestedInvocations(): List<AgentInvocation> {
+private val invocationToken = Regex("(?:^|\\s)([@${'$'}])([A-Za-z0-9_:-]*)${'$'}")
+
+internal fun MainUiState.suggestedInvocationItems(): List<PromptInvocation> {
     if (draft.startsWith('!')) return emptyList()
-    val match = Regex("(?:^|\\s)([@${'$'}])([A-Za-z0-9_-]*)${'$'}").find(draft)
-        ?: return emptyList()
+    val match = invocationToken.find(draft) ?: return emptyList()
     val marker = match.groupValues[1].single()
     val query = match.groupValues[2]
-    if (marker == '@' && query.isEmpty()) return emptyList()
-    val matches = when (marker) {
-        '$' -> skills.asSequence().filter { it.enabled && it.name.startsWith(query, true) }
-            .map { AgentInvocation.Skill(it.name, it.path) }
-        '@' -> plugins.asSequence().filter {
-            it.installed && it.enabled && it.reference.name.startsWith(query, true)
-        }.map { AgentInvocation.Plugin(it.reference.name, it.reference.uri) }
-        else -> emptySequence()
+    val kind = when (marker) {
+        '$' -> PromptInvocationKind.SKILL
+        '@' -> PromptInvocationKind.PLUGIN
+        else -> return emptyList()
     }
-    return matches.filter { candidate -> selectedInvocations.none { it.key == candidate.key } }
-        .take(5).toList()
+    val recentOrder = recentInvocationKeys.withIndex().associate { it.value to it.index }
+    return availablePromptInvocations(kind)
+        .filter { query.isEmpty() || it.searchableText.contains(query, ignoreCase = true) }
+        .sortedWith(compareBy({ recentOrder[it.invocation.key] ?: Int.MAX_VALUE }, { it.title.lowercase() }))
+        .take(5)
 }
+
+internal fun MainUiState.suggestedInvocations(): List<AgentInvocation> =
+    suggestedInvocationItems().map(PromptInvocation::invocation)
 
 private val bareTaskMarker = Regex("""^(\s*)(\[[ xX]])(?=\s|$)""")
 

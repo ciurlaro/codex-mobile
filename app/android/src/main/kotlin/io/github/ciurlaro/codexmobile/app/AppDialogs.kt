@@ -455,8 +455,8 @@ private fun PrivacyDisclosure() {
         PrivacySection(
             "Plugins and external providers",
             "Installed plugins and connectors may send the prompt and selected context needed for a request " +
-                "to external providers under their own privacy policies and terms. Codex Mobile only lists " +
-                "plugins from OpenAI's official catalogs.",
+                "to external providers under their own privacy policies and terms. Codex Mobile lists the " +
+                "plugin catalogs made available by its bundled Codex server.",
         )
     }
 }

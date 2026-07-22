@@ -50,9 +50,13 @@ internal class AppServerConnection(
     @Volatile
     private var writer: BufferedWriter? = null
 
-    suspend fun request(method: String, params: JsonObject): JsonElement {
+    suspend fun request(
+        method: String,
+        params: JsonObject,
+        timeoutMillis: Long = requestTimeoutMillis,
+    ): JsonElement {
         ensureStarted()
-        return requestOnStarted(method, params)
+        return requestOnStarted(method, params, timeoutMillis)
     }
 
     suspend fun respond(id: JsonElement, result: JsonObject) {
@@ -166,7 +170,11 @@ internal class AppServerConnection(
         }
     }
 
-    private suspend fun requestOnStarted(method: String, params: JsonObject): JsonElement {
+    private suspend fun requestOnStarted(
+        method: String,
+        params: JsonObject,
+        timeoutMillis: Long = requestTimeoutMillis,
+    ): JsonElement {
         val id = nextRequestId.getAndIncrement()
         val response = CompletableDeferred<JsonElement>()
         pendingRequests[id] = response
@@ -178,7 +186,7 @@ internal class AppServerConnection(
                     put("params", params)
                 },
             )
-            return withTimeout(requestTimeoutMillis) { response.await() }
+            return withTimeout(timeoutMillis) { response.await() }
         } finally {
             pendingRequests.remove(id, response)
         }

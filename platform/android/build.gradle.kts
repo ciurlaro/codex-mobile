@@ -47,6 +47,7 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    testImplementation(kotlin("test-junit"))
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
 }

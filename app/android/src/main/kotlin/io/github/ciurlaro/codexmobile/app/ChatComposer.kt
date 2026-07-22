@@ -90,7 +90,9 @@ internal fun Composer(
             Spacer(Modifier.height(4.dp))
         }
         state.selectedInvocations.forEach { invocation ->
-            InvocationChip(invocation) { onEvent(ChatUiEvent.RemoveInvocation(invocation.key)) }
+            InvocationChip(state.promptInvocation(invocation)) {
+                onEvent(ChatUiEvent.RemoveInvocation(invocation.key))
+            }
             Spacer(Modifier.height(4.dp))
         }
         BasicTextField(
@@ -167,7 +169,7 @@ internal fun Composer(
 
 @Composable
 private fun InvocationSuggestions(state: MainUiState, onEvent: (ChatUiEvent) -> Unit) {
-    val suggestions = state.suggestedInvocations()
+    val suggestions = state.suggestedInvocationItems()
     if (suggestions.isEmpty()) return
     Column(
         Modifier
@@ -175,21 +177,34 @@ private fun InvocationSuggestions(state: MainUiState, onEvent: (ChatUiEvent) -> 
             .background(ChatColors.ElevatedStrong, RoundedCornerShape(ChatDimensions.ControlCorner))
             .padding(vertical = 4.dp),
     ) {
-        suggestions.forEach { invocation ->
-            Text(
-                text = invocationLabel(invocation),
+        suggestions.forEach { item ->
+            Row(
                 modifier = Modifier.fillMaxWidth().clickable {
-                    onEvent(ChatUiEvent.AddInvocation(invocation))
-                }.padding(horizontal = 14.dp, vertical = 11.dp),
-                color = ChatColors.Primary,
-                style = MaterialTheme.typography.bodyMedium,
-            )
+                    onEvent(ChatUiEvent.AddInvocation(item.invocation))
+                }.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AppIcon(item.glyph(), Modifier.size(21.dp), item.accent())
+                Spacer(Modifier.size(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(item.title, color = ChatColors.Primary, style = MaterialTheme.typography.bodyMedium)
+                    item.subtitle?.let {
+                        Text(
+                            it,
+                            color = ChatColors.Secondary,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun InvocationChip(invocation: AgentInvocation, onRemove: () -> Unit) {
+private fun InvocationChip(item: PromptInvocation, onRemove: () -> Unit) {
     Row(
         modifier = Modifier
             .heightIn(min = ChatDimensions.TouchTarget)
@@ -197,19 +212,16 @@ private fun InvocationChip(invocation: AgentInvocation, onRemove: () -> Unit) {
             .padding(start = 14.dp, end = 2.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Text(invocationLabel(invocation), color = ChatColors.Accent, style = MaterialTheme.typography.labelLarge)
+        AppIcon(item.glyph(), Modifier.size(18.dp), item.accent())
+        Spacer(Modifier.size(8.dp))
+        Text(item.title, color = ChatColors.Accent, style = MaterialTheme.typography.labelLarge)
         IconButton(
             onClick = onRemove,
             modifier = Modifier.size(ChatDimensions.TouchTarget).semantics {
-                contentDescription = "Remove ${invocation.name}"
+                contentDescription = "Remove ${item.title}"
             },
         ) { AppIcon(IconGlyph.CLOSE, Modifier.size(18.dp), ChatColors.Secondary) }
     }
-}
-
-private fun invocationLabel(invocation: AgentInvocation): String = when (invocation) {
-    is AgentInvocation.Skill -> "\$${invocation.name}"
-    is AgentInvocation.Plugin -> "@${invocation.name}"
 }
 
 @Composable

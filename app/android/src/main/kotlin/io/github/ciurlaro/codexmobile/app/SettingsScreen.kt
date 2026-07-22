@@ -117,7 +117,7 @@ internal fun SettingsScreen(
                         title = "Skills & plugins",
                         subtitle = "${state.skills.count { it.enabled }} skills · " +
                             "${state.plugins.count { it.installed && it.enabled }} plugins",
-                        onClick = { onEvent(ChatUiEvent.OpenCapabilities) },
+                        onClick = { onEvent(ChatUiEvent.OpenCapabilities()) },
                     )
                 }
             }

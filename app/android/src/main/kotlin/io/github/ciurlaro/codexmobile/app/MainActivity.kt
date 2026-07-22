@@ -139,9 +139,12 @@ class MainActivity : ComponentActivity() {
                         ChatUiEvent.StartNewChat -> viewModel.startNewChat()
                         ChatUiEvent.OpenSettings -> viewModel.openSettings()
                         ChatUiEvent.CloseSettings -> viewModel.closeSettings()
-                        ChatUiEvent.OpenCapabilities -> viewModel.openCapabilities()
+                        is ChatUiEvent.OpenCapabilities ->
+                            viewModel.openCapabilities(event.filter, event.returnScreen)
                         ChatUiEvent.CloseCapabilities -> viewModel.closeCapabilities()
                         ChatUiEvent.RefreshCapabilities -> viewModel.refreshCapabilities()
+                        ChatUiEvent.CloseSkillDetails -> viewModel.closeSkillDetails()
+                        ChatUiEvent.LoadMoreSkillSource -> viewModel.loadMoreSkillSource()
                         ChatUiEvent.ClosePluginDetails -> viewModel.closePluginDetails()
                         is ChatUiEvent.OpenSelector -> viewModel.openSelector(event.selector)
                         ChatUiEvent.DismissSelector -> viewModel.dismissSelector()
@@ -163,7 +166,10 @@ class MainActivity : ComponentActivity() {
                         ChatUiEvent.StopBackground -> viewModel.stopBackgroundWork()
                         ChatUiEvent.SignOut -> viewModel.signOut()
                         ChatUiEvent.ShowPrivacy -> showPrivacyDisclosure = true
-                        ChatUiEvent.ShowIntegrations -> showIntegrations = true
+                        ChatUiEvent.ShowIntegrations -> {
+                            showIntegrations = true
+                            viewModel.refreshIntegrations()
+                        }
                         ChatUiEvent.DisconnectTelegram -> viewModel.disconnectTelegram()
                         ChatUiEvent.CancelTelegramAuthentication -> viewModel.cancelTelegramAuthentication()
                         ChatUiEvent.ShowEraseConfirmation -> showEraseConfirmation = true
@@ -185,12 +191,23 @@ class MainActivity : ComponentActivity() {
                         is ChatUiEvent.SelectEffort -> viewModel.selectEffort(event.effort)
                         is ChatUiEvent.SelectSpeed -> viewModel.selectSpeed(event.tier)
                         is ChatUiEvent.SelectApproval -> viewModel.selectApproval(event.preset)
-                        is ChatUiEvent.SelectCapabilityTab -> viewModel.selectCapabilityTab(event.tab)
+                        is ChatUiEvent.SelectCapabilityFilter -> viewModel.selectCapabilityFilter(event.filter)
+                        is ChatUiEvent.SelectCapabilitySection -> viewModel.selectCapabilitySection(event.section)
                         is ChatUiEvent.SearchCapabilities -> viewModel.searchCapabilities(event.query)
                         is ChatUiEvent.ToggleSkill -> viewModel.toggleSkill(event.path, event.enabled)
+                        is ChatUiEvent.OpenSkill -> viewModel.openSkill(event.skill)
+                        is ChatUiEvent.OpenSkillPackage -> viewModel.openSkillPackage(event.skill)
+                        is ChatUiEvent.OpenGitHubSkill -> viewModel.openGitHubSkill(event.url)
+                        is ChatUiEvent.SelectGitHubSkill -> viewModel.selectGitHubSkill(event.skill)
+                        ChatUiEvent.DismissGitHubSkillImport -> viewModel.dismissGitHubSkillImport()
+                        is ChatUiEvent.InstallSkill -> viewModel.installSkill(event.skill)
+                        is ChatUiEvent.RequestUninstallSkill -> viewModel.requestUninstallSkill(event.skill)
                         is ChatUiEvent.OpenPlugin -> viewModel.openPlugin(event.plugin)
                         is ChatUiEvent.InstallPlugin -> viewModel.installPlugin(event.plugin)
-                        is ChatUiEvent.UninstallPlugin -> viewModel.uninstallPlugin(event.pluginId)
+                        is ChatUiEvent.RequestUninstallPlugin ->
+                            viewModel.requestUninstallPlugin(event.pluginId, event.displayName)
+                        ChatUiEvent.ConfirmCapabilityRemoval -> viewModel.confirmCapabilityRemoval()
+                        ChatUiEvent.DismissCapabilityRemoval -> viewModel.dismissCapabilityRemoval()
                         is ChatUiEvent.TogglePlugin -> viewModel.togglePlugin(event.pluginId, event.enabled)
                         is ChatUiEvent.ConnectApp -> viewModel.connectApp(event.connectorId)
                         is ChatUiEvent.ConnectMcp -> viewModel.connectMcp(event.serverName)

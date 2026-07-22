@@ -17,9 +17,13 @@ import io.github.ciurlaro.codexmobile.core.AgentPluginInstallResult
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentSkillCatalog
+import io.github.ciurlaro.codexmobile.core.AgentSkill
+import io.github.ciurlaro.codexmobile.core.AgentSkillPackage
+import io.github.ciurlaro.codexmobile.core.AgentSkillPackageCatalog
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
 import io.github.ciurlaro.codexmobile.core.SessionId
+import io.github.ciurlaro.codexmobile.platform.android.AndroidSkillPackageManager
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -30,6 +34,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 internal data class ForegroundSessionState(
@@ -58,6 +64,7 @@ internal data class ForegroundSessionState(
 internal class ForegroundSessionController(
     private val agentClient: AgentClient,
     private val scope: CoroutineScope,
+    private val skillPackages: AndroidSkillPackageManager? = null,
 ) : AutoCloseable {
     private val mutableState = MutableStateFlow(ForegroundSessionState())
     private val turnClaimed = AtomicBoolean(false)
@@ -66,6 +73,7 @@ internal class ForegroundSessionController(
     private val cancellationDispatched = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
     private val lock = Any()
+    private val externalOperationMutex = Mutex()
     private var authenticationStarted = false
     private var eventJob: Job = scope.launch { agentClient.events.collect(::reduce) }
 
@@ -206,13 +214,49 @@ internal class ForegroundSessionController(
     suspend fun listModels(): List<AgentModel> = agentClient.listModels()
 
     suspend fun listSkills(workingDirectory: String, forceReload: Boolean = false): AgentSkillCatalog =
-        agentClient.listSkills(workingDirectory, forceReload)
+        agentClient.listSkills(workingDirectory, forceReload).let { catalog ->
+            catalog.copy(skills = catalog.skills.map { skill ->
+                skill.copy(canUninstall = skillPackages?.canUninstall(skill) == true)
+            })
+        }
+
+    suspend fun readSkill(path: String, offset: Long = 0) = agentClient.readSkill(path, offset)
 
     suspend fun setSkillEnabled(path: String, enabled: Boolean) =
         runExternalOperation("Updating skill") { agentClient.setSkillEnabled(path, enabled) }
 
-    suspend fun listPlugins(workingDirectory: String): AgentPluginCatalog =
-        agentClient.listPlugins(workingDirectory)
+    suspend fun listAvailableSkills(
+        installedNames: Set<String>,
+        forceRefresh: Boolean = false,
+    ): AgentSkillPackageCatalog = requireNotNull(skillPackages) {
+        "Skill packages are unavailable"
+    }.listAvailable(installedNames, forceRefresh)
+
+    suspend fun discoverGitHubSkills(url: String): List<AgentSkillPackage> = requireNotNull(skillPackages) {
+        "Skill packages are unavailable"
+    }.discoverGitHubSkills(url)
+
+    suspend fun readSkillPackage(packageInfo: AgentSkillPackage, offset: Long = 0) =
+        requireNotNull(skillPackages) { "Skill packages are unavailable" }
+            .readPackageSource(packageInfo, offset)
+
+    suspend fun installSkill(packageInfo: AgentSkillPackage) =
+        runExternalOperation("Installing ${packageInfo.displayName}") {
+            requireNotNull(skillPackages) { "Skill packages are unavailable" }.install(packageInfo)
+        }
+
+    suspend fun uninstallSkill(skill: AgentSkill) =
+        runExternalOperation("Removing ${skill.displayName}") {
+            requireNotNull(skillPackages) { "Skill packages are unavailable" }.uninstall(skill)
+        }
+
+    suspend fun listInstalledPlugins(workingDirectory: String): AgentPluginCatalog =
+        agentClient.listInstalledPlugins(workingDirectory)
+
+    suspend fun listAvailablePlugins(
+        workingDirectory: String,
+        forceRefresh: Boolean = false,
+    ): AgentPluginCatalog = agentClient.listAvailablePlugins(workingDirectory, forceRefresh)
 
     suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail =
         agentClient.readPlugin(plugin)
@@ -456,11 +500,13 @@ internal class ForegroundSessionController(
     }
 
     private suspend fun <T> runExternalOperation(label: String, block: suspend () -> T): T {
-        mutableState.update { it.copy(externalOperation = label) }
-        return try {
-            block()
-        } finally {
-            mutableState.update { it.copy(externalOperation = null) }
+        return externalOperationMutex.withLock {
+            mutableState.update { it.copy(externalOperation = label) }
+            try {
+                block()
+            } finally {
+                mutableState.update { it.copy(externalOperation = null) }
+            }
         }
     }
 

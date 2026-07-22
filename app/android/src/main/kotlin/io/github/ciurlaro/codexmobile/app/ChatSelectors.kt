@@ -6,12 +6,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.indication
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -27,13 +30,18 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -82,6 +90,7 @@ internal fun SelectorOverlay(
                 .align(if (aboveComposer) Alignment.BottomEnd else Alignment.Center)
                 .statusBarsPadding()
                 .navigationBarsPadding()
+                .then(if (aboveComposer) Modifier.imePadding() else Modifier)
                 .padding(
                     end = ChatDimensions.ScreenPadding,
                     start = ChatDimensions.ScreenPadding,
@@ -99,6 +108,8 @@ internal fun SelectorOverlay(
                 ChatSelector.EFFORT -> EffortSelector(state, onEvent)
                 ChatSelector.MODEL -> ModelSelector(state, onEvent)
                 ChatSelector.TAGS -> TagSelector(state, onEvent)
+                ChatSelector.SKILLS -> PromptInvocationSelector(state, PromptInvocationKind.SKILL, onEvent)
+                ChatSelector.PLUGINS -> PromptInvocationSelector(state, PromptInvocationKind.PLUGIN, onEvent)
                 ChatSelector.SPEED -> SpeedSelector(state, onEvent)
                 ChatSelector.APPROVAL -> ApprovalSelector(state, onEvent)
                 null -> Unit
@@ -267,73 +278,172 @@ private fun TagSelector(
     val tags = remember(state.selectedCapabilities) {
         AgentCapability.entries.filter { it !in state.selectedCapabilities }
     }
-    Column(
+    val skills = state.availablePromptInvocations(PromptInvocationKind.SKILL)
+    val plugins = state.availablePromptInvocations(PromptInvocationKind.PLUGIN)
+    val recent = state.recentPromptInvocations()
+    LazyColumn(
         Modifier
-            .verticalScroll(rememberScrollState())
+            .heightIn(max = 500.dp)
             .padding(vertical = 12.dp),
     ) {
-        Text(
-            "Add to prompt",
-            color = ChatColors.Secondary,
-            style = MaterialTheme.typography.labelLarge,
-            modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-        )
-        tags.forEach { capability ->
+        item("prompt-heading") { SelectorSectionTitle("Add to prompt") }
+        items(tags, key = AgentCapability::id) { capability ->
             SelectorRow(
-                title = listOfNotNull(capability.icon, capability.displayLabel).joinToString(" "),
+                title = capability.displayLabel,
                 selected = false,
+                leading = IconGlyph.GLOBE,
+                leadingTint = ChatColors.Accent,
                 onClick = { onEvent(ChatUiEvent.AddCapability(capability)) },
             )
         }
-        val skills = state.skills.filter { skill ->
-            skill.enabled && state.selectedInvocations.none { it.key == "skill:${skill.path}" }
-        }
-        if (skills.isNotEmpty()) {
-            Text(
-                "Skills",
-                color = ChatColors.Secondary,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+        item("skills") {
+            SelectorRow(
+                title = "Skills",
+                subtitle = if (state.isSkillsLoading) "Loading…" else availableLabel(skills.size, "skill"),
+                selected = false,
+                leading = IconGlyph.SPARKLES,
+                leadingTint = ChatColors.SkillAccent,
+                trailing = IconGlyph.CHEVRON_RIGHT,
+                onClick = { onEvent(ChatUiEvent.OpenSelector(ChatSelector.SKILLS)) },
             )
-            skills.forEach { skill ->
-                val invocation = AgentInvocation.Skill(skill.name, skill.path)
-                SelectorRow(
-                    title = "\$${skill.name}",
-                    subtitle = skill.description,
-                    selected = false,
-                    onClick = { onEvent(ChatUiEvent.AddInvocation(invocation)) },
+        }
+        item("plugins") {
+            SelectorRow(
+                title = "Plugins",
+                subtitle = if (state.isInstalledPluginsLoading) "Loading…" else availableLabel(plugins.size, "plugin"),
+                selected = false,
+                leading = IconGlyph.PUZZLE,
+                leadingTint = ChatColors.PluginAccent,
+                trailing = IconGlyph.CHEVRON_RIGHT,
+                onClick = { onEvent(ChatUiEvent.OpenSelector(ChatSelector.PLUGINS)) },
+            )
+        }
+        if (recent.isNotEmpty()) {
+            item("recent-heading") { SelectorSectionTitle("Recently used") }
+            items(recent, key = { "recent-${it.invocation.key}" }) { item ->
+                PromptInvocationRow(item) { onEvent(ChatUiEvent.AddInvocation(item.invocation)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PromptInvocationSelector(
+    state: MainUiState,
+    kind: PromptInvocationKind,
+    onEvent: (ChatUiEvent) -> Unit,
+) {
+    var query by rememberSaveable(kind) { mutableStateOf("") }
+    val all = state.availablePromptInvocations(kind)
+    val matches = all.filter { query.isBlank() || it.searchableText.contains(query.trim(), ignoreCase = true) }
+    val recent = if (query.isBlank()) state.recentPromptInvocations(kind) else emptyList()
+    val recentKeys = recent.mapTo(mutableSetOf()) { it.invocation.key }
+    val remaining = matches.filterNot { it.invocation.key in recentKeys }
+    val title = if (kind == PromptInvocationKind.SKILL) "Skills" else "Plugins"
+    val singular = if (kind == PromptInvocationKind.SKILL) "skill" else "plugin"
+    val loading = if (kind == PromptInvocationKind.SKILL) state.isSkillsLoading else state.isInstalledPluginsLoading
+    val filter = if (kind == PromptInvocationKind.SKILL) CapabilityFilter.SKILLS else CapabilityFilter.PLUGINS
+
+    LazyColumn(
+        modifier = Modifier.heightIn(min = 500.dp, max = 500.dp).padding(vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(0.dp),
+    ) {
+        item("header") { SelectorHeader(title) { onEvent(ChatUiEvent.OpenSelector(ChatSelector.TAGS)) } }
+        item("search") {
+            TextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search $title", color = ChatColors.Secondary) },
+                leadingIcon = { AppIcon(IconGlyph.SEARCH, Modifier.size(20.dp), ChatColors.Secondary) },
+                singleLine = true,
+                shape = RoundedCornerShape(ChatDimensions.ControlCorner),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = ChatColors.ElevatedStrong,
+                    unfocusedContainerColor = ChatColors.ElevatedStrong,
+                    focusedIndicatorColor = ChatColors.Accent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                    .heightIn(max = 52.dp),
+            )
+        }
+        if (recent.isNotEmpty()) {
+            item("recent-heading") { SelectorSectionTitle("Recently used") }
+            items(recent, key = { "recent-${it.invocation.key}" }) { item ->
+                PromptInvocationRow(item) { onEvent(ChatUiEvent.AddInvocation(item.invocation)) }
+            }
+        }
+        if (remaining.isNotEmpty()) {
+            if (recent.isNotEmpty()) item("all-heading") { SelectorSectionTitle("All $title") }
+            items(remaining, key = { it.invocation.key }) { item ->
+                PromptInvocationRow(item) { onEvent(ChatUiEvent.AddInvocation(item.invocation)) }
+            }
+        } else if (recent.isEmpty()) {
+            item("empty") {
+                Text(
+                    when {
+                        loading -> "Loading ${singular}s…"
+                        query.isBlank() -> "No enabled ${singular}s"
+                        else -> "No $singular matches “${query.trim()}”"
+                    },
+                    color = ChatColors.Secondary,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
                 )
             }
         }
-        val plugins = state.plugins.filter { plugin ->
-            plugin.installed && plugin.enabled &&
-                state.selectedInvocations.none { it.key == "plugin:${plugin.reference.uri}" }
-        }
-        if (plugins.isNotEmpty()) {
-            Text(
-                "Plugins",
-                color = ChatColors.Secondary,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-            )
-            plugins.forEach { plugin ->
-                val invocation = AgentInvocation.Plugin(plugin.reference.name, plugin.reference.uri)
-                SelectorRow(
-                    title = "@${plugin.displayName}",
-                    subtitle = plugin.description,
-                    selected = false,
-                    onClick = { onEvent(ChatUiEvent.AddInvocation(invocation)) },
-                )
-            }
-        }
-        if (tags.isEmpty() && skills.isEmpty() && plugins.isEmpty()) {
-            Text(
-                "All available items are already added",
-                color = ChatColors.Secondary,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+        item("manage") {
+            HorizontalDivider(color = ChatColors.Border, modifier = Modifier.padding(horizontal = 20.dp))
+            SelectorRow(
+                title = "Manage $title",
+                selected = false,
+                trailing = IconGlyph.CHEVRON_RIGHT,
+                onClick = {
+                    onEvent(ChatUiEvent.OpenCapabilities(filter = filter, returnScreen = AppScreen.CHAT))
+                },
             )
         }
     }
+}
+
+@Composable
+private fun SelectorHeader(title: String, onBack: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        CircleIconButton("Back to prompt items", IconGlyph.BACK, containerColor = Color.Transparent, onClick = onBack)
+        Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.semantics { heading() })
+    }
+}
+
+@Composable
+private fun SelectorSectionTitle(title: String) {
+    Text(
+        title,
+        color = ChatColors.Secondary,
+        style = MaterialTheme.typography.labelLarge,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+    )
+}
+
+@Composable
+private fun PromptInvocationRow(item: PromptInvocation, onClick: () -> Unit) {
+    SelectorRow(
+        title = item.title,
+        subtitle = item.subtitle,
+        selected = false,
+        leading = if (item.kind == PromptInvocationKind.SKILL) IconGlyph.SPARKLES else IconGlyph.PUZZLE,
+        leadingTint = if (item.kind == PromptInvocationKind.SKILL) ChatColors.SkillAccent else ChatColors.PluginAccent,
+        onClick = onClick,
+    )
+}
+
+private fun availableLabel(count: Int, singular: String): String = when (count) {
+    0 -> "No enabled ${singular}s"
+    1 -> "1 enabled $singular"
+    else -> "$count enabled ${singular}s"
 }
 
 @Composable
@@ -342,6 +452,8 @@ private fun SelectorRow(
     subtitle: String? = null,
     selected: Boolean,
     enabled: Boolean = true,
+    leading: IconGlyph? = null,
+    leadingTint: Color = ChatColors.Primary,
     trailing: IconGlyph? = null,
     onClick: () -> Unit,
 ) {
@@ -357,6 +469,10 @@ private fun SelectorRow(
             .padding(horizontal = 20.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        leading?.let {
+            AppIcon(it, Modifier.size(22.dp), if (enabled) leadingTint else ChatColors.Secondary)
+            Spacer(Modifier.size(14.dp))
+        }
         Column(Modifier.weight(1f)) {
             Text(
                 title,

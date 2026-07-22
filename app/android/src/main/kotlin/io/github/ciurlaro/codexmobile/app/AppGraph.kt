@@ -19,6 +19,7 @@ internal class AppGraph(context: Context) {
     fun newAgentClient(): AgentClient = CodexAgentClient(
         launchCodexProcess = platform::launchCodexProcess,
         clientVersion = clientVersion,
+        pluginCacheDirectory = java.io.File(appContext.cacheDir, "plugin-catalogs"),
     )
 
     fun authorizeForegroundStart(): String = UUID.randomUUID().toString().also {

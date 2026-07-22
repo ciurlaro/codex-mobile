@@ -13,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
 import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentCatalogFreshness
 import io.github.ciurlaro.codexmobile.core.AgentConnector
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
@@ -20,7 +21,10 @@ import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentModel
 import io.github.ciurlaro.codexmobile.core.AgentPluginAuthPolicy
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentPluginUnavailableException
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
+import io.github.ciurlaro.codexmobile.core.AgentSkill
+import io.github.ciurlaro.codexmobile.core.AgentSkillPackage
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthEvent
@@ -54,6 +58,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 .getStringSet(PINNED_CONVERSATIONS, emptySet())
                 .orEmpty()
                 .toSet(),
+            recentInvocationKeys = chatPreferences.getString(RECENT_INVOCATIONS, null)
+                ?.lineSequence()
+                ?.filter(String::isNotBlank)
+                ?.take(4)
+                ?.toList()
+                .orEmpty(),
             approvalPreset = chatPreferences.getString(APPROVAL_POLICY, null)
                 ?.let { saved -> AgentApprovalPreset.entries.firstOrNull { it.name == saved } }
                 ?: AgentApprovalPreset.NEVER,
@@ -74,6 +84,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var selectionRestoredSessionId: SessionId? = null
     private var skillsRevision = 0
     private var connectorsRevision = 0
+    private var skillsJob: Job? = null
+    private var availableSkillsJob: Job? = null
+    private var installedPluginsJob: Job? = null
+    private var availablePluginsJob: Job? = null
+    private var skillSourceJob: Job? = null
+    private var integrationsLoaded = false
     private val pendingConnectorAuthentications = ArrayDeque<AgentConnector>()
     internal var serviceInstanceId: String? = null
         private set
@@ -96,11 +112,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     applySessionState(session, binder.notificationsEnabled())
                     if (session.skillsRevision != skillsRevision) {
                         skillsRevision = session.skillsRevision
-                        launch { refreshCapabilities(binder.controller, forceReload = true) }
+                        if (mutableState.value.skillsLoaded) loadSkills(forceReload = true)
                     }
                     if (session.connectorsRevision != connectorsRevision) {
                         connectorsRevision = session.connectorsRevision
-                        launch { refreshConnectors(binder.controller, forceReload = true) }
+                        if (integrationsLoaded) launch { refreshConnectors(binder.controller, forceReload = true) }
                     }
                     if (session.isAuthenticated && !chatDataRequested) {
                         chatDataRequested = true
@@ -407,27 +423,76 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update { it.copy(screen = AppScreen.CHAT, activeSelector = null) }
     }
 
-    fun openCapabilities() {
+    fun openCapabilities(filter: CapabilityFilter, returnScreen: AppScreen) {
         mutableState.update {
-            it.copy(screen = AppScreen.CAPABILITIES, isHistoryOpen = false, activeSelector = null)
+            it.copy(
+                screen = AppScreen.CAPABILITIES,
+                capabilitiesReturnScreen = returnScreen,
+                capabilityFilter = filter,
+                capabilitySection = CapabilitySection.INSTALLED,
+                capabilitySearch = "",
+                isHistoryOpen = false,
+                activeSelector = null,
+            )
         }
-        serviceController?.let { controller ->
-            viewModelScope.launch { refreshCapabilities(controller, forceReload = false) }
-        }
+        loadCurrentCapabilities(forceReload = false)
     }
 
     fun closeCapabilities() {
-        mutableState.update { it.copy(screen = AppScreen.SETTINGS, selectedPlugin = null) }
-    }
-
-    fun refreshCapabilities() {
-        serviceController?.let { controller ->
-            viewModelScope.launch { refreshCapabilities(controller, forceReload = true) }
+        skillSourceJob?.cancel()
+        mutableState.update {
+            it.copy(
+                screen = it.capabilitiesReturnScreen,
+                selectedSkill = null,
+                selectedSkillPackage = null,
+                selectedPlugin = null,
+                pendingCapabilityRemoval = null,
+                githubSkillCandidates = emptyList(),
+                githubSkillError = null,
+                isGitHubSkillLoading = false,
+                capabilityActionError = null,
+                skillSourceChunks = emptyList(),
+                skillSourceNextOffset = null,
+            )
         }
     }
 
-    fun selectCapabilityTab(tab: CapabilityTab) {
-        mutableState.update { it.copy(capabilityTab = tab, selectedPlugin = null) }
+    fun refreshCapabilities() {
+        mutableState.update {
+            it.copy(
+                capabilityActionError = null,
+                unavailablePluginIds = emptySet(),
+            )
+        }
+        loadCurrentCapabilities(forceReload = true)
+    }
+
+    fun selectCapabilityFilter(filter: CapabilityFilter) {
+        mutableState.update {
+            it.copy(
+                capabilityFilter = filter,
+                selectedSkill = null,
+                selectedSkillPackage = null,
+                selectedPlugin = null,
+                capabilitySearch = "",
+                capabilityActionError = null,
+            )
+        }
+        loadCurrentCapabilities(forceReload = false)
+    }
+
+    fun selectCapabilitySection(section: CapabilitySection) {
+        mutableState.update {
+            it.copy(
+                capabilitySection = section,
+                selectedSkill = null,
+                selectedSkillPackage = null,
+                selectedPlugin = null,
+                capabilitySearch = "",
+                capabilityActionError = null,
+            )
+        }
+        loadCurrentCapabilities(forceReload = false)
     }
 
     fun searchCapabilities(query: String) {
@@ -435,45 +500,281 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closePluginDetails() {
-        mutableState.update { it.copy(selectedPlugin = null) }
+        mutableState.update { it.copy(selectedPlugin = null, capabilityActionError = null) }
+    }
+
+    fun closeSkillDetails() {
+        skillSourceJob?.cancel()
+        mutableState.update {
+            it.copy(
+                selectedSkill = null,
+                selectedSkillPackage = null,
+                skillSourceChunks = emptyList(),
+                skillSourceNextOffset = null,
+                skillSourceTotalBytes = 0,
+                isSkillSourceLoading = false,
+                skillSourceError = null,
+                capabilityActionError = null,
+            )
+        }
+    }
+
+    fun openSkill(skill: AgentSkill) {
+        mutableState.update {
+            it.copy(
+                selectedSkill = skill,
+                selectedSkillPackage = null,
+                skillSourceChunks = emptyList(),
+                skillSourceNextOffset = 0,
+                skillSourceTotalBytes = 0,
+                skillSourceError = null,
+                capabilityActionError = null,
+            )
+        }
+        loadMoreSkillSource()
+    }
+
+    fun openSkillPackage(packageInfo: AgentSkillPackage) {
+        mutableState.update {
+            it.copy(
+                selectedSkill = null,
+                selectedSkillPackage = packageInfo,
+                githubSkillCandidates = emptyList(),
+                githubSkillError = null,
+                isGitHubSkillLoading = false,
+                skillSourceChunks = emptyList(),
+                skillSourceNextOffset = 0,
+                skillSourceTotalBytes = 0,
+                skillSourceError = null,
+                capabilityActionError = null,
+            )
+        }
+        loadMoreSkillSource()
+    }
+
+    fun openGitHubSkill(url: String) {
+        val controller = serviceController ?: return
+        if (url.isBlank()) return
+        mutableState.update {
+            it.copy(
+                githubSkillCandidates = emptyList(),
+                githubSkillError = null,
+                isGitHubSkillLoading = true,
+            )
+        }
+        skillSourceJob?.cancel()
+        skillSourceJob = viewModelScope.launch {
+            runCatching { controller.discoverGitHubSkills(url) }
+                .onSuccess { packages ->
+                    skillSourceJob = null
+                    if (packages.size == 1) {
+                        openSkillPackage(packages.single())
+                    } else {
+                        mutableState.update {
+                            it.copy(
+                                githubSkillCandidates = packages,
+                                isGitHubSkillLoading = false,
+                            )
+                        }
+                    }
+                }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    mutableState.update {
+                        it.copy(
+                            isGitHubSkillLoading = false,
+                            githubSkillError = error.message?.take(300) ?: "GitHub skill could not be opened",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun selectGitHubSkill(packageInfo: AgentSkillPackage) = openSkillPackage(packageInfo)
+
+    fun dismissGitHubSkillImport() {
+        if (mutableState.value.isGitHubSkillLoading) skillSourceJob?.cancel()
+        mutableState.update {
+            it.copy(
+                githubSkillCandidates = emptyList(),
+                githubSkillError = null,
+                isGitHubSkillLoading = false,
+            )
+        }
+    }
+
+    fun loadMoreSkillSource() {
+        val controller = serviceController ?: return
+        val current = mutableState.value
+        val skill = current.selectedSkill
+        val packageInfo = current.selectedSkillPackage
+        if (skill == null && packageInfo == null) return
+        val offset = current.skillSourceNextOffset ?: return
+        if (skillSourceJob?.isActive == true) return
+        mutableState.update { it.copy(isSkillSourceLoading = true, skillSourceError = null) }
+        skillSourceJob = viewModelScope.launch {
+            runCatching {
+                if (skill != null) controller.readSkill(skill.path, offset)
+                else controller.readSkillPackage(requireNotNull(packageInfo), offset)
+            }
+                .onSuccess { chunk ->
+                    mutableState.update {
+                        val stillSelected = if (skill != null) it.selectedSkill?.path == skill.path
+                        else it.selectedSkillPackage?.id == packageInfo?.id
+                        if (!stillSelected) it else it.copy(
+                            skillSourceChunks = it.skillSourceChunks + chunk.content,
+                            skillSourceNextOffset = chunk.nextOffset,
+                            skillSourceTotalBytes = chunk.totalBytes,
+                            isSkillSourceLoading = false,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    mutableState.update {
+                        it.copy(
+                            isSkillSourceLoading = false,
+                            skillSourceError = error.message?.take(300) ?: "Skill source could not be read",
+                        )
+                    }
+                }
+        }
     }
 
     fun openPlugin(plugin: AgentPluginReference) {
         val controller = serviceController ?: return
-        mutableState.update { it.copy(isCapabilitiesLoading = true, capabilityError = null) }
+        mutableState.update {
+            it.copy(
+                isPluginDetailLoading = true,
+                capabilityOperationId = "plugin:${plugin.id}",
+                capabilityActionError = null,
+            )
+        }
         viewModelScope.launch {
             runCatching { controller.readPlugin(plugin) }
                 .onSuccess { detail ->
-                    mutableState.update { it.copy(selectedPlugin = detail, isCapabilitiesLoading = false) }
+                    mutableState.update {
+                        it.copy(
+                            selectedPlugin = detail,
+                            isPluginDetailLoading = false,
+                            capabilityOperationId = null,
+                        )
+                    }
                 }
                 .onFailure { error -> capabilityFailure(error) }
         }
     }
 
-    fun toggleSkill(path: String, enabled: Boolean) = capabilityMutation("Skill could not be updated") {
+    fun toggleSkill(path: String, enabled: Boolean) = capabilityMutation(
+        "skill:$path",
+        "Skill could not be updated",
+    ) {
         serviceController?.setSkillEnabled(path, enabled)
-        serviceController?.let { refreshCapabilities(it, forceReload = true) }
+        loadSkills(forceReload = true)
     }
 
-    fun installPlugin(plugin: AgentPluginReference) = capabilityMutation("Plugin could not be installed") {
+    fun installSkill(packageInfo: AgentSkillPackage) = capabilityMutation(
+        "skill:${packageInfo.id}",
+        "Skill could not be installed",
+    ) {
+        serviceController?.installSkill(packageInfo)
+        mutableState.update {
+            it.copy(
+                availableSkills = it.availableSkills.filterNot { candidate -> candidate.id == packageInfo.id },
+                selectedSkillPackage = null,
+                capabilitySection = CapabilitySection.INSTALLED,
+            )
+        }
+        loadSkills(forceReload = true)
+    }
+
+    fun requestUninstallSkill(skill: AgentSkill) {
+        if (skill.canUninstall) mutableState.update {
+            it.copy(pendingCapabilityRemoval = CapabilityRemoval.Skill(skill))
+        }
+    }
+
+    fun installPlugin(plugin: AgentPluginReference) = capabilityMutation(
+        "plugin:${plugin.id}",
+        "Plugin could not be installed",
+    ) {
         val result = serviceController?.installPlugin(plugin) ?: return@capabilityMutation
-        mutableState.update { it.copy(pluginChangesNeedNewChat = true) }
-        serviceController?.let { refreshCapabilities(it, forceReload = true) }
+        mutableState.update {
+            it.copy(
+                pluginChangesNeedNewChat = true,
+                selectedPlugin = null,
+                availablePlugins = it.availablePlugins.filterNot { candidate -> candidate.reference.id == plugin.id },
+                unavailablePluginIds = it.unavailablePluginIds - plugin.id,
+                capabilityActionError = null,
+                capabilitySection = CapabilitySection.INSTALLED,
+            )
+        }
+        loadInstalledPlugins(forceReload = true)
         if (result.authPolicy == AgentPluginAuthPolicy.ON_INSTALL) {
             enqueueConnectorAuthentication(result.connectorsNeedingAuthentication)
         }
     }
 
-    fun uninstallPlugin(pluginId: String) = capabilityMutation("Plugin could not be removed") {
+    private fun uninstallPlugin(pluginId: String) = capabilityMutation(
+        "plugin:$pluginId",
+        "Plugin could not be removed",
+    ) {
         serviceController?.uninstallPlugin(pluginId)
-        mutableState.update { it.copy(pluginChangesNeedNewChat = true, selectedPlugin = null) }
-        serviceController?.let { refreshCapabilities(it, forceReload = true) }
+        mutableState.update {
+            it.copy(
+                pluginChangesNeedNewChat = true,
+                selectedPlugin = null,
+                installedPlugins = it.installedPlugins.filterNot { plugin -> plugin.reference.id == pluginId },
+                availablePluginsLoaded = false,
+            )
+        }
+        loadInstalledPlugins(forceReload = true)
     }
 
-    fun togglePlugin(pluginId: String, enabled: Boolean) = capabilityMutation("Plugin could not be updated") {
+    fun requestUninstallPlugin(pluginId: String, displayName: String) {
+        mutableState.update {
+            it.copy(pendingCapabilityRemoval = CapabilityRemoval.Plugin(pluginId, displayName))
+        }
+    }
+
+    fun dismissCapabilityRemoval() {
+        mutableState.update { it.copy(pendingCapabilityRemoval = null) }
+    }
+
+    fun confirmCapabilityRemoval() {
+        when (val removal = mutableState.value.pendingCapabilityRemoval) {
+            is CapabilityRemoval.Skill -> {
+                mutableState.update { it.copy(pendingCapabilityRemoval = null) }
+                capabilityMutation(
+                    "skill:${removal.skill.path}",
+                    "Skill could not be removed",
+                ) {
+                    serviceController?.uninstallSkill(removal.skill)
+                    mutableState.update {
+                        it.copy(
+                            selectedSkill = null,
+                            skills = it.skills.filterNot { candidate -> candidate.path == removal.skill.path },
+                        )
+                    }
+                    mutableState.update { it.copy(availableSkillsLoaded = false) }
+                    loadAvailableSkills(forceReload = false)
+                }
+            }
+            is CapabilityRemoval.Plugin -> {
+                mutableState.update { it.copy(pendingCapabilityRemoval = null) }
+                uninstallPlugin(removal.id)
+            }
+            null -> Unit
+        }
+    }
+
+    fun togglePlugin(pluginId: String, enabled: Boolean) = capabilityMutation(
+        "plugin:$pluginId",
+        "Plugin could not be updated",
+    ) {
         serviceController?.setPluginEnabled(pluginId, enabled)
         mutableState.update { it.copy(pluginChangesNeedNewChat = true) }
-        serviceController?.let { refreshCapabilities(it, forceReload = true) }
+        loadInstalledPlugins(forceReload = true)
     }
 
     fun connectApp(connectorId: String) {
@@ -489,7 +790,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         it.copy(connectorAuthUrl = url, connectorAuthName = serverName)
                     }
                 }
-                .onFailure { error -> capabilityFailure(error) }
+                .onFailure { error ->
+                    mutableState.update {
+                        it.copy(statusMessage = error.message?.take(300) ?: "Integration could not be connected")
+                    }
+                }
         }
     }
 
@@ -508,6 +813,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             beginNextConnectorAuthentication()
         } else {
             pendingConnectorAuthentications.clear()
+        }
+    }
+
+    fun refreshIntegrations() {
+        integrationsLoaded = true
+        serviceController?.let { controller ->
+            viewModelScope.launch { refreshConnectors(controller, forceReload = false) }
         }
     }
 
@@ -657,11 +969,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 selectedInvocations = (it.selectedInvocations + invocation)
                     .distinctBy(AgentInvocation::key),
+                recentInvocationKeys = it.recentInvocationKeys.withRecentInvocation(invocation.key),
                 draft = it.draft.withoutActiveInvocationToken(invocation),
                 activeSelector = null,
             )
         }
-        beginOnUseAuthentication(mutableState.value)
+        chatPreferences.edit()
+            .putString(RECENT_INVOCATIONS, mutableState.value.recentInvocationKeys.joinToString("\n"))
+            .apply()
+        if (invocation is AgentInvocation.Plugin && !integrationsLoaded) {
+            integrationsLoaded = true
+            serviceController?.let { controller ->
+                viewModelScope.launch {
+                    refreshConnectors(controller, forceReload = false)
+                    beginOnUseAuthentication(mutableState.value)
+                }
+            }
+        } else {
+            beginOnUseAuthentication(mutableState.value)
+        }
     }
 
     fun removeInvocation(key: String) {
@@ -721,7 +1047,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         runCatching { graph.platform.selectWorkspace(path) }
             .onSuccess { selected ->
                 mutableState.update {
-                    it.copy(statusMessage = "Workspace selected", workspacePath = selected, hasStorageAccess = true)
+                    it.copy(
+                        statusMessage = "Workspace selected",
+                        workspacePath = selected,
+                        hasStorageAccess = true,
+                        skills = emptyList(),
+                        availableSkills = emptyList(),
+                        installedPlugins = emptyList(),
+                        availablePlugins = emptyList(),
+                        unavailablePluginIds = emptySet(),
+                        capabilityActionError = null,
+                        skillsLoaded = false,
+                        availableSkillsLoaded = false,
+                        installedPluginsLoaded = false,
+                        availablePluginsLoaded = false,
+                    )
                 }
             }
             .onFailure { mutableState.update { state -> state.copy(statusMessage = "Workspace selection failed") } }
@@ -729,7 +1069,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearWorkspace() {
         runCatching { graph.platform.clearWorkspace() }
-            .onSuccess { mutableState.update { it.copy(statusMessage = "Workspace cleared", workspacePath = null) } }
+            .onSuccess {
+                mutableState.update {
+                    it.copy(
+                        statusMessage = "Workspace cleared",
+                        workspacePath = null,
+                        skills = emptyList(),
+                        availableSkills = emptyList(),
+                        installedPlugins = emptyList(),
+                        availablePlugins = emptyList(),
+                        unavailablePluginIds = emptySet(),
+                        capabilityActionError = null,
+                        skillsLoaded = false,
+                        availableSkillsLoaded = false,
+                        installedPluginsLoaded = false,
+                        availablePluginsLoaded = false,
+                    )
+                }
+            }
             .onFailure { mutableState.update { it.copy(statusMessage = "Workspace could not be cleared") } }
     }
 
@@ -749,6 +1106,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         serviceStateJob?.cancel()
+        skillsJob?.cancel()
+        availableSkillsJob?.cancel()
+        installedPluginsJob?.cancel()
+        availablePluginsJob?.cancel()
+        skillSourceJob?.cancel()
         telegramJob?.cancel()
         telegramAuthSession?.close()
         if (bindingRequested) runCatching { appContext.unbindService(serviceConnection) }
@@ -785,31 +1147,158 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         persistSelection()
-        refreshCapabilities(controller, forceReload = false)
+        loadSkills(forceReload = false)
+        loadInstalledPlugins(forceReload = false)
     }
 
-    private suspend fun refreshCapabilities(
-        controller: ForegroundSessionController,
-        forceReload: Boolean,
-    ) {
-        val workingDirectory = graph.platform.activeWorkspacePath() ?: return
-        mutableState.update { it.copy(isCapabilitiesLoading = true, capabilityError = null) }
-        val skills = runCatching { controller.listSkills(workingDirectory, forceReload) }
-        val plugins = runCatching { controller.listPlugins(workingDirectory) }
-        refreshConnectors(controller, forceReload)
-        val errors = buildList {
-            skills.exceptionOrNull()?.message?.let(::add)
-            plugins.exceptionOrNull()?.message?.let(::add)
-            skills.getOrNull()?.errors?.let(::addAll)
-            plugins.getOrNull()?.errors?.let(::addAll)
+    private fun loadCurrentCapabilities(forceReload: Boolean) {
+        val current = mutableState.value
+        when (current.capabilitySection) {
+            CapabilitySection.INSTALLED -> {
+                if (current.capabilityFilter != CapabilityFilter.PLUGINS) loadSkills(forceReload)
+                if (current.capabilityFilter != CapabilityFilter.SKILLS) loadInstalledPlugins(forceReload)
+            }
+            CapabilitySection.DISCOVER -> {
+                if (current.capabilityFilter != CapabilityFilter.PLUGINS) loadAvailableSkills(forceReload)
+                if (current.capabilityFilter != CapabilityFilter.SKILLS) loadAvailablePlugins(forceReload)
+            }
         }
-        mutableState.update {
-            it.copy(
-                skills = skills.getOrNull()?.skills ?: it.skills,
-                plugins = plugins.getOrNull()?.plugins ?: it.plugins,
-                isCapabilitiesLoading = false,
-                capabilityError = errors.distinct().joinToString("\n").ifBlank { null },
-            )
+    }
+
+    private fun loadSkills(forceReload: Boolean) {
+        val controller = serviceController ?: return
+        val current = mutableState.value
+        if (!forceReload && (current.skillsLoaded || skillsJob?.isActive == true)) return
+        if (forceReload) skillsJob?.cancel()
+        val workingDirectory = graph.platform.activeWorkspacePath() ?: return
+        mutableState.update { it.copy(isSkillsLoading = true, skillsError = null) }
+        skillsJob = viewModelScope.launch {
+            runCatching { controller.listSkills(workingDirectory, forceReload) }
+                .onSuccess { catalog ->
+                    mutableState.update {
+                        it.copy(
+                            skills = catalog.skills,
+                            skillsLoaded = true,
+                            isSkillsLoading = false,
+                            skillsError = catalog.errors.distinct().joinToString("\n").ifBlank { null },
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    mutableState.update {
+                        it.copy(
+                            skillsLoaded = true,
+                            isSkillsLoading = false,
+                            skillsError = error.message?.take(300) ?: "Skills could not be loaded",
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun loadAvailableSkills(forceReload: Boolean) {
+        val controller = serviceController ?: return
+        val current = mutableState.value
+        if (!forceReload && (current.availableSkillsLoaded || availableSkillsJob?.isActive == true)) return
+        if (forceReload) availableSkillsJob?.cancel()
+        mutableState.update { it.copy(isAvailableSkillsLoading = true, availableSkillsError = null) }
+        availableSkillsJob = viewModelScope.launch {
+            val installed = mutableState.value.skills.map(AgentSkill::name).toSet()
+            runCatching { controller.listAvailableSkills(installed, forceReload) }
+                .onSuccess { catalog ->
+                    mutableState.update {
+                        it.copy(
+                            availableSkills = catalog.skills,
+                            availableSkillsLoaded = true,
+                            isAvailableSkillsLoading = false,
+                            availableSkillsError = catalog.errors.distinct().joinToString("\n").ifBlank { null },
+                        )
+                    }
+                    if (!forceReload && catalog.freshness == AgentCatalogFreshness.STALE_CACHE) {
+                        availableSkillsJob = null
+                        loadAvailableSkills(forceReload = true)
+                    }
+                }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    mutableState.update {
+                        it.copy(
+                            availableSkillsLoaded = true,
+                            isAvailableSkillsLoading = false,
+                            availableSkillsError = error.message?.take(300) ?: "Available skills could not be loaded",
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun loadInstalledPlugins(forceReload: Boolean) {
+        val controller = serviceController ?: return
+        val current = mutableState.value
+        if (!forceReload && (current.installedPluginsLoaded || installedPluginsJob?.isActive == true)) return
+        if (forceReload) installedPluginsJob?.cancel()
+        val workingDirectory = graph.platform.activeWorkspacePath() ?: return
+        mutableState.update { it.copy(isInstalledPluginsLoading = true, installedPluginsError = null) }
+        installedPluginsJob = viewModelScope.launch {
+            runCatching { controller.listInstalledPlugins(workingDirectory) }
+                .onSuccess { catalog ->
+                    mutableState.update {
+                        it.copy(
+                            installedPlugins = catalog.plugins,
+                            installedPluginsLoaded = true,
+                            isInstalledPluginsLoading = false,
+                            installedPluginsError = catalog.errors.distinct().joinToString("\n").ifBlank { null },
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    mutableState.update {
+                        it.copy(
+                            installedPluginsLoaded = true,
+                            isInstalledPluginsLoading = false,
+                            installedPluginsError = error.message?.take(300) ?: "Installed plugins could not be loaded",
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun loadAvailablePlugins(forceReload: Boolean) {
+        val controller = serviceController ?: return
+        val current = mutableState.value
+        if (!forceReload && (current.availablePluginsLoaded || availablePluginsJob?.isActive == true)) return
+        if (forceReload) availablePluginsJob?.cancel()
+        val workingDirectory = graph.platform.activeWorkspacePath() ?: return
+        mutableState.update { it.copy(isAvailablePluginsLoading = true, availablePluginsError = null) }
+        availablePluginsJob = viewModelScope.launch {
+            runCatching { controller.listAvailablePlugins(workingDirectory, forceReload) }
+                .onSuccess { catalog ->
+                    mutableState.update {
+                        val installedIds = it.installedPlugins.map { plugin -> plugin.reference.id }.toSet()
+                        it.copy(
+                            availablePlugins = catalog.plugins.filterNot { plugin -> plugin.reference.id in installedIds },
+                            availablePluginsLoaded = true,
+                            isAvailablePluginsLoading = false,
+                            availablePluginsError = catalog.errors.distinct().joinToString("\n").ifBlank { null },
+                        )
+                    }
+                    if (!forceReload && catalog.freshness == AgentCatalogFreshness.STALE_CACHE) {
+                        availablePluginsJob = null
+                        loadAvailablePlugins(forceReload = true)
+                    }
+                }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    mutableState.update {
+                        it.copy(
+                            availablePluginsLoaded = true,
+                            isAvailablePluginsLoading = false,
+                            availablePluginsError = "Available plugins could not be refreshed. Check your connection and retry.",
+                        )
+                    }
+                }
         }
     }
 
@@ -827,22 +1316,43 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun capabilityMutation(message: String, block: suspend () -> Unit) {
-        mutableState.update { it.copy(isCapabilitiesLoading = true, capabilityError = null) }
+    private fun capabilityMutation(operationId: String, message: String, block: suspend () -> Unit) {
+        mutableState.update {
+            it.copy(
+                isCapabilityMutationLoading = true,
+                capabilityOperationId = operationId,
+                capabilityActionError = null,
+            )
+        }
         viewModelScope.launch {
             runCatching { block() }
-                .onSuccess { mutableState.update { it.copy(isCapabilitiesLoading = false) } }
+                .onSuccess {
+                    mutableState.update {
+                        it.copy(isCapabilityMutationLoading = false, capabilityOperationId = null)
+                    }
+                }
                 .onFailure { error -> capabilityFailure(error, message) }
         }
     }
 
     private fun capabilityFailure(error: Throwable, fallback: String = "Capability request failed") {
+        val unavailable = error as? AgentPluginUnavailableException
         mutableState.update {
+            val message = error.message?.take(300) ?: fallback
+            val operationId = it.capabilityOperationId
+                ?: unavailable?.let { failure -> "plugin:${failure.pluginId}" }
+                ?: "capability"
             it.copy(
-                isCapabilitiesLoading = false,
-                capabilityError = error.message?.take(300) ?: fallback,
+                isCapabilityMutationLoading = false,
+                capabilityOperationId = null,
+                isPluginDetailLoading = false,
+                capabilityActionError = CapabilityActionError(operationId, message),
+                unavailablePluginIds = unavailable?.let { failure ->
+                    it.unavailablePluginIds + failure.pluginId
+                } ?: it.unavailablePluginIds,
             )
         }
+        if (unavailable != null) loadAvailablePlugins(forceReload = true)
     }
 
     private fun beginAppAuthentication(connector: AgentConnector) {
@@ -1080,6 +1590,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         const val LAST_SPEED = "last-speed"
         const val APPROVAL_POLICY = "approval-policy"
         const val PINNED_CONVERSATIONS = "pinned-conversations"
+        const val RECENT_INVOCATIONS = "recent-invocations"
         const val AUTHENTICATION_HANDOFF_PENDING = "authentication-handoff-pending"
         const val MAX_CONVERSATION_TITLE_LENGTH = 80
         const val EXISTING_SERVICE_BIND_TIMEOUT_MILLIS = 1_000L

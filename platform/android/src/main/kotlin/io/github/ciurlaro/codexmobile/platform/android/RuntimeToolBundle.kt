@@ -112,10 +112,47 @@ internal class RuntimeToolBundle(private val context: Context) {
     }
 
     private fun installSkills(codexHome: File) {
-        SKILLS.forEach { name ->
-            copyAsset("codex/skills/$name/SKILL.md", File(codexHome, "skills/$name/SKILL.md"))
+        BUNDLED_SKILLS.filterNot { isBundledSkillRemoved(codexHome, it) }.forEach { name ->
+            installBundledSkill(codexHome, name)
         }
     }
+
+    @Synchronized
+    fun installBundledSkill(codexHome: File, name: String) {
+        require(name in BUNDLED_SKILLS) { "Unknown bundled skill" }
+        clearBundledSkillRemoval(codexHome, name)
+        copyAsset("codex/skills/$name/SKILL.md", File(codexHome, "skills/$name/SKILL.md"))
+    }
+
+    fun readBundledSkill(name: String): String {
+        require(name in BUNDLED_SKILLS) { "Unknown bundled skill" }
+        return context.assets.open("codex/skills/$name/SKILL.md").bufferedReader().use { it.readText() }
+    }
+
+    @Synchronized
+    fun markBundledSkillRemoved(codexHome: File, name: String) {
+        require(name in BUNDLED_SKILLS) { "Unknown bundled skill" }
+        val marker = removedSkillMarker(codexHome, name)
+        check(marker.parentFile?.let { it.isDirectory || it.mkdirs() } == true)
+        val next = File(marker.parentFile, ".${marker.name}.next")
+        next.writeText("removed\n")
+        check(!marker.exists() || marker.delete()) { "Unable to replace removed bundled skill state" }
+        check(next.renameTo(marker)) { "Unable to remember removed bundled skill" }
+    }
+
+    @Synchronized
+    fun clearBundledSkillRemoval(codexHome: File, name: String) {
+        require(name in BUNDLED_SKILLS) { "Unknown bundled skill" }
+        check(!removedSkillMarker(codexHome, name).exists() || removedSkillMarker(codexHome, name).delete()) {
+            "Unable to restore bundled skill state"
+        }
+    }
+
+    fun isBundledSkillRemoved(codexHome: File, name: String): Boolean =
+        removedSkillMarker(codexHome, name).isFile
+
+    private fun removedSkillMarker(codexHome: File, name: String) =
+        File(codexHome, ".codex-mobile/removed-skills/$name")
 
     private fun copyAsset(asset: String, output: File) {
         output.parentFile?.let { check(it.isDirectory || it.mkdirs()) }
@@ -133,7 +170,7 @@ internal class RuntimeToolBundle(private val context: Context) {
         check(isDirectory || mkdirs()) { "Unable to prepare private runtime directory" }
     }
 
-    private companion object {
+    companion object {
         const val VERSION_MARKER = ".bundle-version"
         val EXECUTABLES = mapOf(
             "mutool" to "libcodex_mutool.so",
@@ -141,6 +178,6 @@ internal class RuntimeToolBundle(private val context: Context) {
             "officecli" to "libcodex_officecli.so",
             "tgcli" to "libcodex_tgcli.so",
         )
-        val SKILLS = listOf("local-documents", "tgcli")
+        val BUNDLED_SKILLS = listOf("local-documents", "tgcli")
     }
 }

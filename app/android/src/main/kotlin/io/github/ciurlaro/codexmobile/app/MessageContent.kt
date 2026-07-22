@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -26,6 +27,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
@@ -44,7 +46,6 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.ciurlaro.codexmobile.core.AgentCapability
-import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
@@ -53,7 +54,7 @@ import com.mikepenz.markdown.m3.elements.MarkdownCheckBox
 import com.mikepenz.markdown.m3.markdownTypography
 
 @Composable
-internal fun UserMessage(message: ChatMessage) {
+internal fun UserMessage(message: ChatMessage, state: MainUiState) {
     val shellCommand = message.text.shellCommandOrNull()
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         if (shellCommand != null) {
@@ -78,14 +79,15 @@ internal fun UserMessage(message: ChatMessage) {
                 )
             }
             message.invocations.forEach { invocation ->
-                Text(
-                    text = when (invocation) {
-                        is AgentInvocation.Skill -> "Use \$${invocation.name}"
-                        is AgentInvocation.Plugin -> "Use @${invocation.name}"
-                    },
-                    color = ChatColors.Accent,
-                    style = MaterialTheme.typography.bodyLarge,
-                )
+                val item = state.promptInvocation(invocation)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AppIcon(item.glyph(), Modifier.size(18.dp), item.accent())
+                    Text(
+                        text = "  Use ${item.title}",
+                        color = ChatColors.Accent,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
             }
         }
     }

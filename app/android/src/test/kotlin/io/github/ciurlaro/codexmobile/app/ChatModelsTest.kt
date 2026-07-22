@@ -146,9 +146,10 @@ class ChatModelsTest {
             authPolicy = AgentPluginAuthPolicy.ON_USE,
             available = true,
         )
-        val state = MainUiState(skills = listOf(skill), plugins = listOf(plugin))
+        val state = MainUiState(skills = listOf(skill), installedPlugins = listOf(plugin))
 
         assertEquals(listOf(AgentInvocation.Skill("review", skill.path)), state.copy(draft = "Use \$rev").suggestedInvocations())
+        assertEquals(listOf(AgentInvocation.Plugin("drive", plugin.reference.uri)), state.copy(draft = "@").suggestedInvocations())
         assertEquals(listOf(AgentInvocation.Plugin("drive", plugin.reference.uri)), state.copy(draft = "@dri").suggestedInvocations())
         assertEquals(emptyList(), state.copy(draft = "email@example.com").suggestedInvocations())
         assertEquals(emptyList(), state.copy(draft = "@the_iurlix").suggestedInvocations())
@@ -156,6 +157,53 @@ class ChatModelsTest {
             draft = "\$rev",
             selectedInvocations = listOf(AgentInvocation.Skill("review", skill.path)),
         ).suggestedInvocations())
+    }
+
+    @Test
+    fun promptInvocationsHideCanonicalNamespacesButKeepThemSearchable() {
+        val gmail = AgentSkill(
+            name = "gmail:gmail",
+            displayName = "Gmail:gmail",
+            description = "Search and draft email",
+            path = "/plugins/gmail/skills/gmail/SKILL.md",
+            scope = AgentSkillScope.PLUGIN,
+            enabled = true,
+        )
+        val triage = AgentSkill(
+            name = "gmail:gmail-inbox-triage",
+            displayName = "Gmail:gmail inbox triage",
+            description = "Triage the inbox",
+            path = "/plugins/gmail/skills/gmail-inbox-triage/SKILL.md",
+            scope = AgentSkillScope.PLUGIN,
+            enabled = true,
+        )
+        val state = MainUiState(skills = listOf(gmail, triage))
+
+        assertEquals("Gmail", state.promptInvocation(AgentInvocation.Skill(gmail.name, gmail.path)).title)
+        val triageItem = state.promptInvocation(AgentInvocation.Skill(triage.name, triage.path))
+        assertEquals("Inbox triage", triageItem.title)
+        assertEquals("Gmail", triageItem.provider)
+        assertEquals(
+            listOf(AgentInvocation.Skill(triage.name, triage.path)),
+            state.copy(draft = "\$triage").suggestedInvocations(),
+        )
+        assertEquals(
+            AgentInvocation.Skill(gmail.name, gmail.path),
+            state.copy(draft = "\$gmail:gmail").suggestedInvocations().first(),
+        )
+    }
+
+    @Test
+    fun recentPromptInvocationsAreUniqueNewestFirstAndBounded() {
+        val recent = emptyList<String>()
+            .withRecentInvocation("one")
+            .withRecentInvocation("two")
+            .withRecentInvocation("three")
+            .withRecentInvocation("four")
+            .withRecentInvocation("two")
+            .withRecentInvocation("five")
+
+        assertEquals(listOf("five", "two", "four", "three"), recent)
     }
 
     @Test
@@ -196,7 +244,7 @@ class ChatModelsTest {
         val unrelated = AgentConnector("mail", "Mail", pluginNames = listOf("Mail"))
         val state = MainUiState(
             selectedInvocations = listOf(AgentInvocation.Plugin("drive", plugin.reference.uri)),
-            plugins = listOf(plugin),
+            installedPlugins = listOf(plugin),
             connectors = listOf(disconnected, unrelated),
         )
 

@@ -13,6 +13,7 @@ import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
 import io.github.ciurlaro.codexmobile.core.AgentPluginAuthPolicy
 import io.github.ciurlaro.codexmobile.core.AgentPluginSummary
 import io.github.ciurlaro.codexmobile.core.AgentSkill
+import io.github.ciurlaro.codexmobile.core.AgentSkillPackage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
@@ -30,16 +31,46 @@ data class MainUiState(
     val draft: String = "",
     val selectedCapabilities: Set<AgentCapability> = emptySet(),
     val selectedInvocations: List<AgentInvocation> = emptyList(),
+    val recentInvocationKeys: List<String> = emptyList(),
     val skills: List<AgentSkill> = emptyList(),
-    val plugins: List<AgentPluginSummary> = emptyList(),
+    val availableSkills: List<AgentSkillPackage> = emptyList(),
+    val installedPlugins: List<AgentPluginSummary> = emptyList(),
+    val availablePlugins: List<AgentPluginSummary> = emptyList(),
     val connectors: List<AgentConnector> = emptyList(),
     val mcpServers: List<AgentMcpServer> = emptyList(),
+    val selectedSkill: AgentSkill? = null,
+    val selectedSkillPackage: AgentSkillPackage? = null,
+    val githubSkillCandidates: List<AgentSkillPackage> = emptyList(),
+    val githubSkillError: String? = null,
+    val isGitHubSkillLoading: Boolean = false,
+    val skillSourceChunks: List<String> = emptyList(),
+    val skillSourceNextOffset: Long? = null,
+    val skillSourceTotalBytes: Long = 0,
     val selectedPlugin: AgentPluginDetail? = null,
     val capabilitySearch: String = "",
-    val capabilityTab: CapabilityTab = CapabilityTab.SKILLS,
-    val isCapabilitiesLoading: Boolean = false,
-    val capabilityError: String? = null,
+    val capabilityFilter: CapabilityFilter = CapabilityFilter.ALL,
+    val capabilitySection: CapabilitySection = CapabilitySection.INSTALLED,
+    val skillsLoaded: Boolean = false,
+    val availableSkillsLoaded: Boolean = false,
+    val installedPluginsLoaded: Boolean = false,
+    val availablePluginsLoaded: Boolean = false,
+    val isSkillsLoading: Boolean = false,
+    val isAvailableSkillsLoading: Boolean = false,
+    val isInstalledPluginsLoading: Boolean = false,
+    val isAvailablePluginsLoading: Boolean = false,
+    val isSkillSourceLoading: Boolean = false,
+    val isCapabilityMutationLoading: Boolean = false,
+    val capabilityOperationId: String? = null,
+    val capabilityActionError: CapabilityActionError? = null,
+    val unavailablePluginIds: Set<String> = emptySet(),
+    val isPluginDetailLoading: Boolean = false,
+    val skillsError: String? = null,
+    val availableSkillsError: String? = null,
+    val installedPluginsError: String? = null,
+    val availablePluginsError: String? = null,
+    val skillSourceError: String? = null,
     val pluginChangesNeedNewChat: Boolean = false,
+    val pendingCapabilityRemoval: CapabilityRemoval? = null,
     val connectorAuthUrl: String? = null,
     val connectorAuthName: String? = null,
     val pendingElicitation: AgentElicitation? = null,
@@ -49,6 +80,7 @@ data class MainUiState(
     val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.NEVER,
     val isHistoryOpen: Boolean = false,
     val screen: AppScreen = AppScreen.CHAT,
+    val capabilitiesReturnScreen: AppScreen = AppScreen.SETTINGS,
     val activeSelector: ChatSelector? = null,
     val historySearch: String = "",
     val isConversationLoading: Boolean = false,
@@ -66,7 +98,19 @@ data class MainUiState(
     val telegramAuthPrompt: TelegramAuthPrompt? = null,
     val isTelegramOperationInProgress: Boolean = false,
     val telegramError: String? = null,
-)
+) {
+    val plugins: List<AgentPluginSummary>
+        get() = (availablePlugins + installedPlugins)
+            .associateBy { it.reference.id }
+            .values
+            .toList()
+
+    val pluginsError: String?
+        get() = listOfNotNull(installedPluginsError, availablePluginsError)
+            .distinct()
+            .joinToString("\n")
+            .ifBlank { null }
+}
 
 internal fun MainUiState.withSubmittedTurn(
     request: AgentTurnRequest,

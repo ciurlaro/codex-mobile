@@ -15,9 +15,16 @@ interface AgentClient : AutoCloseable {
 
     suspend fun listSkills(workingDirectory: String, forceReload: Boolean = false): AgentSkillCatalog
 
+    suspend fun readSkill(path: String, offset: Long = 0): AgentSkillChunk
+
     suspend fun setSkillEnabled(path: String, enabled: Boolean)
 
-    suspend fun listPlugins(workingDirectory: String): AgentPluginCatalog
+    suspend fun listInstalledPlugins(workingDirectory: String): AgentPluginCatalog
+
+    suspend fun listAvailablePlugins(
+        workingDirectory: String,
+        forceRefresh: Boolean = false,
+    ): AgentPluginCatalog
 
     suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail
 

@@ -1,6 +1,7 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
 import io.github.ciurlaro.codexmobile.core.AgentClient
+import io.github.ciurlaro.codexmobile.core.AgentCatalogFreshness
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConnector
 import io.github.ciurlaro.codexmobile.core.AgentConversation
@@ -18,22 +19,32 @@ import io.github.ciurlaro.codexmobile.core.AgentPluginCatalog
 import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
 import io.github.ciurlaro.codexmobile.core.AgentPluginInstallResult
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentPluginUnavailableException
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentServiceTier
 import io.github.ciurlaro.codexmobile.core.AgentSkillCatalog
+import io.github.ciurlaro.codexmobile.core.AgentSkillChunk
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
 import io.github.ciurlaro.codexmobile.core.SessionId
+import java.io.File
+import java.io.RandomAccessFile
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -50,7 +61,8 @@ import kotlinx.serialization.json.putJsonObject
 class CodexAgentClient(
     launchCodexProcess: () -> Process,
     requestTimeoutMillis: Long = 20_000,
-    clientVersion: String = "test",
+    private val clientVersion: String = "test",
+    private val pluginCacheDirectory: File? = null,
 ) : AgentClient {
     private val eventsChannel = Channel<AgentEvent>(capacity = EVENT_BUFFER_SIZE)
     private val authMutex = Mutex()
@@ -60,6 +72,7 @@ class CodexAgentClient(
     private val pendingElicitationRequests = ConcurrentHashMap<String, JsonElement>()
     private val workItems = ConcurrentHashMap<String, Pair<SessionId, AgentWorkActivity>>()
     private val userShellItems = ConcurrentHashMap.newKeySet<String>()
+    private val knownSkillPaths = ConcurrentHashMap.newKeySet<String>()
     private val openedSessions = ConcurrentHashMap.newKeySet<SessionId>()
     private val turnStateLock = Any()
     private val activeTurns = mutableMapOf<SessionId, String>()
@@ -183,6 +196,7 @@ class CodexAgentClient(
             cancellingTurns.clear()
         }
         userShellItems.clear()
+        knownSkillPaths.clear()
         openedSessions.clear()
     }
 
@@ -232,7 +246,31 @@ class CodexAgentClient(
             errors = entries.flatMap { it.requiredArray("errors") }.map { error ->
                 error.jsonObject.let { "${it.requiredString("path")}: ${it.requiredText("message")}" }
             },
-        )
+        ).also { catalog ->
+            knownSkillPaths.clear()
+            catalog.skills.mapTo(knownSkillPaths, io.github.ciurlaro.codexmobile.core.AgentSkill::path)
+        }
+    }
+
+    override suspend fun readSkill(path: String, offset: Long): AgentSkillChunk = withContext(Dispatchers.IO) {
+        require(path in knownSkillPaths) { "Skill was not returned by skills/list" }
+        require(offset >= 0) { "Offset must not be negative" }
+        val file = File(path)
+        require(file.isFile && file.canRead()) { "Skill source is not readable" }
+        RandomAccessFile(file, "r").use { source ->
+            val total = source.length()
+            require(offset <= total) { "Offset exceeds skill source size" }
+            source.seek(offset)
+            val bytes = ByteArray(SKILL_CHUNK_BYTES)
+            val count = source.read(bytes).coerceAtLeast(0)
+            val complete = if (offset + count < total) completeUtf8Length(bytes, count) else count
+            val next = (offset + complete).takeIf { it < total }
+            AgentSkillChunk(
+                content = String(bytes, 0, complete, StandardCharsets.UTF_8),
+                nextOffset = next,
+                totalBytes = total,
+            )
+        }
     }
 
     override suspend fun setSkillEnabled(path: String, enabled: Boolean) {
@@ -246,33 +284,109 @@ class CodexAgentClient(
         )
     }
 
-    override suspend fun listPlugins(workingDirectory: String): AgentPluginCatalog {
+    override suspend fun listInstalledPlugins(workingDirectory: String): AgentPluginCatalog =
+        listPlugins(workingDirectory, "plugin/installed")
+
+    override suspend fun listAvailablePlugins(
+        workingDirectory: String,
+        forceRefresh: Boolean,
+    ): AgentPluginCatalog {
+        require(workingDirectory.startsWith('/')) { "Working directory must be absolute" }
+        val cache = pluginCacheFile(workingDirectory)
+        if (!forceRefresh) readPluginCache(cache)?.takeIf { it.plugins.isNotEmpty() }?.let { return it }
+        return runCatching {
+            var catalog = listPlugins(workingDirectory, "plugin/list", PLUGIN_CATALOG_TIMEOUT_MILLIS) {
+                writePluginCache(cache, it)
+            }
+            for (retryDelay in EMPTY_PLUGIN_CATALOG_RETRY_DELAYS_MILLIS) {
+                if (catalog.plugins.isNotEmpty() || catalog.errors.isNotEmpty()) break
+                delay(retryDelay)
+                catalog = listPlugins(workingDirectory, "plugin/list", PLUGIN_CATALOG_TIMEOUT_MILLIS) {
+                    writePluginCache(cache, it)
+                }
+            }
+            if (catalog.plugins.isEmpty() && catalog.errors.isEmpty()) catalog.copy(
+                errors = listOf("The plugin marketplace is not ready yet. Retry in a moment."),
+            ) else catalog
+        }.getOrElse { error ->
+            readPluginCache(cache, stale = true)?.takeIf { it.plugins.isNotEmpty() }?.copy(
+                errors = listOfNotNull(error.message ?: "Available plugins could not be refreshed"),
+            ) ?: throw error
+        }
+    }
+
+    private suspend fun listPlugins(
+        workingDirectory: String,
+        method: String,
+        timeoutMillis: Long? = null,
+        onResponse: (JsonObject) -> Unit = {},
+    ): AgentPluginCatalog {
         require(workingDirectory.startsWith('/')) { "Working directory must be absolute" }
         val params = buildJsonObject {
             put("cwds", buildJsonArray { add(JsonPrimitive(workingDirectory)) })
         }
-        val catalog = request("plugin/list", params).jsonObject
-        val installed = request("plugin/installed", params).jsonObject
-        val byId = linkedMapOf<String, io.github.ciurlaro.codexmobile.core.AgentPluginSummary>()
-        (parsePluginMarketplaces(catalog) + parsePluginMarketplaces(installed)).forEach {
-            val previous = byId[it.reference.id]
-            if (previous == null || it.installed) byId[it.reference.id] = it
-        }
-        val errors = (catalog.optionalArray("marketplaceLoadErrors") +
-            installed.optionalArray("marketplaceLoadErrors")).mapNotNull { raw ->
+        val result = request(method, params, timeoutMillis).jsonObject
+        val errors = result.optionalArray("marketplaceLoadErrors").mapNotNull { raw ->
             raw.jsonObject.optionalString("message")
         }.distinct()
-        return AgentPluginCatalog(byId.values.toList(), errors)
+        val catalog = AgentPluginCatalog(parsePluginMarketplaces(result), errors)
+        if (catalog.plugins.isNotEmpty()) runCatching { onResponse(result) }
+        return catalog
+    }
+
+    private fun pluginCacheFile(workingDirectory: String): File? {
+        val directory = pluginCacheDirectory ?: return null
+        val key = MessageDigest.getInstance("SHA-256")
+            .digest("$clientVersion\u0000$workingDirectory".toByteArray(StandardCharsets.UTF_8))
+            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        return File(directory, "$key.json")
+    }
+
+    private fun readPluginCache(file: File?, stale: Boolean = false): AgentPluginCatalog? {
+        if (file?.isFile != true) return null
+        return runCatching {
+            val result = Json.parseToJsonElement(file.readText()).jsonObject
+            val freshness = if (!stale && System.currentTimeMillis() - file.lastModified() <= CATALOG_CACHE_TTL_MILLIS) {
+                AgentCatalogFreshness.FRESH_CACHE
+            } else {
+                AgentCatalogFreshness.STALE_CACHE
+            }
+            AgentPluginCatalog(
+                plugins = parsePluginMarketplaces(result),
+                errors = result.optionalArray("marketplaceLoadErrors").mapNotNull {
+                    it.jsonObject.optionalString("message")
+                }.distinct(),
+                freshness = freshness,
+            )
+        }.getOrNull()
+    }
+
+    private fun writePluginCache(file: File?, response: JsonObject) {
+        if (file == null) return
+        check(file.parentFile?.let { it.isDirectory || it.mkdirs() } == true) {
+            "Unable to prepare plugin catalog cache"
+        }
+        val next = File(file.parentFile, ".${file.name}.next")
+        next.writeText(response.toString())
+        check((!file.exists() || file.delete()) && next.renameTo(file)) {
+            "Unable to update plugin catalog cache"
+        }
     }
 
     override suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail {
-        requireOfficial(plugin)
-        return parsePluginDetail(request("plugin/read", pluginParams(plugin)).jsonObject)
+        return try {
+            parsePluginDetail(request("plugin/read", pluginParams(plugin)).jsonObject)
+        } catch (error: RpcException) {
+            throw error.forPlugin(plugin)
+        }
     }
 
     override suspend fun installPlugin(plugin: AgentPluginReference): AgentPluginInstallResult {
-        requireOfficial(plugin)
-        val result = request("plugin/install", pluginParams(plugin)).jsonObject
+        val result = try {
+            request("plugin/install", pluginParams(plugin)).jsonObject
+        } catch (error: RpcException) {
+            throw error.forPlugin(plugin)
+        }
         return AgentPluginInstallResult(
             authPolicy = enumValueOf(result.requiredString("authPolicy")),
             connectorsNeedingAuthentication = result.requiredArray("appsNeedingAuth").map {
@@ -571,13 +685,21 @@ class CodexAgentClient(
         pendingElicitationRequests.clear()
         workItems.clear()
         userShellItems.clear()
+        knownSkillPaths.clear()
         openedSessions.clear()
         connection.close()
         eventsChannel.close()
     }
 
-    private suspend fun request(method: String, params: JsonObject): JsonElement =
+    private suspend fun request(
+        method: String,
+        params: JsonObject,
+        timeoutMillis: Long? = null,
+    ): JsonElement = if (timeoutMillis == null) {
         connection.request(method, params)
+    } else {
+        connection.request(method, params, timeoutMillis)
+    }
 
     private fun handleServerRequest(id: JsonElement, method: String, rawParams: JsonElement?) {
         if (
@@ -895,11 +1017,16 @@ class CodexAgentClient(
             ?: put("remoteMarketplaceName", plugin.marketplaceName)
     }
 
-    private fun requireOfficial(plugin: AgentPluginReference) {
-        require(plugin.marketplaceName in OFFICIAL_MARKETPLACES) {
-            "Only official OpenAI marketplaces are supported"
+    private fun RpcException.forPlugin(plugin: AgentPluginReference): Throwable =
+        if (detail.contains("Plugin not found", ignoreCase = true) ||
+            detail.contains("status 404", ignoreCase = true) && detail.contains("/plugins/")) {
+            AgentPluginUnavailableException(
+                plugin.id,
+                plugin.name.replace('-', ' ').replaceFirstChar(Char::uppercase),
+            )
+        } else {
+            this
         }
-    }
 
     private fun elicitationResponse(response: AgentElicitationResponse) = buildJsonObject {
         put("action", response.action.name.lowercase())
@@ -929,5 +1056,23 @@ class CodexAgentClient(
     private companion object {
         const val EVENT_BUFFER_SIZE = 64
         const val MAX_PROMPT_CHARS = 100_000
+        const val SKILL_CHUNK_BYTES = 32 * 1024
+        const val PLUGIN_CATALOG_TIMEOUT_MILLIS = 60_000L
+        const val CATALOG_CACHE_TTL_MILLIS = 6 * 60 * 60 * 1000L
+        val EMPTY_PLUGIN_CATALOG_RETRY_DELAYS_MILLIS = longArrayOf(500L, 1_000L, 2_000L)
+
+        fun completeUtf8Length(bytes: ByteArray, count: Int): Int {
+            if (count == 0) return 0
+            var lead = count - 1
+            while (lead >= 0 && bytes[lead].toInt() and 0xC0 == 0x80) lead--
+            if (lead < 0) return 0
+            val expected = when (bytes[lead].toInt() and 0xFF) {
+                in 0xC2..0xDF -> 2
+                in 0xE0..0xEF -> 3
+                in 0xF0..0xF4 -> 4
+                else -> 1
+            }
+            return if (count - lead < expected) lead else count
+        }
     }
 }

@@ -392,9 +392,14 @@ class ForegroundSessionControllerTest {
         override suspend fun listSkills(workingDirectory: String, forceReload: Boolean) =
             AgentSkillCatalog(emptyList())
 
+        override suspend fun readSkill(path: String, offset: Long) = error("unused")
+
         override suspend fun setSkillEnabled(path: String, enabled: Boolean) = Unit
 
-        override suspend fun listPlugins(workingDirectory: String) = AgentPluginCatalog(emptyList())
+        override suspend fun listInstalledPlugins(workingDirectory: String) = AgentPluginCatalog(emptyList())
+
+        override suspend fun listAvailablePlugins(workingDirectory: String, forceRefresh: Boolean) =
+            AgentPluginCatalog(emptyList())
 
         override suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail = error("unused")
 

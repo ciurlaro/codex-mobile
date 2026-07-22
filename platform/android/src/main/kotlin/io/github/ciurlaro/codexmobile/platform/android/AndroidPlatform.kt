@@ -15,6 +15,7 @@ class AndroidPlatform internal constructor(
     private val appContext = context.applicationContext
     private val workspace = WorkspaceManager(appContext)
     private val runtimeTools = RuntimeToolBundle(appContext)
+    val skillPackages = AndroidSkillPackageManager(appContext, runtimeTools)
     private val telegram = TelegramCliIntegration(runtimeTools)
 
     fun launchCodexProcess(): Process {

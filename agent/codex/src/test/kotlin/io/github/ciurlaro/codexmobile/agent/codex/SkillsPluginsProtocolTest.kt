@@ -1,9 +1,13 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
 import io.github.ciurlaro.codexmobile.core.AgentFormFieldType
+import io.github.ciurlaro.codexmobile.core.AgentCatalogFreshness
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentPluginUnavailableException
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
+import java.io.File
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -134,7 +138,8 @@ class SkillsPluginsProtocolTest {
         try {
             assertEquals("review", client.listSkills("/workspace").skills.single().name)
             client.setSkillEnabled("/skills/review/SKILL.md", true)
-            val plugin = client.listPlugins("/workspace").plugins.single()
+            val plugin = client.listInstalledPlugins("/workspace").plugins.single()
+            assertFalse(client.listAvailablePlugins("/workspace").plugins.single().installed)
             assertTrue(plugin.installed)
             assertEquals("drive", client.readPlugin(plugin.reference).connectors.single().id)
             assertEquals("drive", client.installPlugin(plugin.reference).connectorsNeedingAuthentication.single().id)
@@ -152,7 +157,125 @@ class SkillsPluginsProtocolTest {
         }
     }
 
-    private fun skillsResponse() = buildJsonObject {
+    @Test
+    fun `reads long skill source without splitting utf8 characters`(): Unit = runBlocking {
+        val source = File.createTempFile("codex-skill-", ".md")
+        val expected = "a".repeat(32 * 1024 - 1) + "€" + "tail"
+        source.writeText(expected)
+        val process = ScriptedProcess { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "skills/list" -> server.respond(message.id, skillsResponse(source.absolutePath))
+            }
+        }
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
+        try {
+            client.listSkills("/workspace")
+            val actual = buildString {
+                var offset: Long? = 0
+                while (offset != null) {
+                    val chunk = client.readSkill(source.absolutePath, offset)
+                    append(chunk.content)
+                    offset = chunk.nextOffset
+                }
+            }
+            assertEquals(expected, actual)
+        } finally {
+            client.close()
+            source.delete()
+        }
+    }
+
+    @Test
+    fun `available plugin discovery serves cache and keeps stale data after refresh failure`(): Unit = runBlocking {
+        val cache = Files.createTempDirectory("plugin-cache-").toFile()
+        val process = ScriptedProcess { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/list" -> server.respond(message.id, pluginList(installed = false))
+            }
+        }
+        CodexAgentClient({ process }, requestTimeoutMillis = 1_000, pluginCacheDirectory = cache).use { client ->
+            assertEquals(AgentCatalogFreshness.LIVE, client.listAvailablePlugins("/workspace").freshness)
+        }
+
+        val cached = CodexAgentClient(
+            launchCodexProcess = { error("Network should not be used for cached discovery") },
+            requestTimeoutMillis = 100,
+            pluginCacheDirectory = cache,
+        )
+        try {
+            assertEquals(AgentCatalogFreshness.FRESH_CACHE, cached.listAvailablePlugins("/workspace").freshness)
+            assertTrue(cache.listFiles().orEmpty().single().setLastModified(0))
+            assertEquals(AgentCatalogFreshness.STALE_CACHE, cached.listAvailablePlugins("/workspace").freshness)
+            val fallback = cached.listAvailablePlugins("/workspace", forceRefresh = true)
+            assertEquals(AgentCatalogFreshness.STALE_CACHE, fallback.freshness)
+            assertTrue(fallback.plugins.isNotEmpty())
+            assertTrue(fallback.errors.isNotEmpty())
+        } finally {
+            cached.close()
+            cache.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `available plugin discovery retries an initially empty catalog`(): Unit = runBlocking {
+        var requests = 0
+        val process = ScriptedProcess { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/list" -> {
+                    requests++
+                    server.respond(
+                        message.id,
+                        if (requests == 1) emptyPluginList() else pluginList(installed = false),
+                    )
+                }
+            }
+        }
+
+        CodexAgentClient({ process }, requestTimeoutMillis = 1_000).use { client ->
+            assertEquals("drive", client.listAvailablePlugins("/workspace").plugins.single().reference.name)
+            assertEquals(2, requests)
+        }
+    }
+
+    @Test
+    fun `plugin discovery accepts marketplaces exposed by app server`() {
+        val plugins = parsePluginMarketplaces(pluginList(installed = false, marketplace = "team-catalog"))
+
+        assertEquals("team-catalog", plugins.single().reference.marketplaceName)
+    }
+
+    @Test
+    fun `maps a stale remote plugin entry to unavailable`(): Unit = runBlocking {
+        val process = ScriptedProcess { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/install" -> server.sendRaw(
+                    buildJsonObject {
+                        put("id", message.id)
+                        putJsonObject("error") {
+                            put("code", -32600)
+                            put("message", "remote plugin request failed with status 404: Plugin not found")
+                        }
+                    }.toString(),
+                )
+            }
+        }
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
+        try {
+            val error = runCatching {
+                client.installPlugin(AgentPluginReference("missing@remote", "missing", "remote"))
+            }.exceptionOrNull()
+
+            assertEquals("missing@remote", assertIs<AgentPluginUnavailableException>(error).pluginId)
+        } finally {
+            client.close()
+        }
+    }
+
+    private fun skillsResponse(path: String = "/skills/review/SKILL.md") = buildJsonObject {
         putJsonArray("data") {
             add(buildJsonObject {
                 put("cwd", "/workspace")
@@ -162,7 +285,7 @@ class SkillsPluginsProtocolTest {
                         put("name", "review")
                         put("description", "Review code")
                         put("enabled", true)
-                        put("path", "/skills/review/SKILL.md")
+                        put("path", path)
                         put("scope", "system")
                     })
                 }
@@ -170,17 +293,22 @@ class SkillsPluginsProtocolTest {
         }
     }
 
-    private fun pluginList(installed: Boolean) = buildJsonObject {
+    private fun emptyPluginList() = buildJsonObject {
+        putJsonArray("marketplaces") {}
+        putJsonArray("marketplaceLoadErrors") {}
+    }
+
+    private fun pluginList(installed: Boolean, marketplace: String = "openai-curated") = buildJsonObject {
         putJsonArray("marketplaces") {
             add(buildJsonObject {
-                put("name", "openai-curated")
-                putJsonArray("plugins") { add(pluginSummary(installed)) }
+                put("name", marketplace)
+                putJsonArray("plugins") { add(pluginSummary(installed, marketplace)) }
             })
         }
     }
 
-    private fun pluginSummary(installed: Boolean) = buildJsonObject {
-        put("id", "drive@openai-curated")
+    private fun pluginSummary(installed: Boolean, marketplace: String = "openai-curated") = buildJsonObject {
+        put("id", "drive@$marketplace")
         put("name", "drive")
         put("installed", installed)
         put("enabled", true)
