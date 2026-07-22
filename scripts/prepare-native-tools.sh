@@ -8,6 +8,12 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 build_jobs=${CODEX_MOBILE_NATIVE_JOBS:-4}
+native_libraries=(
+  libcodex_mutool.so libcodex_tesseract.so
+  libcodex_officecli.so libcodex_officecli_musl.so libcodex_officecli_gcc.so libcodex_officecli_cxx.so
+  libcodex_tgcli.so libcodex_node.so libcodex_z.so libcodex_cares.so libcodex_sqlite3.so
+  libcodex_crypto.so libcodex_ssl.so libcodex_icudata.so libcodex_icui18n.so libcodex_icuuc.so libcodex_cxx.so
+)
 
 case $(uname -s) in
   Darwin) host_tag=darwin-x86_64 ;;
@@ -59,24 +65,9 @@ extract_deb() {
 }
 
 mkdir -p "$jni_out" "$assets_out"
-rm -f \
-  "$jni_out/libcodex_mutool.so" \
-  "$jni_out/libcodex_tesseract.so" \
-  "$jni_out/libcodex_officecli.so" \
-  "$jni_out/libcodex_officecli_musl.so" \
-  "$jni_out/libcodex_officecli_gcc.so" \
-  "$jni_out/libcodex_officecli_cxx.so" \
-  "$jni_out/libcodex_tgcli.so" \
-  "$jni_out/libcodex_node.so" \
-  "$jni_out/libcodex_z.so" \
-  "$jni_out/libcodex_cares.so" \
-  "$jni_out/libcodex_sqlite3.so" \
-  "$jni_out/libcodex_crypto.so" \
-  "$jni_out/libcodex_ssl.so" \
-  "$jni_out/libcodex_icudata.so" \
-  "$jni_out/libcodex_icui18n.so" \
-  "$jni_out/libcodex_icuuc.so" \
-  "$jni_out/libcodex_cxx.so"
+for library in "${native_libraries[@]}"; do
+  rm -f "$jni_out/$library"
+done
 rm -rf "$assets_out"
 mkdir -p "$assets_out/licenses" "$assets_out/officecli" "$assets_out/tessdata"
 
@@ -263,17 +254,10 @@ verify_android_dependencies() {
     esac
   done < <(patchelf --print-needed "$binary")
 }
-for binary in \
-  "$jni_out/libcodex_mutool.so" "$jni_out/libcodex_tesseract.so" \
-  "$jni_out/libcodex_officecli.so" "$jni_out/libcodex_officecli_musl.so" \
-  "$jni_out/libcodex_officecli_gcc.so" "$jni_out/libcodex_officecli_cxx.so" \
-  "$jni_out/libcodex_tgcli.so" "$jni_out/libcodex_node.so" \
-  "$jni_out/libcodex_z.so" "$jni_out/libcodex_cares.so" "$jni_out/libcodex_sqlite3.so" \
-  "$jni_out/libcodex_crypto.so" "$jni_out/libcodex_ssl.so" "$jni_out/libcodex_icudata.so" \
-  "$jni_out/libcodex_icui18n.so" "$jni_out/libcodex_icuuc.so" "$jni_out/libcodex_cxx.so" \
-  "$officecli"; do
-  verify_android_dependencies "$binary"
+for library in "${native_libraries[@]}"; do
+  verify_android_dependencies "$jni_out/$library"
 done
+verify_android_dependencies "$officecli"
 
 chmod 755 "$jni_out"/libcodex_*.so
 printf 'Prepared mutool, tesseract, officecli, and tgcli for Android arm64.\n'

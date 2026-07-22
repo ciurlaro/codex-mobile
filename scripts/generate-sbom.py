@@ -14,17 +14,21 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "docs" / "sbom.cdx.json"
-APP_BUILD = ROOT / "app" / "android" / "build.gradle.kts"
+GRADLE_PROPERTIES = ROOT / "gradle.properties"
 APP_LOCK = ROOT / "app" / "android" / "gradle.lockfile"
 NATIVE_BUILD = ROOT / "scripts" / "prepare-native-tools.sh"
 TGCLI_LOCK = ROOT / "scripts" / "native" / "tgcli-package-lock.json"
 
 
-def required(pattern: str, text: str) -> str:
-    match = re.search(pattern, text)
-    if not match:
-        raise SystemExit(f"missing SBOM source value: {pattern}")
-    return match.group(1)
+def gradle_property(name: str, pattern: str) -> str:
+    for line in GRADLE_PROPERTIES.read_text().splitlines():
+        key, separator, value = line.partition("=")
+        if separator and key.strip() == name:
+            value = value.strip()
+            if re.fullmatch(pattern, value):
+                return value
+            break
+    raise SystemExit(f"missing or invalid SBOM source property: {name}")
 
 
 def component(group: str, name: str, version: str) -> dict:
@@ -100,12 +104,11 @@ def npm_components() -> list[dict]:
 
 
 def generate() -> str:
-    build = APP_BUILD.read_text()
     native_build = NATIVE_BUILD.read_text()
-    version = required(r'versionName = "([^"]+)"', build)
-    codex_version = required(r'inputs\.property\("codexVersion", "([^"]+)"\)', build)
-    archive_hash = required(r'inputs\.property\("archiveSha256", "([0-9a-f]{64})"\)', build)
-    binary_hash = required(r'inputs\.property\("binarySha256", "([0-9a-f]{64})"\)', build)
+    version = gradle_property("codexMobile.versionName", r".+")
+    codex_version = gradle_property("codexMobile.codexVersion", r".+")
+    archive_hash = gradle_property("codexMobile.codexArchiveSha256", r"[0-9a-f]{64}")
+    binary_hash = gradle_property("codexMobile.codexBinarySha256", r"[0-9a-f]{64}")
 
     dependencies = set()
     for line in APP_LOCK.read_text().splitlines():

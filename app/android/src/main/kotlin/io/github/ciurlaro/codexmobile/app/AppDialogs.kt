@@ -1,0 +1,284 @@
+package io.github.ciurlaro.codexmobile.app
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
+import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthPrompt
+import java.io.File
+
+@Composable
+internal fun CodexApprovalDialog(
+    approval: AgentEvent.ApprovalRequested,
+    onDecision: (AgentApprovalDecision) -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = { onDecision(AgentApprovalDecision.DECLINE) },
+        title = { Text(approval.title.toApprovalDisplayText()) },
+        text = {
+            Text(
+                approval.details.toApprovalDisplayText(),
+                fontFamily = FontFamily.Monospace,
+            )
+        },
+        confirmButton = {
+            Button(onClick = { onDecision(AgentApprovalDecision.ACCEPT) }) { Text("Allow") }
+        },
+        dismissButton = {
+            Button(onClick = { onDecision(AgentApprovalDecision.DECLINE) }) { Text("Deny") }
+        },
+    )
+}
+
+@Composable
+internal fun IntegrationsDialog(
+    state: MainUiState,
+    onDismiss: () -> Unit,
+    onConnect: (String) -> Unit,
+    onSubmitAuthentication: (String) -> Unit,
+    onDisconnect: () -> Unit,
+    onCancelAuthentication: () -> Unit,
+) {
+    var phoneNumber by rememberSaveable { mutableStateOf("") }
+    var authenticationAnswer by rememberSaveable { mutableStateOf("") }
+    fun dismiss() {
+        if (!state.isTelegramConnected &&
+            (state.isTelegramOperationInProgress || state.telegramAuthPrompt != null)
+        ) {
+            onCancelAuthentication()
+        }
+        onDismiss()
+    }
+    AlertDialog(
+        onDismissRequest = ::dismiss,
+        title = { Text("Integrations") },
+        text = {
+            Column {
+                when {
+                    !state.isTelegramAvailable -> Text(
+                        "No integrations are available in this build.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    state.isTelegramConnected -> Text(
+                        buildString {
+                            append("Telegram is connected")
+                            state.telegramUsername?.let { append(" as @$it") }
+                            append(". Codex can use tgcli directly under your approval policy.")
+                        },
+                    )
+                    state.telegramAuthPrompt == TelegramAuthPrompt.CODE -> OutlinedTextField(
+                        value = authenticationAnswer,
+                        onValueChange = { authenticationAnswer = it },
+                        label = { Text("Code from Telegram") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                    )
+                    state.telegramAuthPrompt == TelegramAuthPrompt.PASSWORD -> OutlinedTextField(
+                        value = authenticationAnswer,
+                        onValueChange = { authenticationAnswer = it },
+                        label = { Text("Telegram 2FA password") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true,
+                    )
+                    state.isTelegramOperationInProgress -> Text("Connecting to Telegram…")
+                    else -> {
+                        Text("Connect directly with Telegram. No browser or installed Telegram app is required.")
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = phoneNumber,
+                            onValueChange = { phoneNumber = it },
+                            label = { Text("Phone number (+…)") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
+                            singleLine = true,
+                        )
+                    }
+                }
+                state.telegramError?.let {
+                    Spacer(Modifier.height(10.dp))
+                    Text(it, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
+        confirmButton = {
+            when {
+                !state.isTelegramAvailable -> Button(onClick = onDismiss) { Text("Close") }
+                state.isTelegramConnected -> Button(
+                    onClick = onDisconnect,
+                    enabled = !state.isTelegramOperationInProgress,
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                ) { Text("Disconnect Telegram") }
+                state.telegramAuthPrompt != null -> Button(
+                    onClick = {
+                        onSubmitAuthentication(authenticationAnswer)
+                        authenticationAnswer = ""
+                    },
+                    enabled = !state.isTelegramOperationInProgress && authenticationAnswer.isNotBlank(),
+                ) { Text("Continue") }
+                else -> Button(
+                    onClick = { onConnect(phoneNumber) },
+                    enabled = !state.isTelegramOperationInProgress && phoneNumber.isNotBlank(),
+                ) {
+                    Text(if (state.isTelegramOperationInProgress) "Connecting…" else "Connect Telegram")
+                }
+            }
+        },
+        dismissButton = if (state.isTelegramAvailable) {
+            { Button(onClick = ::dismiss) { Text(if (state.telegramAuthPrompt != null) "Cancel" else "Done") } }
+        } else {
+            null
+        },
+    )
+}
+
+@Composable
+internal fun EraseDataDialog(
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Erase all Codex Mobile data?") },
+        text = {
+            Text(
+                "This signs you out and permanently erases app credentials, conversation " +
+                    "history, settings, and integration data. Files in shared storage are not deleted.",
+            )
+        },
+        confirmButton = {
+            Button(onClick = onConfirm, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text("Erase app data")
+            }
+        },
+        dismissButton = {
+            Button(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) {
+                Text("Keep data")
+            }
+        },
+    )
+}
+
+@Composable
+internal fun PrivacyDialog(onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Privacy details") },
+        text = { PrivacyDisclosure() },
+        confirmButton = {
+            Button(onClick = onDismiss, modifier = Modifier.heightIn(min = 48.dp)) { Text("Close") }
+        },
+    )
+}
+
+@Composable
+internal fun WorkspacePickerDialog(
+    currentPath: String?,
+    directories: List<String>,
+    parent: String?,
+    onOpen: (String) -> Unit,
+    onSelect: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Choose workspace") },
+        text = {
+            Column(
+                Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(currentPath ?: "Shared storage", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                parent?.let { path ->
+                    Text(
+                        "↑ Parent folder",
+                        modifier = Modifier.fillMaxWidth().clickable { onOpen(path) }.padding(vertical = 12.dp),
+                    )
+                }
+                directories.forEach { path ->
+                    Text(
+                        "📁 ${File(path).name.ifBlank { path }}",
+                        modifier = Modifier.fillMaxWidth().clickable { onOpen(path) }.padding(vertical = 12.dp),
+                    )
+                }
+                if (directories.isEmpty()) {
+                    Text("No subfolders", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = onSelect, enabled = currentPath != null) { Text("Use this folder") }
+        },
+        dismissButton = { Button(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun PrivacyDisclosure() {
+    Column(
+        Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        PrivacySection(
+            "OpenAI",
+            "Prompts, responses, shell output, file text or bytes requested by Codex, rendered pages, " +
+                "images, and tool results are sent to OpenAI as part of the Codex session.",
+        )
+        PrivacySection(
+            "Storage access",
+            "The selected workspace is Codex's starting folder, not a sandbox. With all-files access, " +
+                "Codex can navigate to other accessible shared-storage locations. Manage the permission in Android Settings.",
+        )
+        PrivacySection(
+            "On-device document processing",
+            "PDF, image, and Office work runs locally through the bundled mutool, tesseract, and " +
+                "officecli commands. Files or extracted content are sent to OpenAI only when Codex includes " +
+                "them in the session.",
+        )
+        PrivacySection(
+            "Local storage and logs",
+            "ChatGPT credentials, conversation state, settings, and integration data stay in app-private " +
+                "storage excluded from Android backup. Prompt and document contents are " +
+                "not written to Codex Mobile logs.",
+        )
+        PrivacySection(
+            "Integrations",
+            "An integration receives only requests explicitly tagged for it. Connected services keep their " +
+                "own authorization until you disconnect them or erase app data.",
+        )
+    }
+}
+
+@Composable
+private fun PrivacySection(title: String, body: String) {
+    var expanded by rememberSaveable(title) { mutableStateOf(false) }
+    Column(
+        Modifier.fillMaxWidth().clickable { expanded = !expanded }.padding(vertical = 6.dp),
+    ) {
+        Text(if (expanded) "− $title" else "+ $title")
+        if (expanded) Text(body, modifier = Modifier.padding(top = 6.dp))
+    }
+}

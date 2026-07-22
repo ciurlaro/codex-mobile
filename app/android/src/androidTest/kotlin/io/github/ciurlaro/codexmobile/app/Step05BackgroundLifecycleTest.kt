@@ -203,7 +203,7 @@ class Step05BackgroundLifecycleTest {
                 scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
                 await(TIMEOUT_TEST_WAIT_MILLIS) { bound.binder.controller.state.value.terminal }
                 assertTrue(
-                    bound.binder.controller.state.value.status.contains("Android's time limit"),
+                    bound.binder.controller.state.value.statusMessage.contains("Android's time limit"),
                 )
                 assertFalse(application.graph.wasBackgroundActive())
                 assertTrue(activeNotifications().isEmpty())
@@ -238,8 +238,8 @@ class Step05BackgroundLifecycleTest {
                     state.attentionRequired || state.signInUrl != null || state.sessionId != null
                 }
                 val bounded = bound.binder.controller.state.value
-                assertFalse(bounded.turnActive)
-                assertTrue(bounded.status.length <= 500)
+                assertFalse(bounded.isTurnActive)
+                assertTrue(bounded.statusMessage.length <= 500)
                 assertTrue(bounded.streamedText.length < 263_000)
                 assertTrue(
                     activeNotifications().single().notification.extras
@@ -366,11 +366,11 @@ class Step05BackgroundLifecycleTest {
         val visible = ActivityScenario.launch(MainActivity::class.java)
         try {
             val viewModel = visible.viewModel()
-            await { viewModel.state.value.backgroundActive }
-            assertFalse(viewModel.state.value.backgroundNotificationVisible)
+            await { viewModel.state.value.isBackgroundActive }
+            assertFalse(viewModel.state.value.isBackgroundNotificationVisible)
             assertTrue(
-                viewModel.state.value.backgroundActive &&
-                    !viewModel.state.value.backgroundNotificationVisible,
+                viewModel.state.value.isBackgroundActive &&
+                    !viewModel.state.value.isBackgroundNotificationVisible,
             )
         } finally {
             visible.close()
@@ -469,8 +469,8 @@ class Step05BackgroundLifecycleTest {
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
             val viewModel = scenario.viewModel()
-            await { viewModel.state.value.status.contains("ended unexpectedly") }
-            assertFalse(viewModel.state.value.backgroundActive)
+            await { viewModel.state.value.statusMessage.contains("ended unexpectedly") }
+            assertFalse(viewModel.state.value.isBackgroundActive)
         } finally {
             scenario.close()
             application.graph.markBackgroundActive(false)

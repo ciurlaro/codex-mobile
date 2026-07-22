@@ -46,22 +46,12 @@ class Step01AndroidPlatformFaultTest {
 
             val failure = runCatching {
                 AndroidPlatform(context, runtime)
-                    .launchProcess(listOf("codex-app-server"), emptyMap())
+                    .launchCodexProcess()
             }.exceptionOrNull()
             assertTrue("corrupt runtime unexpectedly launched", failure != null)
         } finally {
             runtime.delete()
         }
-    }
-
-    @Test
-    fun arbitraryCommandsAreRejected() {
-        val failure = runCatching {
-            AndroidPlatform(context, File("/system/bin/sh"))
-                .launchProcess(listOf("sh"), emptyMap())
-        }.exceptionOrNull()
-
-        assertTrue(failure is IllegalArgumentException)
     }
 
     @Test
@@ -112,7 +102,7 @@ class Step01AndroidPlatformFaultTest {
     private fun assertLaunchFails(runtime: File, expectedMessage: String) {
         val failure = runCatching {
             AndroidPlatform(context, runtime)
-                .launchProcess(listOf("codex-app-server"), emptyMap())
+                .launchCodexProcess()
         }.exceptionOrNull()
 
         assertTrue(failure is IllegalStateException)

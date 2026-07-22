@@ -20,6 +20,12 @@ val releaseSigningConfigured = listOf(
 val requestedTaskNames = gradle.startParameter.taskNames.map { it.substringAfterLast(':') }
 val visualCaptureRequested = "visualCapture" in requestedTaskNames
 val visualCheckRequested = "visualCheck" in requestedTaskNames
+val appVersionCode = providers.gradleProperty("codexMobile.versionCode").map(String::toInt)
+val appVersionName = providers.gradleProperty("codexMobile.versionName")
+val codexVersion = providers.gradleProperty("codexMobile.codexVersion")
+val codexArchiveSha256 = providers.gradleProperty("codexMobile.codexArchiveSha256")
+val codexBinarySha256 = providers.gradleProperty("codexMobile.codexBinarySha256")
+val nativeBundleVersion = providers.gradleProperty("codexMobile.nativeBundleVersion")
 val nativeToolsNdk = providers.gradleProperty("codexMobile.androidNdkPath")
     .orElse(providers.environmentVariable("ANDROID_NDK_HOME"))
     .orElse(providers.environmentVariable("ANDROID_NDK_ROOT"))
@@ -38,8 +44,8 @@ android {
         applicationId = "io.github.ciurlaro.codexmobile"
         minSdk = 26
         targetSdk = 37
-        versionCode = 3
-        versionName = "0.2.0-preview.1"
+        versionCode = appVersionCode.get()
+        versionName = appVersionName.get()
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         if (visualCaptureRequested || visualCheckRequested) {
             testInstrumentationRunnerArguments["class"] =
@@ -100,15 +106,15 @@ val codexRuntime = layout.projectDirectory.file(
     "src/main/jniLibs/arm64-v8a/libcodex_app_server.so",
 )
 val prepareCodexRuntime = tasks.register<Exec>("prepareCodexRuntime") {
-    inputs.property("codexVersion", "0.144.6")
-    inputs.property("archiveSha256", "3539380f431aa72ce1e9ba83cf4d9b2c2a70d12ddf3280bc67c8c59f93bb9eb5")
-    inputs.property("binarySha256", "09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd")
+    inputs.property("codexVersion", codexVersion)
+    inputs.property("archiveSha256", codexArchiveSha256)
+    inputs.property("binarySha256", codexBinarySha256)
     outputs.file(codexRuntime)
     commandLine(
         rootProject.file("scripts/prepare-codex-runtime.sh"),
-        "0.144.6",
-        "3539380f431aa72ce1e9ba83cf4d9b2c2a70d12ddf3280bc67c8c59f93bb9eb5",
-        "09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd",
+        codexVersion.get(),
+        codexArchiveSha256.get(),
+        codexBinarySha256.get(),
         codexRuntime.asFile.absolutePath,
     )
 }
@@ -134,7 +140,7 @@ val nativeTools = listOf(
 ).map { layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/$it") }
 val nativeToolAssets = layout.projectDirectory.dir("src/main/assets/runtime")
 val prepareNativeTools = tasks.register<Exec>("prepareNativeTools") {
-    inputs.property("bundleVersion", "2026-07-21.2")
+    inputs.property("bundleVersion", nativeBundleVersion)
     inputs.files(
         rootProject.file("scripts/prepare-native-tools.sh"),
         rootProject.file("scripts/native/tgcli-launcher.c"),

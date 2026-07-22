@@ -11,6 +11,7 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.ciurlaro.codexmobile.agent.codex.CodexAgentClient
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.platform.android.AndroidPlatform
 import java.io.File
 import java.net.URI
@@ -49,7 +50,7 @@ class Step01RuntimePremiseDeviceTest {
         val startupLatencies = mutableListOf<Long>()
         repeat(2) {
             val startedAt = SystemClock.elapsedRealtime()
-            val process = AndroidPlatform(context).launchProcess(listOf("codex-app-server"), emptyMap())
+            val process = AndroidPlatform(context).launchCodexProcess()
             val writer = process.outputStream.bufferedWriter(StandardCharsets.UTF_8)
             val reader = process.inputStream.bufferedReader(StandardCharsets.UTF_8)
             try {
@@ -84,7 +85,7 @@ class Step01RuntimePremiseDeviceTest {
 
     @Test
     fun authenticationUsesPersistedAccountOrStartsDeviceFlow(): Unit = runBlocking {
-        val client = CodexAgentClient(AndroidPlatform(context)::launchProcess, 30_000)
+        val client = CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000)
         try {
             val result = async { withTimeout(30_000) { client.events.first() } }
             client.authenticate()
@@ -112,7 +113,7 @@ class Step01RuntimePremiseDeviceTest {
     fun subscriptionAuthenticationFailuresAndPersistence(): Unit = runBlocking {
         requirePhysicalDevice()
         repeat(2) {
-            CodexAgentClient(AndroidPlatform(context)::launchProcess, 30_000).use { client ->
+            CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
                 requirePersistedAuthentication(client)
             }
         }
@@ -121,7 +122,7 @@ class Step01RuntimePremiseDeviceTest {
     @Test
     fun promptStreamingCancellationAndActivityRecreation(): Unit = runBlocking {
         requirePhysicalDevice()
-        CodexAgentClient(AndroidPlatform(context)::launchProcess, 30_000).use { client ->
+        CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
             requirePersistedAuthentication(client)
             val session = client.openSession()
 
@@ -137,8 +138,9 @@ class Step01RuntimePremiseDeviceTest {
                 original.authenticate()
             }
             withTimeout(60_000) { original.state.first { it.sessionId != null } }
-            original.submit("Reply with three short lines.")
-            assertTrue(original.state.value.turnActive)
+            original.updateDraft("Reply with three short lines.")
+            original.sendMessage()
+            assertTrue(original.state.value.isTurnActive)
             val serviceInstance = requireNotNull(original.serviceInstanceId)
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
             SystemClock.sleep(500)
@@ -153,7 +155,7 @@ class Step01RuntimePremiseDeviceTest {
             assertSame(original, recreated)
             assertEquals(serviceInstance, recreated.serviceInstanceId)
             withTimeout(120_000) {
-                recreated.state.first { !it.turnActive && it.streamedText.isNotBlank() }
+                recreated.state.first { !it.isTurnActive && it.streamedText.isNotBlank() }
             }
         }
         context.startService(CodexForegroundService.stopIntent(context))
@@ -162,13 +164,13 @@ class Step01RuntimePremiseDeviceTest {
     @Test
     fun restartRecordsAuthenticationAndSessionSurvival(): Unit = runBlocking {
         requirePhysicalDevice()
-        val session = CodexAgentClient(AndroidPlatform(context)::launchProcess, 30_000).use { client ->
+        val session = CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
             requirePersistedAuthentication(client)
             client.openSession().also {
                 assertTrue(runPrompt(client, it, "Reply with one short word.").isNotBlank())
             }
         }
-        CodexAgentClient(AndroidPlatform(context)::launchProcess, 30_000).use { client ->
+        CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
             requirePersistedAuthentication(client)
             assertEquals(session, client.openSession(session))
         }
@@ -250,7 +252,7 @@ class Step01RuntimePremiseDeviceTest {
                 }
             }
         }
-        client.sendPrompt(session, prompt)
+        client.sendTurn(session, AgentTurnRequest(prompt))
         assertTrue(terminal.await() is AgentEvent.TurnCompleted)
         text.toString()
     }
@@ -266,7 +268,7 @@ class Step01RuntimePremiseDeviceTest {
                 }
             }
         }
-        client.sendPrompt(session, "Write a long numbered list.")
+        client.sendTurn(session, AgentTurnRequest("Write a long numbered list."))
         client.cancelTurn(session)
         assertTrue(terminal.await() is AgentEvent.TurnCompleted)
     }

@@ -31,7 +31,7 @@ class TelegramAuthSession internal constructor(
     private val output = ArrayDeque<String>()
 
     @Synchronized
-    fun nextEvent(): TelegramAuthEvent {
+    fun awaitEvent(): TelegramAuthEvent {
         while (true) {
             val line = reader.readLine() ?: break
             output.addLast(line)
@@ -54,7 +54,7 @@ class TelegramAuthSession internal constructor(
     }
 
     @Synchronized
-    fun answer(value: String) {
+    fun submitAnswer(value: String) {
         check(process.isAlive) { "Telegram login is no longer active" }
         writer.write(value)
         writer.newLine()
@@ -80,12 +80,12 @@ internal class TelegramCliIntegration(
 
     fun status(): TelegramStatus {
         if (!available) return TelegramStatus(available = false, connected = false)
-        val process = tools.process(
+        val process = tools.startBundledCommand(
             "tgcli",
             listOf("--json", "--timeout", "15s", "auth", "status"),
             emptyMap(),
         )
-        val result = process.collectOutput(20)
+        val result = process.awaitOutput(20)
         if (result.exitCode != 0) {
             return TelegramStatus(available = true, connected = false)
         }
@@ -113,7 +113,7 @@ internal class TelegramCliIntegration(
         configFile.writeText(config.toString(2) + "\n")
         Os.chmod(configFile.absolutePath, 0x180) // 0600
         return TelegramAuthSession(
-            tools.process(
+            tools.startBundledCommand(
                 "tgcli",
                 listOf("--json", "auth"),
                 mapOf("TGCLI_AUTH_BRIDGE" to "1"),
@@ -123,16 +123,16 @@ internal class TelegramCliIntegration(
 
     fun disconnect(): Boolean {
         if (!tools.telegramStore.exists()) return true
-        val process = tools.process(
+        val process = tools.startBundledCommand(
             "tgcli",
             listOf("--json", "--timeout", "30s", "auth", "logout"),
             emptyMap(),
         )
-        if (process.collectOutput(35).exitCode != 0) return false
+        if (process.awaitOutput(35).exitCode != 0) return false
         return tools.telegramStore.deleteRecursively()
     }
 
-    private fun Process.collectOutput(timeoutSeconds: Long): ProcessOutput {
+    private fun Process.awaitOutput(timeoutSeconds: Long): ProcessOutput {
         val lines = Collections.synchronizedList(mutableListOf<String>())
         val collector = Thread({
             runCatching {

@@ -1,18 +1,12 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import java.io.ByteArrayInputStream
-import java.io.FilterInputStream
-import java.io.FilterOutputStream
-import java.io.InputStream
-import java.io.OutputStream
-import java.io.PipedInputStream
-import java.io.PipedOutputStream
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.random.Random
@@ -117,7 +111,7 @@ class Step01ProtocolContractTest {
             }
         }
         val client = CodexAgentClient(
-            { _, _ -> launches.incrementAndGet(); process },
+            { launches.incrementAndGet(); process },
             requestTimeoutMillis = 1_000,
         )
         try {
@@ -186,7 +180,7 @@ class Step01ProtocolContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             client.authenticate()
             client.signOut()
@@ -216,7 +210,7 @@ class Step01ProtocolContractTest {
                 )
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
 
         client.authenticate()
         client.close()
@@ -228,7 +222,7 @@ class Step01ProtocolContractTest {
     @Test
     fun `turns process start exit and EOF into one typed failure`(): Unit = runBlocking {
         val startClient = CodexAgentClient(
-            { _, _ -> error("cannot execute bundled runtime") },
+            { error("cannot execute bundled runtime") },
             requestTimeoutMillis = 1_000,
         )
         try {
@@ -247,7 +241,7 @@ class Step01ProtocolContractTest {
                 "account/read" -> server.exit(23)
             }
         }
-        val exitClient = CodexAgentClient({ _, _ -> exited }, requestTimeoutMillis = 1_000)
+        val exitClient = CodexAgentClient({ exited }, requestTimeoutMillis = 1_000)
         try {
             val failure = async {
                 withTimeout(1_000) { exitClient.events.filterIsInstance<AgentEvent.Failure>().first() }
@@ -264,7 +258,7 @@ class Step01ProtocolContractTest {
                 "account/read" -> server.closeStdout()
             }
         }
-        val eofClient = CodexAgentClient({ _, _ -> eof }, requestTimeoutMillis = 1_000)
+        val eofClient = CodexAgentClient({ eof }, requestTimeoutMillis = 1_000)
         try {
             val failure = async {
                 withTimeout(1_000) { eofClient.events.filterIsInstance<AgentEvent.Failure>().first() }
@@ -280,7 +274,7 @@ class Step01ProtocolContractTest {
     fun `a dead process can restart and recheck authentication`(): Unit = runBlocking {
         val processes = mutableListOf<ScriptedProcess>()
         val client = CodexAgentClient(
-            { _, _ ->
+            {
                 ScriptedProcess { message, server ->
                     when (message.method) {
                         "initialize" -> server.respond(message.id, buildJsonObject {})
@@ -338,7 +332,7 @@ class Step01ProtocolContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             withTimeout(1_000) { client.authenticate() }
             assertTrue(requestRejected.await(1, TimeUnit.SECONDS))
@@ -349,7 +343,7 @@ class Step01ProtocolContractTest {
         val malformed = ScriptedProcess { message, server ->
             if (message.method == "initialize") server.sendRaw("not-json")
         }
-        val malformedClient = CodexAgentClient({ _, _ -> malformed }, requestTimeoutMillis = 1_000)
+        val malformedClient = CodexAgentClient({ malformed }, requestTimeoutMillis = 1_000)
         try {
             assertFailsWith<Exception> { malformedClient.authenticate() }
         } finally {
@@ -379,10 +373,10 @@ class Step01ProtocolContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             val session = SessionId("thread-1")
-            client.sendPrompt(session, "hello")
+            client.sendTurn(session, AgentTurnRequest("hello"))
             coroutineScope {
                 val first = async(start = CoroutineStart.UNDISPATCHED) { client.cancelTurn(session) }
                 assertTrue(interruptReceived.await(1, TimeUnit.SECONDS))
@@ -422,7 +416,7 @@ class Step01ProtocolContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         val session = SessionId("thread-1")
         try {
             repeat(20) {
@@ -431,7 +425,7 @@ class Step01ProtocolContractTest {
                         client.events.filterIsInstance<AgentEvent.TurnCompleted>().first()
                     }
                 }
-                client.sendPrompt(session, "fast turn")
+                client.sendTurn(session, AgentTurnRequest("fast turn"))
                 completed.await()
                 assertFailsWith<IllegalStateException> { client.cancelTurn(session) }
             }
@@ -472,12 +466,12 @@ class Step01ProtocolContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             val completed = async {
                 withTimeout(1_000) { client.events.filterIsInstance<AgentEvent.TurnCompleted>().first() }
             }
-            client.sendPrompt(SessionId("thread-1"), "hello")
+            client.sendTurn(SessionId("thread-1"), AgentTurnRequest("hello"))
             client.cancelTurn(SessionId("thread-1"))
             assertEquals(SessionId("thread-1"), completed.await().sessionId)
         } finally {
@@ -511,9 +505,9 @@ class Step01ProtocolContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
-            client.sendPrompt(SessionId("thread-1"), "hello")
+            client.sendTurn(SessionId("thread-1"), AgentTurnRequest("hello"))
             assertFalse(sentAll.await(100, TimeUnit.MILLISECONDS), "producer was not backpressured")
 
             val events = withTimeout(5_000) {
@@ -593,7 +587,7 @@ class Step01ProtocolContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             val received = mutableListOf<AgentEvent>()
             val collector = async { withTimeout(2_000) { client.events.take(6).toList(received) } }
@@ -607,7 +601,7 @@ class Step01ProtocolContractTest {
                 },
             )
             val session = client.openSession()
-            client.sendPrompt(session, "hello")
+            client.sendTurn(session, AgentTurnRequest("hello"))
             collector.await()
 
             val required = assertIs<AgentEvent.AuthenticationRequired>(received[0])
@@ -657,7 +651,7 @@ class Step01ProtocolContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             repeat(2) {
                 val failed = async {
@@ -712,7 +706,7 @@ class Step01ProtocolContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             val events = mutableListOf<AgentEvent>()
             val collector = async { client.events.take(2).toList(events) }
@@ -745,7 +739,7 @@ class Step01ProtocolContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 50)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 50)
         try {
             assertFailsWith<Exception> { client.authenticate() }
             val authenticated = async {
@@ -761,12 +755,15 @@ class Step01ProtocolContractTest {
 
     @Test
     fun `rejects blank prompts and preserves Unicode and multiline prompts`(): Unit = runBlocking {
-        val neverStarted = CodexAgentClient({ _, _ -> error("must not launch") })
+        val neverStarted = CodexAgentClient({ error("must not launch") })
         assertFailsWith<IllegalArgumentException> {
-            neverStarted.sendPrompt(SessionId("thread"), "  \n")
+            neverStarted.sendTurn(SessionId("thread"), AgentTurnRequest("  \n"))
         }
         assertFailsWith<IllegalArgumentException> {
-            neverStarted.sendPrompt(SessionId("thread"), "x".repeat(100_001))
+            neverStarted.sendTurn(
+                SessionId("thread"),
+                AgentTurnRequest("x".repeat(100_001)),
+            )
         }
         neverStarted.close()
 
@@ -784,10 +781,10 @@ class Step01ProtocolContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             val prompt = "Grüezi 👋\n第二行"
-            client.sendPrompt(SessionId("thread"), prompt)
+            client.sendTurn(SessionId("thread"), AgentTurnRequest(prompt))
             assertEquals(prompt, observedPrompt)
         } finally {
             client.close()
@@ -801,132 +798,4 @@ private class ChunkedInputStream(
 ) : ByteArrayInputStream(bytes) {
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
         super.read(buffer, offset, minOf(length, chunkSize))
-}
-
-internal class ScriptedProcess(
-    handler: (ClientMessage, ScriptedProcess) -> Unit,
-) : Process() {
-    private val serverInput = PipedInputStream()
-    private val clientOutput = PipedOutputStream(serverInput)
-    private val clientInput = PipedInputStream()
-    private val serverOutput = PipedOutputStream(clientInput)
-    private val clientError = PipedInputStream()
-    private val serverError = PipedOutputStream(clientError)
-    private val alive = AtomicBoolean(true)
-    private val exitCode = AtomicInteger()
-    private val exited = CountDownLatch(1)
-    private val outputClosed = AtomicBoolean(false)
-    private val inputClosed = AtomicBoolean(false)
-    private val errorClosed = AtomicBoolean(false)
-    private val trackedClientOutput = object : FilterOutputStream(clientOutput) {
-        override fun close() {
-            outputClosed.set(true)
-            super.close()
-        }
-    }
-    private val trackedClientInput = object : FilterInputStream(clientInput) {
-        override fun close() {
-            inputClosed.set(true)
-            super.close()
-        }
-    }
-    private val trackedClientError = object : FilterInputStream(clientError) {
-        override fun close() {
-            errorClosed.set(true)
-            super.close()
-        }
-    }
-
-    init {
-        thread(isDaemon = true, name = "fake-app-server") {
-            serverInput.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
-                lines.forEach { line ->
-                    val objectValue = kotlinx.serialization.json.Json.parseToJsonElement(line).jsonObject
-                    handler(ClientMessage(objectValue), this)
-                }
-            }
-        }
-    }
-
-    fun respond(id: Long?, result: JsonObject) {
-        requireNotNull(id)
-        sendRaw(buildJsonObject { put("id", id); put("result", result) }.toString())
-    }
-
-    fun notify(method: String, params: JsonObject) {
-        sendRaw(buildJsonObject { put("method", method); put("params", params) }.toString())
-    }
-
-    fun request(id: Long, method: String, params: JsonObject) {
-        sendRaw(
-            buildJsonObject {
-                put("id", id)
-                put("method", method)
-                put("params", params)
-            }.toString(),
-        )
-    }
-
-    @Synchronized
-    fun sendStderr(value: String) {
-        serverError.write("$value\n".toByteArray(StandardCharsets.UTF_8))
-        serverError.flush()
-    }
-
-    fun exit(code: Int) {
-        if (!alive.compareAndSet(true, false)) return
-        exitCode.set(code)
-        exited.countDown()
-    }
-
-    fun closeStdout() {
-        serverOutput.close()
-    }
-
-    fun allClientStreamsClosed(): Boolean =
-        outputClosed.get() && inputClosed.get() && errorClosed.get()
-
-    @Synchronized
-    fun sendRaw(value: String) {
-        serverOutput.write("$value\n".toByteArray(StandardCharsets.UTF_8))
-        serverOutput.flush()
-    }
-
-    override fun getOutputStream(): OutputStream = trackedClientOutput
-
-    override fun getInputStream(): InputStream = trackedClientInput
-
-    override fun getErrorStream(): InputStream = trackedClientError
-
-    override fun waitFor(): Int {
-        exited.await()
-        return exitCode.get()
-    }
-
-    override fun waitFor(timeout: Long, unit: TimeUnit): Boolean = exited.await(timeout, unit)
-
-    override fun exitValue(): Int {
-        if (alive.get()) throw IllegalThreadStateException("still running")
-        return exitCode.get()
-    }
-
-    override fun destroy() {
-        if (!alive.compareAndSet(true, false)) return
-        runCatching { clientOutput.close() }
-        runCatching { serverOutput.close() }
-        runCatching { serverError.close() }
-        runCatching { serverInput.close() }
-        runCatching { clientInput.close() }
-        runCatching { clientError.close() }
-        exited.countDown()
-    }
-
-    override fun destroyForcibly(): Process = apply { destroy() }
-
-    override fun isAlive(): Boolean = alive.get()
-}
-
-internal data class ClientMessage(val objectValue: JsonObject) {
-    val id: Long? = objectValue["id"]?.jsonPrimitive?.content?.toLongOrNull()
-    val method: String? = objectValue["method"]?.jsonPrimitive?.content
 }

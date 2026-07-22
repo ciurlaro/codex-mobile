@@ -13,12 +13,12 @@ internal class RuntimeToolBundle(private val context: Context) {
     private val binDirectory = File(context.noBackupFilesDir, "tool-bin")
 
     @Synchronized
-    fun prepare(codexHome: File): Map<String, String> {
+    fun prepareEnvironment(codexHome: File): Map<String, String> {
         val version = File(runtimeDirectory, VERSION_MARKER)
             .takeIf(File::isFile)
             ?.readText()
             ?.trim()
-        if (version != BUNDLE_VERSION) installRuntimeAssets()
+        if (version != BuildConfig.NATIVE_BUNDLE_VERSION) installRuntimeAssets()
         installAliases()
         installSkills(codexHome)
 
@@ -38,9 +38,13 @@ internal class RuntimeToolBundle(private val context: Context) {
         )
     }
 
-    fun process(command: String, arguments: List<String>, extraEnvironment: Map<String, String>): Process {
+    fun startBundledCommand(
+        command: String,
+        arguments: List<String>,
+        extraEnvironment: Map<String, String>,
+    ): Process {
         val codexHome = File(context.noBackupFilesDir, "codex").requireDirectory()
-        val environment = prepare(codexHome)
+        val environment = prepareEnvironment(codexHome)
         val executable = File(binDirectory, command)
         check(executable.exists()) { "Bundled command is unavailable: $command" }
         return ProcessBuilder(listOf(executable.absolutePath) + arguments)
@@ -85,7 +89,7 @@ internal class RuntimeToolBundle(private val context: Context) {
             }
             copyAsset("runtime/officecli/officecli", File(candidate, "officecli/officecli"))
             copyAsset("runtime/tessdata/eng.traineddata", File(candidate, "tessdata/eng.traineddata"))
-            File(candidate, VERSION_MARKER).writeText(BUNDLE_VERSION)
+            File(candidate, VERSION_MARKER).writeText(BuildConfig.NATIVE_BUNDLE_VERSION)
 
             runtimeDirectory.deleteRecursively()
             check(candidate.renameTo(runtimeDirectory)) { "Unable to activate bundled tool assets" }
@@ -130,7 +134,6 @@ internal class RuntimeToolBundle(private val context: Context) {
     }
 
     private companion object {
-        const val BUNDLE_VERSION = "2026-07-21.2"
         const val VERSION_MARKER = ".bundle-version"
         val EXECUTABLES = mapOf(
             "mutool" to "libcodex_mutool.so",

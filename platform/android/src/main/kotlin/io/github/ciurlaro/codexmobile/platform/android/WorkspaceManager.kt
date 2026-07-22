@@ -32,11 +32,11 @@ internal class WorkspaceManager(context: Context) {
             .filter(File::isDirectory).distinctBy(File::getPath).sortedBy(File::getPath)
     }
 
-    fun selectedPath(): String? = preferences.getString(PATH_KEY, null)
+    fun configuredPath(): String? = preferences.getString(PATH_KEY, null)
 
-    fun current(): File? {
+    fun activeWorkspace(): File? {
         if (!hasStoragePermission()) return null
-        return selectedPath()?.let(::File)?.let { runCatching { requireAllowedDirectory(it) }.getOrNull() }
+        return configuredPath()?.let(::File)?.let { runCatching { requireAllowedDirectory(it) }.getOrNull() }
     }
 
     fun select(path: String): File {

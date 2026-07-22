@@ -2,6 +2,12 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+property() {
+  awk -F= -v key="$1" '$1 == key { sub(/^[^=]*=/, ""); print; exit }' "$root/gradle.properties"
+}
+version_code=$(property codexMobile.versionCode)
+version_name=$(property codexMobile.versionName)
+codex_binary_sha256=$(property codexMobile.codexBinarySha256)
 apk=${1:-"$root/app/android/build/outputs/apk/release/android-release.apk"}
 build_tools=${ANDROID_HOME:?ANDROID_HOME must point to the Android SDK}/build-tools/36.0.0
 apksigner="$build_tools/apksigner"
@@ -14,8 +20,8 @@ test -s "$root/app/android/build/outputs/mapping/release/mapping.txt"
 
 "$apksigner" verify --verbose "$apk" | grep -q 'Verified using v2 scheme.*true'
 manifest=$("$aapt2" dump xmltree "$apk" --file AndroidManifest.xml)
-grep -q 'versionCode.*=3' <<<"$manifest"
-grep -q 'versionName.*="0.2.0-preview.1"' <<<"$manifest"
+grep -q "versionCode.*=$version_code" <<<"$manifest"
+grep -q "versionName.*=\"$version_name\"" <<<"$manifest"
 grep -q 'allowBackup.*=false' <<<"$manifest"
 grep -q 'usesCleartextTraffic.*=false' <<<"$manifest"
 grep -q 'networkSecurityConfig' <<<"$manifest"
@@ -47,7 +53,7 @@ grep -qx 'assets/codex/skills/local-documents/SKILL.md' <<<"$contents"
 grep -qx 'assets/codex/skills/tgcli/SKILL.md' <<<"$contents"
 ! grep -q '^lib/\(x86\|x86_64\|armeabi-v7a\)/' <<<"$contents"
 binary_hash=$(unzip -p "$apk" lib/arm64-v8a/libcodex_app_server.so | shasum -a 256 | cut -d' ' -f1)
-test "$binary_hash" = '09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd'
+test "$binary_hash" = "$codex_binary_sha256"
 
 "$root/scripts/generate-sbom.py" --check
 test -s "$root/gradle/verification-metadata.xml"

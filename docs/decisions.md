@@ -2,7 +2,7 @@
 
 | Decision | Why | Revisit when |
 |---|---|---|
-| Keep one `CodexAgentClient` | One runtime path does not justify extra protocol layers | It gains independently complex state machines |
+| Use one concrete `AppServerConnection` | Process, JSONL, request correlation, and restart mechanics are one transport concern; an interface or factory adds no value | A second transport is actually implemented |
 | Keep process mechanics outside core | Process launch is infrastructure, not domain policy | Another runtime needs the same contract |
 | Use Codex's native approval policy | Android diff approval and journals duplicated the harness and blocked normal work | A platform side effect cannot be represented safely by Codex |
 | Default approval to Never; expose four Settings choices | Desktop-like autonomy is the product default while the user retains control | Upstream policy semantics change |

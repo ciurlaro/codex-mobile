@@ -1,28 +1,25 @@
 package io.github.ciurlaro.codexmobile.app
 
 import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
 import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.SessionId
 
-enum class AppDestination { CHAT, SETTINGS }
+enum class AppScreen { CHAT, SETTINGS }
 
-enum class ChatPopup { NONE, TAGS, EFFORT, MODEL, SPEED, APPROVAL }
+enum class ChatSelector { TAGS, EFFORT, MODEL, SPEED, APPROVAL }
 
 sealed interface ChatUiEvent {
     data object OpenHistory : ChatUiEvent
     data object CloseHistory : ChatUiEvent
-    data object FreshChat : ChatUiEvent
+    data object StartNewChat : ChatUiEvent
     data object OpenSettings : ChatUiEvent
     data object CloseSettings : ChatUiEvent
-    data object ShowEffort : ChatUiEvent
-    data object ShowModels : ChatUiEvent
-    data object ShowSpeed : ChatUiEvent
-    data object ShowApproval : ChatUiEvent
-    data object ShowTags : ChatUiEvent
-    data object DismissPopup : ChatUiEvent
+    data class OpenSelector(val selector: ChatSelector) : ChatUiEvent
+    data object DismissSelector : ChatUiEvent
     data object Send : ChatUiEvent
     data object Stop : ChatUiEvent
     data object Authenticate : ChatUiEvent
@@ -39,7 +36,7 @@ sealed interface ChatUiEvent {
     data object ManageStorage : ChatUiEvent
     data object ClearWorkspace : ChatUiEvent
     data class SearchHistory(val query: String) : ChatUiEvent
-    data class SelectConversation(val id: SessionId) : ChatUiEvent
+    data class OpenConversation(val id: SessionId) : ChatUiEvent
     data class TogglePinConversation(val id: SessionId) : ChatUiEvent
     data class RenameConversation(val id: SessionId, val title: String) : ChatUiEvent
     data class DeleteConversation(val id: SessionId) : ChatUiEvent
@@ -50,7 +47,10 @@ sealed interface ChatUiEvent {
     data class SelectApproval(val preset: AgentApprovalPreset) : ChatUiEvent
     data class ConnectTelegram(val phoneNumber: String) : ChatUiEvent
     data class SubmitTelegramAuthentication(val value: String) : ChatUiEvent
-    data class ResolveCodexApproval(val requestId: String, val accept: Boolean) : ChatUiEvent
+    data class ResolveCodexApproval(
+        val requestId: String,
+        val decision: AgentApprovalDecision,
+    ) : ChatUiEvent
     data class AddCapability(val capability: AgentCapability) : ChatUiEvent
     data class RemoveCapability(val capability: AgentCapability) : ChatUiEvent
 }
@@ -62,7 +62,7 @@ data class ChatMessage(
     val capabilities: Set<AgentCapability> = emptySet(),
     val model: String? = null,
     val effort: String? = null,
-    val streaming: Boolean = false,
+    val isStreaming: Boolean = false,
     val shellCommand: String? = null,
     val exitCode: Int? = null,
 )

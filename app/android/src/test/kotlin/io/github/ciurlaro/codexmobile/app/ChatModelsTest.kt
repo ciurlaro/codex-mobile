@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
+import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -75,5 +76,47 @@ class ChatModelsTest {
 
         assertEquals(listOf(second), groups.pinned)
         assertEquals(listOf(first, third), groups.recent)
+    }
+
+    @Test
+    fun stateTransformationsResetAndRemoveConversationsConsistently() {
+        val session = SessionId("active")
+        val conversation = AgentConversationSummary(session, "Active", 1)
+        val submitted = MainUiState(
+            isAuthenticated = true,
+            conversations = listOf(conversation),
+            pinnedConversationIds = setOf(session.value),
+            draft = "hello",
+        ).withSubmittedTurn(
+            AgentTurnRequest(prompt = "hello", clientMessageId = "message"),
+            assistantMessageId = "assistant",
+            shellCommand = null,
+        )
+
+        assertEquals(listOf("user-message", "assistant"), submitted.messages.map(ChatMessage::id))
+        assertEquals("", submitted.draft)
+
+        val removed = submitted.copy(sessionId = session).withoutConversation(session)
+        assertEquals(emptyList(), removed.conversations)
+        assertEquals(emptySet(), removed.pinnedConversationIds)
+        assertEquals(null, removed.sessionId)
+        assertEquals("Conversation deleted", removed.statusMessage)
+    }
+
+    @Test
+    fun completedEmptyStreamingPlaceholderIsRemoved() {
+        val messages = listOf(
+            ChatMessage(
+                id = "assistant",
+                role = io.github.ciurlaro.codexmobile.core.AgentMessageRole.CODEX,
+                text = "",
+                isStreaming = true,
+            ),
+        )
+
+        assertEquals(
+            emptyList(),
+            messages.withStreamingAssistant("assistant", "", isStreaming = false, exitCode = null),
+        )
     }
 }

@@ -11,39 +11,28 @@ interface AgentClient : AutoCloseable {
 
     suspend fun signOut()
 
-    suspend fun listModels(): List<AgentModel> = emptyList()
+    suspend fun listModels(): List<AgentModel>
 
-    suspend fun listSessions(): List<AgentConversationSummary> = emptyList()
+    suspend fun listSessions(): List<AgentConversationSummary>
 
-    suspend fun readSession(sessionId: SessionId): AgentConversation =
-        throw UnsupportedOperationException("Conversation history is unavailable")
+    suspend fun readSession(sessionId: SessionId): AgentConversation
 
-    suspend fun renameSession(sessionId: SessionId, name: String) {
-        throw UnsupportedOperationException("Conversation rename is unavailable")
-    }
+    suspend fun renameSession(sessionId: SessionId, name: String)
 
-    suspend fun deleteSession(sessionId: SessionId) {
-        throw UnsupportedOperationException("Conversation deletion is unavailable")
-    }
+    suspend fun deleteSession(sessionId: SessionId)
 
     suspend fun openSession(
         previous: SessionId? = null,
         settings: AgentRuntimeSettings = AgentRuntimeSettings(),
     ): SessionId
 
-    suspend fun sendPrompt(sessionId: SessionId, prompt: String)
+    suspend fun sendTurn(sessionId: SessionId, request: AgentTurnRequest)
 
-    suspend fun sendTurn(sessionId: SessionId, request: AgentTurnRequest) {
-        sendPrompt(sessionId, request.prompt)
-    }
-
-    suspend fun runShellCommand(sessionId: SessionId, command: String) {
-        throw UnsupportedOperationException("Shell commands are unavailable")
-    }
+    suspend fun runShellCommand(sessionId: SessionId, command: String)
 
     suspend fun cancelTurn(sessionId: SessionId)
 
-    suspend fun resolveApproval(requestId: String, accept: Boolean) = Unit
+    suspend fun resolveApproval(requestId: String, decision: AgentApprovalDecision)
 }
 
 @JvmInline
@@ -75,6 +64,11 @@ enum class AgentApprovalPreset(
     AUTO_REVIEW("Auto review", "on-request", "auto_review"),
     ASK_ME("Ask me", "on-request", "user"),
     STRICT("Strict", "untrusted", "user"),
+}
+
+enum class AgentApprovalDecision {
+    ACCEPT,
+    DECLINE,
 }
 
 data class AgentRuntimeSettings(
@@ -192,6 +186,5 @@ sealed interface AgentEvent {
 
 enum class AgentWorkActivity {
     RUNNING_COMMAND,
-    READING_FILES,
     WRITING_FILES,
 }
