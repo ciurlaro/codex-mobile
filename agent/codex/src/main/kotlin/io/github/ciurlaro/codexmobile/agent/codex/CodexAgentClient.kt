@@ -33,6 +33,8 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -40,6 +42,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -59,30 +62,41 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 
 class CodexAgentClient(
-    launchCodexProcess: () -> Process,
+    runtimeFactory: CodexRuntimeFactory,
     requestTimeoutMillis: Long = 20_000,
     private val clientVersion: String = "test",
     private val pluginCacheDirectory: File? = null,
+    private val builtInToolDispatcher: BuiltInToolDispatcher? = null,
 ) : AgentClient {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val eventsChannel = Channel<AgentEvent>(capacity = EVENT_BUFFER_SIZE)
     private val authMutex = Mutex()
     private val loginStateLock = Any()
     private val cancelledLoginIds = mutableSetOf<String>()
     private val pendingApprovalRequests = ConcurrentHashMap<String, JsonElement>()
+    private val pendingBuiltInApprovals = ConcurrentHashMap<String, PendingBuiltInApproval>()
     private val pendingElicitationRequests = ConcurrentHashMap<String, JsonElement>()
     private val workItems = ConcurrentHashMap<String, Pair<SessionId, AgentWorkActivity>>()
     private val userShellItems = ConcurrentHashMap.newKeySet<String>()
     private val knownSkillPaths = ConcurrentHashMap.newKeySet<String>()
     private val openedSessions = ConcurrentHashMap.newKeySet<SessionId>()
+    private val sessionRuntimeSettings = ConcurrentHashMap<SessionId, SessionRuntimeSettings>()
+    private val builtInPluginEnabled = ConcurrentHashMap<String, Boolean>().apply {
+        put(DOCUMENTS_PLUGIN_ID, true)
+        put(TELEGRAM_PLUGIN_ID, true)
+    }
+    private val builtInToolGate = Mutex()
+    private val builtInEnablementLoaded = AtomicBoolean(false)
     private val turnStateLock = Any()
     private val activeTurns = mutableMapOf<SessionId, String>()
     private val startingTurns = mutableSetOf<SessionId>()
     private val terminalDuringStart = mutableMapOf<SessionId, String>()
     private val cancellingTurns = mutableSetOf<SessionId>()
+    private val cancelledTurns = mutableMapOf<SessionId, String>()
     private val authenticated = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
     private val connection = AppServerConnection(
-        launchCodexProcess = launchCodexProcess,
+        runtimeFactory = runtimeFactory,
         clientVersion = clientVersion,
         requestTimeoutMillis = requestTimeoutMillis,
         onServerRequest = ::handleServerRequest,
@@ -198,6 +212,7 @@ class CodexAgentClient(
         userShellItems.clear()
         knownSkillPaths.clear()
         openedSessions.clear()
+        sessionRuntimeSettings.clear()
     }
 
     override suspend fun listModels(): List<AgentModel> = requestAllPages("model/list") { item ->
@@ -330,6 +345,12 @@ class CodexAgentClient(
             raw.jsonObject.optionalString("message")
         }.distinct()
         val catalog = AgentPluginCatalog(parsePluginMarketplaces(result), errors)
+        if (builtInToolDispatcher != null) {
+            builtInToolGate.withLock {
+                applyBuiltInPluginEnablement(catalog)
+                builtInEnablementLoaded.set(true)
+            }
+        }
         if (catalog.plugins.isNotEmpty()) runCatching { onResponse(result) }
         return catalog
     }
@@ -397,19 +418,23 @@ class CodexAgentClient(
 
     override suspend fun uninstallPlugin(pluginId: String) {
         require(pluginId.isNotBlank()) { "Plugin ID must not be blank" }
+        require(!builtInPluginEnabled.containsKey(pluginId)) { "Built-in plugins cannot be uninstalled" }
         request("plugin/uninstall", buildJsonObject { put("pluginId", pluginId) })
     }
 
     override suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) {
         require(pluginId.isNotBlank() && '.' !in pluginId) { "Invalid plugin ID" }
-        request(
-            "config/value/write",
-            buildJsonObject {
-                put("keyPath", "plugins.$pluginId.enabled")
-                put("value", enabled)
-                put("mergeStrategy", "upsert")
-            },
-        )
+        if (builtInPluginEnabled.containsKey(pluginId)) {
+            builtInToolGate.withLock {
+                request(
+                    "config/value/write",
+                    pluginEnablementParams(pluginId, enabled),
+                )
+                builtInPluginEnabled[pluginId] = enabled
+            }
+        } else {
+            request("config/value/write", pluginEnablementParams(pluginId, enabled))
+        }
     }
 
     override suspend fun listConnectors(
@@ -480,15 +505,21 @@ class CodexAgentClient(
             buildJsonObject { put("threadId", sessionId.value) },
         )
         openedSessions -= sessionId
+        sessionRuntimeSettings -= sessionId
         synchronized(turnStateLock) {
             activeTurns -= sessionId
             startingTurns -= sessionId
             terminalDuringStart -= sessionId
             cancellingTurns -= sessionId
+            cancelledTurns -= sessionId
         }
     }
 
     override suspend fun openSession(previous: SessionId?, settings: AgentRuntimeSettings): SessionId {
+        if (builtInToolDispatcher != null) {
+            connection.ensureStarted()
+            refreshBuiltInPluginEnablement(settings.workingDirectory ?: "/")
+        }
         val params = buildJsonObject {
             previous?.let { put("threadId", it.value) }
             put("approvalPolicy", settings.approvalPreset.approvalPolicy)
@@ -500,11 +531,19 @@ class CodexAgentClient(
             put(
                 "developerInstructions",
                 "Answer conversationally using Markdown. The shell starts in the user's selected Android " +
-                    "workspace and may use ordinary shell commands to inspect and modify files. Native " +
-                    "Android commands on PATH include mutool, tesseract, officecli, and tgcli. Use the " +
+                    "workspace and may use ordinary shell commands to inspect and modify files. Use enabled " +
+                    "built-in plugin tools for Documents and Telegram; their private backends are not shell commands. Use the " +
                     "built-in web search tool only when the user input contains the structured " +
                     "'${AgentCapability.WEB_SEARCH.promptLabel}' prompt tag.",
             )
+            if (previous == null && builtInToolDispatcher != null) {
+                put(
+                    "dynamicTools",
+                    builtInDynamicTools(
+                        builtInPluginEnabled.filterValues { it }.keys,
+                    ),
+                )
+            }
             putJsonObject("config") {
                 put("web_search", "live")
                 putJsonObject("tools") {
@@ -541,6 +580,10 @@ class CodexAgentClient(
         val result = request(if (previous == null) "thread/start" else "thread/resume", params).jsonObject
         val sessionId = SessionId(result.requiredObject("thread").requiredString("id"))
         openedSessions += sessionId
+        sessionRuntimeSettings[sessionId] = SessionRuntimeSettings(
+            workspace = settings.workingDirectory,
+            approvalPreset = settings.approvalPreset,
+        )
         eventsChannel.send(
             AgentEvent.SessionOpened(
                 sessionId = sessionId,
@@ -577,8 +620,14 @@ class CodexAgentClient(
             check(sessionId !in startingTurns && !activeTurns.containsKey(sessionId)) {
                 "A turn is already active for this session"
             }
+            cancelledTurns -= sessionId
             startingTurns += sessionId
         }
+        val previousRuntimeSettings = sessionRuntimeSettings[sessionId]
+        sessionRuntimeSettings[sessionId] = SessionRuntimeSettings(
+            workspace = snapshot.workingDirectory ?: previousRuntimeSettings?.workspace,
+            approvalPreset = snapshot.approvalPreset,
+        )
 
         try {
             val result = request(
@@ -603,6 +652,11 @@ class CodexAgentClient(
                 }
             }
         } catch (error: Exception) {
+            if (previousRuntimeSettings == null) {
+                sessionRuntimeSettings -= sessionId
+            } else {
+                sessionRuntimeSettings[sessionId] = previousRuntimeSettings
+            }
             synchronized(turnStateLock) {
                 startingTurns -= sessionId
                 terminalDuringStart.remove(sessionId)
@@ -642,8 +696,10 @@ class CodexAgentClient(
         val turnId = synchronized(turnStateLock) {
             val active = activeTurns[sessionId] ?: error("No active turn for this session")
             check(cancellingTurns.add(sessionId)) { "Turn cancellation is already in progress" }
+            cancelledTurns[sessionId] = active
             active
         }
+        cancelPendingBuiltInTools(sessionId, turnId, "Built-in tool call was cancelled")
         try {
             try {
                 request(
@@ -662,6 +718,18 @@ class CodexAgentClient(
     }
 
     override suspend fun resolveApproval(requestId: String, decision: AgentApprovalDecision) {
+        pendingBuiltInApprovals.remove(requestId)?.let { pending ->
+            if (decision == AgentApprovalDecision.ACCEPT) {
+                pending.permit.set(true)
+                executeBuiltInTool(pending)
+            } else {
+                respondBuiltInResult(
+                    pending.wireId,
+                    BuiltInToolResult.text("The user declined this built-in tool mutation.", false),
+                )
+            }
+            return
+        }
         val wireId = pendingApprovalRequests.remove(requestId)
             ?: error("Approval request is no longer pending")
         connection.respond(
@@ -682,12 +750,15 @@ class CodexAgentClient(
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         pendingApprovalRequests.clear()
+        pendingBuiltInApprovals.clear()
         pendingElicitationRequests.clear()
         workItems.clear()
         userShellItems.clear()
         knownSkillPaths.clear()
         openedSessions.clear()
+        sessionRuntimeSettings.clear()
         connection.close()
+        scope.cancel()
         eventsChannel.close()
     }
 
@@ -695,10 +766,42 @@ class CodexAgentClient(
         method: String,
         params: JsonObject,
         timeoutMillis: Long? = null,
-    ): JsonElement = if (timeoutMillis == null) {
-        connection.request(method, params)
-    } else {
-        connection.request(method, params, timeoutMillis)
+    ): JsonElement {
+        connection.ensureStarted()
+        return if (timeoutMillis == null) {
+            connection.request(method, params)
+        } else {
+            connection.request(method, params, timeoutMillis)
+        }
+    }
+
+    private suspend fun refreshBuiltInPluginEnablement(workingDirectory: String) {
+        if (builtInEnablementLoaded.get()) return
+        builtInToolGate.withLock {
+            if (builtInEnablementLoaded.get()) return
+            runCatching {
+                val result = connection.request(
+                    "plugin/installed",
+                    buildJsonObject {
+                        put("cwds", buildJsonArray { add(JsonPrimitive(workingDirectory)) })
+                    },
+                    PLUGIN_CATALOG_TIMEOUT_MILLIS,
+                ).jsonObject
+                applyBuiltInPluginEnablement(
+                    AgentPluginCatalog(parsePluginMarketplaces(result), emptyList()),
+                )
+            }.onFailure {
+                builtInPluginEnabled.keys.forEach { builtInPluginEnabled[it] = false }
+            }
+            builtInEnablementLoaded.set(true)
+        }
+    }
+
+    private fun applyBuiltInPluginEnablement(catalog: AgentPluginCatalog) {
+        builtInPluginEnabled.keys.forEach { pluginId ->
+            val plugin = catalog.plugins.singleOrNull { it.reference.id == pluginId }
+            builtInPluginEnabled[pluginId] = plugin?.let { it.installed && it.enabled } == true
+        }
     }
 
     private fun handleServerRequest(id: JsonElement, method: String, rawParams: JsonElement?) {
@@ -713,7 +816,195 @@ class CodexAgentClient(
             handleElicitationRequest(id, rawParams)
             return
         }
+        if (method == "item/tool/call") {
+            handleBuiltInToolCall(id, rawParams)
+            return
+        }
         rejectServerRequest(id, method)
+    }
+
+    private fun handleBuiltInToolCall(id: JsonElement, rawParams: JsonElement?) {
+        val pending = runCatching {
+            checkNotNull(builtInToolDispatcher) { "Built-in tools are unavailable" }
+            val params = rawParams as? JsonObject ?: error("Tool call params are missing")
+            check(params["namespace"] == null || params["namespace"] is kotlinx.serialization.json.JsonNull) {
+                "Built-in tools do not use namespaces"
+            }
+            val tool = params.requiredString("tool")
+            val pluginId = BUILT_IN_TOOL_PLUGINS[tool] ?: error("Unknown built-in tool")
+            val sessionId = SessionId(params.requiredString("threadId"))
+            check(sessionId in openedSessions) { "Tool call session is not open" }
+            val runtimeSettings = sessionRuntimeSettings[sessionId]
+                ?: error("Tool call session settings are unavailable")
+            val workspace = runtimeSettings.workspace
+                ?: error("A selected Android workspace is required")
+            val arguments = params["arguments"] as? JsonObject
+                ?: error("Tool arguments must be an object")
+            val call = BuiltInToolCall(
+                threadId = sessionId.value,
+                turnId = params.requiredString("turnId"),
+                callId = params.requiredString("callId"),
+                pluginId = pluginId,
+                tool = tool,
+                arguments = arguments,
+                workspace = workspace,
+                argumentsHash = sha256(canonicalJson(arguments)),
+            )
+            val startedAt = params["startedAtMs"]?.jsonPrimitive?.longOrNull
+                ?.takeIf { it > 0 }
+                ?: System.currentTimeMillis()
+            PendingBuiltInApproval(
+                wireId = id,
+                call = call,
+                deadlineEpochMillis = startedAt + BUILT_IN_TOOL_DEADLINE_MILLIS,
+                requiresPermit = tool in BUILT_IN_MUTATION_TOOLS &&
+                    typedMutationAuthority(runtimeSettings.approvalPreset) ==
+                    TypedMutationAuthority.USER_APPROVAL,
+            )
+        }.getOrElse { error ->
+            scope.launch {
+                respondBuiltInResult(id, BuiltInToolResult.text(error.visibleMessage(), false))
+            }
+            return
+        }
+
+        scope.launch { continueBuiltInToolCall(pending) }
+    }
+
+    private suspend fun continueBuiltInToolCall(pending: PendingBuiltInApproval) {
+        val replay = try {
+            builtInToolGate.withLock {
+                validateBuiltInCall(pending)
+                checkNotNull(builtInToolDispatcher).replay(pending.call)
+            }
+        } catch (error: Exception) {
+            respondBuiltInResult(pending.wireId, BuiltInToolResult.text(error.visibleMessage(), false))
+            return
+        }
+        if (replay != null) {
+            respondBuiltInResult(pending.wireId, replay)
+            return
+        }
+
+        val runtimeSettings = sessionRuntimeSettings[SessionId(pending.call.threadId)]
+            ?: return respondBuiltInResult(
+                pending.wireId,
+                BuiltInToolResult.text("Tool call session settings are unavailable", false),
+            )
+        if (pending.call.tool in BUILT_IN_MUTATION_TOOLS) {
+            when (typedMutationAuthority(runtimeSettings.approvalPreset)) {
+                TypedMutationAuthority.UNAVAILABLE -> {
+                    respondBuiltInResult(
+                        pending.wireId,
+                        BuiltInToolResult.text(
+                            "This typed mutation is unavailable under Auto review because app-server 0.144.6 " +
+                                "does not expose an equivalent automatic-review bridge.",
+                            false,
+                        ),
+                    )
+                    return
+                }
+                TypedMutationAuthority.USER_APPROVAL -> {
+                    val call = pending.call
+                    val requestId = "builtin:${call.threadId}:${call.turnId}:${call.callId}"
+                    if (pendingBuiltInApprovals.putIfAbsent(requestId, pending) != null) {
+                        respondBuiltInResult(
+                            pending.wireId,
+                            BuiltInToolResult.text("Duplicate approval request", false),
+                        )
+                        return
+                    }
+                    eventsChannel.send(
+                        AgentEvent.ApprovalRequested(
+                            sessionId = SessionId(call.threadId),
+                            requestId = requestId,
+                            title = "Approve ${call.tool.replace('_', ' ')}?",
+                            details = "Plugin: ${call.pluginId}\nWorkspace: ${call.workspace}",
+                        ),
+                    )
+                    return
+                }
+                TypedMutationAuthority.DIRECT -> Unit
+            }
+        }
+        executeBuiltInTool(pending)
+    }
+
+    private suspend fun executeBuiltInTool(pending: PendingBuiltInApproval) {
+        val result = runCatching {
+            builtInToolGate.withLock {
+                validateBuiltInCall(pending)
+                if (pending.requiresPermit) {
+                    check(pending.permit.compareAndSet(true, false)) {
+                        "Built-in mutation approval is missing or was already used"
+                    }
+                }
+                checkNotNull(builtInToolDispatcher).execute(pending.call)
+            }
+        }.getOrElse { error -> BuiltInToolResult.text(error.visibleMessage(), false) }
+        runCatching { respondBuiltInResult(pending.wireId, result) }
+    }
+
+    private fun validateBuiltInCall(pending: PendingBuiltInApproval) {
+        val call = pending.call
+        check(builtInPluginEnabled[call.pluginId] == true) { "${call.pluginId} is disabled" }
+        check(System.currentTimeMillis() <= pending.deadlineEpochMillis) {
+            "Built-in tool call deadline expired"
+        }
+        val sessionId = SessionId(call.threadId)
+        val active = synchronized(turnStateLock) {
+            (activeTurns[sessionId] == call.turnId || sessionId in startingTurns) &&
+                cancelledTurns[sessionId] != call.turnId
+        }
+        check(active) { "Built-in tool call is no longer active" }
+    }
+
+    private fun cancelPendingBuiltInTools(sessionId: SessionId, turnId: String?, message: String) {
+        pendingBuiltInApprovals.entries
+            .filter { (_, pending) ->
+                pending.call.threadId == sessionId.value &&
+                    (turnId == null || pending.call.turnId == turnId)
+            }
+            .forEach { (requestId, pending) ->
+                if (pendingBuiltInApprovals.remove(requestId, pending)) {
+                    scope.launch {
+                        runCatching {
+                            respondBuiltInResult(pending.wireId, BuiltInToolResult.text(message, false))
+                        }
+                    }
+                }
+            }
+    }
+
+    private suspend fun respondBuiltInResult(id: JsonElement, result: BuiltInToolResult) {
+        connection.respond(
+            id,
+            buildJsonObject {
+                put(
+                    "contentItems",
+                    buildJsonArray {
+                        result.content.forEach { item ->
+                            add(
+                                when (item) {
+                                    is BuiltInToolContent.Text -> buildJsonObject {
+                                        put("type", "inputText")
+                                        put("text", item.value.take(MAX_BUILT_IN_RESULT_CHARS))
+                                    }
+                                    is BuiltInToolContent.Image -> buildJsonObject {
+                                        check(item.dataUrl.startsWith("data:image/")) {
+                                            "Built-in images must use inline data URLs"
+                                        }
+                                        put("type", "inputImage")
+                                        put("imageUrl", item.dataUrl)
+                                    }
+                                },
+                            )
+                        }
+                    },
+                )
+                put("success", result.success)
+            },
+        )
     }
 
     private fun handleElicitationRequest(id: JsonElement, rawParams: JsonElement?) {
@@ -919,7 +1210,9 @@ class CodexAgentClient(
                 terminalDuringStart[sessionId] = turnId
             }
             cancellingTurns -= sessionId
+            if (turnId == null || cancelledTurns[sessionId] == turnId) cancelledTurns -= sessionId
         }
+        cancelPendingBuiltInTools(sessionId, turnId, "Built-in tool call is no longer active")
         val removedWork = workItems.entries.removeIf { it.value.first == sessionId }
         if (removedWork) emitBlocking(AgentEvent.WorkActivityChanged(sessionId, null))
     }
@@ -968,6 +1261,7 @@ class CodexAgentClient(
 
     private fun handleConnectionFailure(code: String, message: String) {
         authenticated.set(false)
+        builtInEnablementLoaded.set(false)
         synchronized(loginStateLock) {
             loginId = null
             loginStarting = false
@@ -979,12 +1273,15 @@ class CodexAgentClient(
             startingTurns.clear()
             terminalDuringStart.clear()
             cancellingTurns.clear()
+            cancelledTurns.clear()
         }
         pendingApprovalRequests.clear()
+        pendingBuiltInApprovals.clear()
         pendingElicitationRequests.clear()
         workItems.clear()
         userShellItems.clear()
         openedSessions.clear()
+        sessionRuntimeSettings.clear()
         emitBlocking(AgentEvent.Failure(null, code, message, recoverable = true))
     }
 
@@ -1015,6 +1312,12 @@ class CodexAgentClient(
         put("pluginName", plugin.name)
         plugin.marketplacePath?.let { put("marketplacePath", it) }
             ?: put("remoteMarketplaceName", plugin.marketplaceName)
+    }
+
+    private fun pluginEnablementParams(pluginId: String, enabled: Boolean) = buildJsonObject {
+        put("keyPath", "plugins.$pluginId.enabled")
+        put("value", enabled)
+        put("mergeStrategy", "upsert")
     }
 
     private fun RpcException.forPlugin(plugin: AgentPluginReference): Throwable =
@@ -1053,9 +1356,24 @@ class CodexAgentClient(
         val error: String?,
     )
 
+    private data class SessionRuntimeSettings(
+        val workspace: String?,
+        val approvalPreset: io.github.ciurlaro.codexmobile.core.AgentApprovalPreset,
+    )
+
+    private data class PendingBuiltInApproval(
+        val wireId: JsonElement,
+        val call: BuiltInToolCall,
+        val deadlineEpochMillis: Long,
+        val requiresPermit: Boolean,
+        val permit: AtomicBoolean = AtomicBoolean(),
+    )
+
     private companion object {
         const val EVENT_BUFFER_SIZE = 64
         const val MAX_PROMPT_CHARS = 100_000
+        const val MAX_BUILT_IN_RESULT_CHARS = 250_000
+        const val BUILT_IN_TOOL_DEADLINE_MILLIS = 120_000L
         const val SKILL_CHUNK_BYTES = 32 * 1024
         const val PLUGIN_CATALOG_TIMEOUT_MILLIS = 60_000L
         const val CATALOG_CACHE_TTL_MILLIS = 6 * 60 * 60 * 1000L

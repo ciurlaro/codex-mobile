@@ -2,7 +2,6 @@ package io.github.ciurlaro.codexmobile.platform.android
 
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
-import java.io.OutputStream
 import java.net.InetAddress
 import java.net.Inet4Address
 import java.net.Inet6Address
@@ -16,31 +15,6 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
-
-internal class ProxyBackedProcess(
-    private val process: Process,
-    private val proxy: LoopbackConnectProxy,
-) : Process() {
-    private val proxyClosed = AtomicBoolean()
-
-    override fun getOutputStream(): OutputStream = process.outputStream
-    override fun getInputStream(): InputStream = process.inputStream
-    override fun getErrorStream(): InputStream = process.errorStream
-    override fun waitFor(): Int = try {
-        process.waitFor()
-    } finally {
-        closeProxy()
-    }
-    override fun exitValue(): Int = process.exitValue().also { closeProxy() }
-    override fun destroy() {
-        closeProxy()
-        process.destroy()
-    }
-
-    private fun closeProxy() {
-        if (proxyClosed.compareAndSet(false, true)) proxy.close()
-    }
-}
 
 internal class LoopbackConnectProxy : AutoCloseable {
     private val closed = AtomicBoolean()

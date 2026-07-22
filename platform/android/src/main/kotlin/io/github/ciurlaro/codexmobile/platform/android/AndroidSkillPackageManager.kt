@@ -29,7 +29,6 @@ import org.json.JSONObject
 
 class AndroidSkillPackageManager internal constructor(
     context: Context,
-    private val runtimeTools: RuntimeToolBundle,
 ) {
     private val appContext = context.applicationContext
     private val codexHome = File(appContext.noBackupFilesDir, "codex")
@@ -58,7 +57,7 @@ class AndroidSkillPackageManager internal constructor(
                 }
             }
             AgentSkillPackageCatalog(
-                skills = (removedBundledSkills() + remote.skills)
+                skills = remote.skills
                     .filterNot { it.name in installedNames || File(skillsRoot, it.name).isDirectory }
                     .distinctBy(AgentSkillPackage::name),
                 freshness = remote.freshness,
@@ -78,8 +77,8 @@ class AndroidSkillPackageManager internal constructor(
         withContext(Dispatchers.IO) {
             require(offset >= 0) { "Offset must not be negative" }
             val source = when (packageInfo.source) {
-                AgentSkillPackageSource.CODEX_MOBILE -> runtimeTools.readBundledSkill(packageInfo.name)
-                    .toByteArray(StandardCharsets.UTF_8)
+                AgentSkillPackageSource.CODEX_MOBILE ->
+                    error("Built-in capabilities are managed as plugins")
                 AgentSkillPackageSource.OPENAI, AgentSkillPackageSource.GITHUB -> readSource(packageInfo)
             }
             require(offset <= source.size) { "Offset exceeds skill source size" }
@@ -98,7 +97,8 @@ class AndroidSkillPackageManager internal constructor(
             val destination = File(skillsRoot, packageInfo.name)
             check(!destination.exists()) { "A skill named ${packageInfo.name} is already installed" }
             when (packageInfo.source) {
-                AgentSkillPackageSource.CODEX_MOBILE -> runtimeTools.installBundledSkill(codexHome, packageInfo.name)
+                AgentSkillPackageSource.CODEX_MOBILE ->
+                    error("Built-in capabilities are managed as plugins")
                 AgentSkillPackageSource.OPENAI, AgentSkillPackageSource.GITHUB ->
                     installArchive(GitHubSkillLocation.parse(packageInfo.sourceUrl), destination)
             }
@@ -109,11 +109,8 @@ class AndroidSkillPackageManager internal constructor(
     suspend fun uninstall(skill: AgentSkill) = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
             val directory = uninstallableSkillDirectory(skill, skillsRoot)
-            val bundled = directory.name in RuntimeToolBundle.BUNDLED_SKILLS
-            if (bundled) runtimeTools.markBundledSkillRemoved(codexHome, directory.name)
             val removed = File(skillsRoot, ".removed-${directory.name}-${UUID.randomUUID()}")
             if (!directory.renameTo(removed)) {
-                if (bundled) runtimeTools.clearBundledSkillRemoval(codexHome, directory.name)
                 error("Unable to remove ${skill.displayName}")
             }
             check(removed.deleteRecursively()) { "The skill was detached but cleanup failed" }
@@ -122,19 +119,6 @@ class AndroidSkillPackageManager internal constructor(
 
     fun canUninstall(skill: AgentSkill): Boolean =
         runCatching { uninstallableSkillDirectory(skill, skillsRoot) }.isSuccess
-
-    private fun removedBundledSkills(): List<AgentSkillPackage> = RuntimeToolBundle.BUNDLED_SKILLS.mapNotNull { name ->
-        name.takeIf { runtimeTools.isBundledSkillRemoved(codexHome, it) }?.let {
-            AgentSkillPackage(
-                id = "codex-mobile:$it",
-                name = it,
-                displayName = it.humanName(),
-                description = "Bundled Codex Mobile skill",
-                source = AgentSkillPackageSource.CODEX_MOBILE,
-                sourceUrl = "asset://codex/skills/$it/SKILL.md",
-            )
-        }
-    }
 
     private fun readCatalogCache(): CachedCatalog? {
         if (!catalogFile.isFile || !metadataFile.isFile) return null

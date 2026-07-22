@@ -1,9 +1,9 @@
-Codex Mobile native tool notices
-================================
+Codex Mobile private backend notices
+====================================
 
 This build includes checksum-pinned components produced or distributed by
 their respective upstream projects. Full license files available from the
-downloaded distributions are packaged under assets/runtime/licenses/.
+downloaded distributions are packaged under assets/private-backends/licenses/.
 
 - MuPDF 1.28.0 and its bundled third-party libraries
   Source: https://mupdf.com/releases/

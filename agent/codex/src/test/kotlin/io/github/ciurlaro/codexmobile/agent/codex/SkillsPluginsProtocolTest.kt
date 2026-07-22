@@ -84,7 +84,7 @@ class SkillsPluginsProtocolTest {
         val methods = mutableListOf<String>()
         var skillWrite: Boolean? = null
         var pluginWrite: String? = null
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             message.method?.let(methods::add)
             when (message.method) {
                 "initialize" -> {
@@ -162,7 +162,7 @@ class SkillsPluginsProtocolTest {
         val source = File.createTempFile("codex-skill-", ".md")
         val expected = "a".repeat(32 * 1024 - 1) + "€" + "tail"
         source.writeText(expected)
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "skills/list" -> server.respond(message.id, skillsResponse(source.absolutePath))
@@ -189,7 +189,7 @@ class SkillsPluginsProtocolTest {
     @Test
     fun `available plugin discovery serves cache and keeps stale data after refresh failure`(): Unit = runBlocking {
         val cache = Files.createTempDirectory("plugin-cache-").toFile()
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "plugin/list" -> server.respond(message.id, pluginList(installed = false))
@@ -200,7 +200,7 @@ class SkillsPluginsProtocolTest {
         }
 
         val cached = CodexAgentClient(
-            launchCodexProcess = { error("Network should not be used for cached discovery") },
+            runtimeFactory = { error("Network should not be used for cached discovery") },
             requestTimeoutMillis = 100,
             pluginCacheDirectory = cache,
         )
@@ -221,7 +221,7 @@ class SkillsPluginsProtocolTest {
     @Test
     fun `available plugin discovery retries an initially empty catalog`(): Unit = runBlocking {
         var requests = 0
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "plugin/list" -> {
@@ -249,7 +249,7 @@ class SkillsPluginsProtocolTest {
 
     @Test
     fun `maps a stale remote plugin entry to unavailable`(): Unit = runBlocking {
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "plugin/install" -> server.sendRaw(

@@ -453,7 +453,7 @@ class ForegroundSessionControllerTest {
     }
 
     private companion object {
-        val SESSION = SessionId("step05-session")
+        val SESSION = SessionId("session")
         val SUMMARY = AgentConversationSummary(SESSION, "Synthetic history", 1L)
         val CONVERSATION = AgentConversation(
             SUMMARY,

@@ -17,6 +17,8 @@ data class TelegramStatus(
 
 enum class TelegramAuthPrompt { CODE, PASSWORD }
 
+enum class TelegramDisconnectResult { CONFIRMED, INDETERMINATE }
+
 sealed interface TelegramAuthEvent {
     data class Prompt(val prompt: TelegramAuthPrompt) : TelegramAuthEvent
     data class Connected(val username: String?) : TelegramAuthEvent
@@ -71,8 +73,8 @@ class TelegramAuthSession internal constructor(
     }
 }
 
-internal class TelegramCliIntegration(
-    private val tools: RuntimeToolBundle,
+internal class TelegramIntegration(
+    private val tools: PrivateBackendBundle,
 ) {
     val available: Boolean
         get() = BuildConfig.TELEGRAM_API_ID.toIntOrNull()?.let { it > 0 } == true &&
@@ -80,8 +82,8 @@ internal class TelegramCliIntegration(
 
     fun status(): TelegramStatus {
         if (!available) return TelegramStatus(available = false, connected = false)
-        val process = tools.startBundledCommand(
-            "tgcli",
+        val process = tools.startPrivateBackend(
+            PrivateBackend.TELEGRAM,
             listOf("--json", "--timeout", "15s", "auth", "status"),
             emptyMap(),
         )
@@ -113,23 +115,24 @@ internal class TelegramCliIntegration(
         configFile.writeText(config.toString(2) + "\n")
         Os.chmod(configFile.absolutePath, 0x180) // 0600
         return TelegramAuthSession(
-            tools.startBundledCommand(
-                "tgcli",
+            tools.startPrivateBackend(
+                PrivateBackend.TELEGRAM,
                 listOf("--json", "auth"),
                 mapOf("TGCLI_AUTH_BRIDGE" to "1"),
             ),
         )
     }
 
-    fun disconnect(): Boolean {
-        if (!tools.telegramStore.exists()) return true
-        val process = tools.startBundledCommand(
-            "tgcli",
+    fun disconnect(): TelegramDisconnectResult {
+        if (!tools.telegramStore.exists()) return TelegramDisconnectResult.CONFIRMED
+        val process = tools.startPrivateBackend(
+            PrivateBackend.TELEGRAM,
             listOf("--json", "--timeout", "30s", "auth", "logout"),
             emptyMap(),
         )
-        if (process.awaitOutput(35).exitCode != 0) return false
-        return tools.telegramStore.deleteRecursively()
+        if (process.awaitOutput(35).exitCode != 0) return TelegramDisconnectResult.INDETERMINATE
+        return if (tools.telegramStore.deleteRecursively()) TelegramDisconnectResult.CONFIRMED
+        else TelegramDisconnectResult.INDETERMINATE
     }
 
     private fun Process.awaitOutput(timeoutSeconds: Long): ProcessOutput {

@@ -1,21 +1,19 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
-import java.io.BufferedWriter
-import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -29,7 +27,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 
 internal class AppServerConnection(
-    private val launchCodexProcess: () -> Process,
+    private val runtimeFactory: CodexRuntimeFactory,
     private val clientVersion: String,
     private val requestTimeoutMillis: Long,
     private val onServerRequest: (JsonElement, String, JsonElement?) -> Unit,
@@ -45,10 +43,10 @@ internal class AppServerConnection(
     private val closed = AtomicBoolean(false)
 
     @Volatile
-    private var process: Process? = null
+    private var runtime: CodexRuntime? = null
 
     @Volatile
-    private var writer: BufferedWriter? = null
+    private var runtimeEvents: Job? = null
 
     suspend fun request(
         method: String,
@@ -60,12 +58,7 @@ internal class AppServerConnection(
     }
 
     suspend fun respond(id: JsonElement, result: JsonObject) {
-        write(
-            buildJsonObject {
-                put("id", id)
-                put("result", result)
-            },
-        )
+        write(buildJsonObject { put("id", id); put("result", result) })
     }
 
     fun respondError(id: JsonElement, code: Int, message: String) {
@@ -88,35 +81,28 @@ internal class AppServerConnection(
         if (!closed.compareAndSet(false, true)) return
         pendingRequests.values.forEach { it.completeExceptionally(ConnectionClosedException()) }
         pendingRequests.clear()
-        stopProcess(process)
+        stopRuntime(runtime)
         scope.cancel()
     }
 
     suspend fun ensureStarted() {
         check(!closed.get()) { "Codex connection is closed" }
-        if (process?.isAlive == true) return
+        if (runtime != null) return
         startMutex.withLock {
-            if (process?.isAlive == true) return
-            process?.let { dead ->
-                val exitCode = runCatching { dead.exitValue() }.getOrNull()
-                failProcess(
-                    dead,
-                    "process_exit",
-                    exitCode?.let { "Codex app-server exited with code $it" }
-                        ?: "Codex app-server stopped unexpectedly",
-                )
-            }
+            if (runtime != null) return
             terminalReported.set(false)
             val started = try {
-                launchCodexProcess()
+                runtimeFactory.create()
             } catch (error: Exception) {
-                onFailure("process_start", error.visibleMessage())
+                reportStartFailure(error)
                 throw error
             }
-            process = started
-            writer = BufferedWriter(OutputStreamWriter(started.outputStream, StandardCharsets.UTF_8))
-            watchProcess(started)
+            runtime = started
+            runtimeEvents = scope.launch {
+                started.events.collect { event -> handleRuntimeEvent(started, event) }
+            }
             try {
+                started.start()
                 requestOnStarted(
                     "initialize",
                     buildJsonObject {
@@ -133,40 +119,31 @@ internal class AppServerConnection(
                 )
                 notify("initialized", buildJsonObject {})
             } catch (error: Exception) {
-                failProcess(started, "initialize_failed", error.visibleMessage())
+                if (!terminalReported.get()) {
+                    failRuntime(started, "initialize_failed", error.visibleMessage())
+                }
                 throw error
             }
         }
     }
 
-    private fun watchProcess(started: Process) {
-        scope.launch {
-            try {
-                readUtf8JsonLines(started.inputStream) { line -> handleMessage(started, line) }
-                if (!closed.get() && process === started) {
-                    failProcess(started, "unexpected_eof", "Codex app-server closed its output")
-                }
-            } catch (error: Exception) {
-                if (!closed.get() && process === started) {
-                    failProcess(started, "protocol_failure", error.visibleMessage())
-                }
-            }
+    private fun reportStartFailure(error: Exception) {
+        if (terminalReported.compareAndSet(false, true)) {
+            onFailure("process_start", error.visibleMessage())
         }
-        scope.launch {
-            runCatching {
-                val buffer = ByteArray(8 * 1024)
-                while (started.errorStream.read(buffer) >= 0) {
-                    // Drain stderr so it cannot block or corrupt the JSONL channel.
-                }
-            }
-        }
-        scope.launch {
-            val exitCode = runCatching {
-                withContext(Dispatchers.IO) { started.waitFor() }
-            }.getOrNull() ?: return@launch
-            if (!closed.get() && process === started) {
-                failProcess(started, "process_exit", "Codex app-server exited with code $exitCode")
-            }
+    }
+
+    private fun handleRuntimeEvent(source: CodexRuntime, event: CodexRuntimeEvent) {
+        if (runtime !== source || closed.get()) return
+        when (event) {
+            is CodexRuntimeEvent.Received -> runCatching { handleMessage(source, event.line.value) }
+                .onFailure { failRuntime(source, "protocol_failure", it.visibleMessage()) }
+            is CodexRuntimeEvent.StartFailure -> failRuntime(source, "process_start", event.message)
+            is CodexRuntimeEvent.IoFailure -> failRuntime(source, "io_failure", event.message)
+            CodexRuntimeEvent.EndOfFile ->
+                failRuntime(source, "unexpected_eof", "Codex app-server closed its output")
+            is CodexRuntimeEvent.Exited ->
+                failRuntime(source, "process_exit", "Codex app-server exited with code ${event.code}")
         }
     }
 
@@ -179,13 +156,7 @@ internal class AppServerConnection(
         val response = CompletableDeferred<JsonElement>()
         pendingRequests[id] = response
         try {
-            write(
-                buildJsonObject {
-                    put("id", id)
-                    put("method", method)
-                    put("params", params)
-                },
-            )
+            write(buildJsonObject { put("id", id); put("method", method); put("params", params) })
             return withTimeout(timeoutMillis) { response.await() }
         } finally {
             pendingRequests.remove(id, response)
@@ -193,12 +164,7 @@ internal class AppServerConnection(
     }
 
     private suspend fun notify(method: String, params: JsonObject) {
-        write(
-            buildJsonObject {
-                put("method", method)
-                put("params", params)
-            },
-        )
+        write(buildJsonObject { put("method", method); put("params", params) })
     }
 
     private suspend fun write(message: JsonObject) = writeMutex.withLock {
@@ -206,18 +172,11 @@ internal class AppServerConnection(
         check(encoded.toByteArray(StandardCharsets.UTF_8).size <= MAX_MESSAGE_BYTES) {
             "JSON-RPC message exceeds the byte limit"
         }
-        val current = process
-        check(current?.isAlive == true) { "Codex app-server is not running" }
-        val currentWriter = checkNotNull(writer) { "Codex app-server input is closed" }
-        withContext(Dispatchers.IO) {
-            currentWriter.write(encoded)
-            currentWriter.newLine()
-            currentWriter.flush()
-        }
+        checkNotNull(runtime) { "Codex app-server is not running" }.send(CodexJsonLine(encoded))
     }
 
-    private fun handleMessage(started: Process, line: String) {
-        check(process === started) { "Message arrived from a stale app-server process" }
+    private fun handleMessage(source: CodexRuntime, line: String) {
+        check(runtime === source) { "Message arrived from a stale app-server runtime" }
         val message = JSON.parseToJsonElement(line) as? JsonObject
             ?: error("App-server message must be a JSON object")
         val method = message["method"]?.jsonPrimitive?.contentOrNull
@@ -238,7 +197,8 @@ internal class AppServerConnection(
             response.completeExceptionally(
                 RpcException(
                     code = error["code"]?.jsonPrimitive?.contentOrNull ?: "unknown",
-                    detail = error["message"]?.jsonPrimitive?.contentOrNull ?: "App-server request failed",
+                    detail = error["message"]?.jsonPrimitive?.contentOrNull
+                        ?: "App-server request failed",
                 ),
             )
         } else {
@@ -246,30 +206,21 @@ internal class AppServerConnection(
         }
     }
 
-    private fun failProcess(failed: Process, code: String, message: String) {
-        if (process !== failed || !terminalReported.compareAndSet(false, true)) return
-        val error = ProcessFailureException(message)
+    private fun failRuntime(failed: CodexRuntime, code: String, message: String) {
+        if (runtime !== failed || !terminalReported.compareAndSet(false, true)) return
+        val error = RuntimeFailureException(message)
         pendingRequests.values.forEach { it.completeExceptionally(error) }
         pendingRequests.clear()
-        stopProcess(failed)
+        stopRuntime(failed)
         onFailure(code, message)
     }
 
-    private fun stopProcess(target: Process?) {
+    private fun stopRuntime(target: CodexRuntime?) {
         if (target == null) return
-        if (process === target) {
-            process = null
-            writer = null
-        }
-        runCatching { target.outputStream.close() }
-        runCatching { target.inputStream.close() }
-        runCatching { target.errorStream.close() }
-        if (target.isAlive) target.destroy()
-        val exited = runCatching { target.waitFor(2, TimeUnit.SECONDS) }.getOrDefault(false)
-        if (target.isAlive && !exited) {
-            target.destroyForcibly()
-            runCatching { target.waitFor(2, TimeUnit.SECONDS) }
-        }
+        if (runtime === target) runtime = null
+        runtimeEvents?.cancel()
+        runtimeEvents = null
+        runCatching { target.close() }
     }
 
     private companion object {
@@ -281,7 +232,7 @@ internal class AppServerConnection(
 internal class RpcException(val code: String, val detail: String) :
     IllegalStateException("App-server error $code: $detail")
 
-private class ProcessFailureException(message: String) : IllegalStateException(message)
+private class RuntimeFailureException(message: String) : IllegalStateException(message)
 
 private class ConnectionClosedException : IllegalStateException("Codex connection is closed")
 

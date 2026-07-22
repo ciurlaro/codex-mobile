@@ -15,13 +15,6 @@ required=(
     docs/architecture.md
     docs/objects.md
     docs/decisions.md
-    docs/testing.md
-    docs/roadmap/01-runtime-premise.md
-    docs/roadmap/02-read-only-authority.md
-    docs/roadmap/03-controlled-mutation.md
-    docs/roadmap/04-mutation-recovery.md
-    docs/roadmap/05-background-lifecycle.md
-    docs/roadmap/06-mvp-readiness.md
     docs/security.md
     docs/privacy.md
     docs/release.md
@@ -37,9 +30,20 @@ required=(
     app/android/gradle.lockfile
     app/android/proguard-rules.pro
     app/android/src/main/res/xml/network_security_config.xml
-    app/android/src/main/assets/native-tools-NOTICE.txt
-    platform/android/src/main/assets/codex/skills/local-documents/SKILL.md
-    platform/android/src/main/assets/codex/skills/tgcli/SKILL.md
+    app/android/src/main/assets/private-backends-NOTICE.txt
+    agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexRuntime.kt
+    agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/BuiltInTools.kt
+    platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidCodexRuntime.kt
+    platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidBuiltInToolDispatcher.kt
+    platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/BuiltInMutationJournal.kt
+    platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/BuiltInPluginBundle.kt
+    platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/PrivateBackendBundle.kt
+    platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/TelegramIntegration.kt
+    platform/android/src/main/assets/codex/plugins/codex-mobile/marketplace.json
+    platform/android/src/main/assets/codex/plugins/codex-mobile/plugins/documents/.codex-plugin/plugin.json
+    platform/android/src/main/assets/codex/plugins/codex-mobile/plugins/documents/skills/documents/SKILL.md
+    platform/android/src/main/assets/codex/plugins/codex-mobile/plugins/telegram/.codex-plugin/plugin.json
+    platform/android/src/main/assets/codex/plugins/codex-mobile/plugins/telegram/skills/telegram/SKILL.md
     scripts/generate-sbom.py
     scripts/install-phone.sh
     scripts/native/officecli-launcher.c
@@ -47,7 +51,7 @@ required=(
     scripts/native/tgcli-package-lock.json
     scripts/patches/tesseract-android.patch
     scripts/patches/tgcli-android.patch
-    scripts/prepare-native-tools.sh
+    scripts/prepare-private-backends.sh
     scripts/release-local.sh
     scripts/verify-release.sh
     scripts/verify-reproducible-release.sh
@@ -55,6 +59,49 @@ required=(
 
 for path in "${required[@]}"; do
     test -f "$path" || { echo "missing required file: $path" >&2; exit 1; }
+done
+
+grep -qx 'codexMobile.codexVersion=0.144.6' gradle.properties || {
+    echo "Codex app-server must remain pinned at 0.144.6" >&2
+    exit 1
+}
+
+if grep -R -n -E 'ProcessBuilder|java\.lang\.Process|java\.io\.(InputStream|OutputStream)' \
+    agent/codex/src/main; then
+    echo "app-server process mechanics must stay behind AndroidCodexRuntime" >&2
+    exit 1
+fi
+
+if grep -n -E 'mutool|tesseract|officecli|tgcli|private-backends' \
+    platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidCodexRuntime.kt; then
+    echo "private backends must be absent from the app-server environment" >&2
+    exit 1
+fi
+grep -q 'environment()\["PATH"\] = "/system/bin:/system/xbin"' \
+    platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/PrivateBackendBundle.kt
+
+for tool in \
+    documents_read documents_view_pages documents_edit \
+    telegram_list_chats telegram_list_messages telegram_search_messages \
+    telegram_search_contacts telegram_download_media telegram_send_text telegram_send_file; do
+    grep -q "\"$tool\"" \
+        agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/BuiltInTools.kt
+done
+
+if grep -n -E '"(command|subcommand|argv|rawArguments)"' \
+    agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/BuiltInTools.kt; then
+    echo "built-in dynamic tools must not expose a generic native command" >&2
+    exit 1
+fi
+
+grep -q '"--retries", "0"' \
+    platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidBuiltInToolDispatcher.kt
+
+for json in \
+    platform/android/src/main/assets/codex/plugins/codex-mobile/marketplace.json \
+    platform/android/src/main/assets/codex/plugins/codex-mobile/plugins/documents/.codex-plugin/plugin.json \
+    platform/android/src/main/assets/codex/plugins/codex-mobile/plugins/telegram/.codex-plugin/plugin.json; do
+    python3 -m json.tool "$json" >/dev/null
 done
 
 if grep -R -n -E '^[[:space:]]*import[[:space:]]+(android|androidx)\.' core/src; then
@@ -67,25 +114,14 @@ if grep -R -n 'ProcessHost' core; then
     exit 1
 fi
 
-if grep -R -n -E 'DocumentReader|WorkspaceExport|WorkspaceTools|ToolExecutor|DeviceTool|read_document|view_document_pages' \
-    core/src/main agent/codex/src/main platform/android/src/main app/android/src/main; then
-    echo "obsolete dynamic document/file tool code must not return" >&2
-    exit 1
-fi
-
 if grep -R -n 'org.jetbrains.kotlin.android' --include='*.kts' --include='*.toml' .; then
     echo "AGP built-in Kotlin is used for Android modules" >&2
     exit 1
 fi
 
-for step in docs/roadmap/0[1-6]-*.md; do
-    grep -q '^## Exit gate\|^## Goal' "$step" || { echo "roadmap gate missing: $step" >&2; exit 1; }
-    grep -q '^## Test matrix' "$step" || { echo "test matrix missing: $step" >&2; exit 1; }
-done
-
 if grep -R -n -E --include='*.kt' '@Ignore|TODO[[:space:]]*\(' \
     core/src agent/codex/src platform/android/src app/android/src; then
-    echo "roadmap gate tests must not be ignored or left as TODO" >&2
+    echo "tests must not be ignored or left as TODO" >&2
     exit 1
 fi
 

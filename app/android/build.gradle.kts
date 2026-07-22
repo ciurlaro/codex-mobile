@@ -25,8 +25,8 @@ val appVersionName = providers.gradleProperty("codexMobile.versionName")
 val codexVersion = providers.gradleProperty("codexMobile.codexVersion")
 val codexArchiveSha256 = providers.gradleProperty("codexMobile.codexArchiveSha256")
 val codexBinarySha256 = providers.gradleProperty("codexMobile.codexBinarySha256")
-val nativeBundleVersion = providers.gradleProperty("codexMobile.nativeBundleVersion")
-val nativeToolsNdk = providers.gradleProperty("codexMobile.androidNdkPath")
+val privateBackendBundleVersion = providers.gradleProperty("codexMobile.privateBackendBundleVersion")
+val privateBackendNdk = providers.gradleProperty("codexMobile.androidNdkPath")
     .orElse(providers.environmentVariable("ANDROID_NDK_HOME"))
     .orElse(providers.environmentVariable("ANDROID_NDK_ROOT"))
     .orElse(
@@ -119,7 +119,7 @@ val prepareCodexRuntime = tasks.register<Exec>("prepareCodexRuntime") {
     )
 }
 
-val nativeTools = listOf(
+val privateBackends = listOf(
     "libcodex_mutool.so",
     "libcodex_tesseract.so",
     "libcodex_officecli.so",
@@ -138,30 +138,30 @@ val nativeTools = listOf(
     "libcodex_icuuc.so",
     "libcodex_cxx.so",
 ).map { layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/$it") }
-val nativeToolAssets = layout.projectDirectory.dir("src/main/assets/runtime")
-val prepareNativeTools = tasks.register<Exec>("prepareNativeTools") {
-    inputs.property("bundleVersion", nativeBundleVersion)
+val privateBackendAssets = layout.projectDirectory.dir("src/main/assets/private-backends")
+val preparePrivateBackends = tasks.register<Exec>("preparePrivateBackends") {
+    inputs.property("bundleVersion", privateBackendBundleVersion)
     inputs.files(
-        rootProject.file("scripts/prepare-native-tools.sh"),
+        rootProject.file("scripts/prepare-private-backends.sh"),
         rootProject.file("scripts/native/tgcli-launcher.c"),
         rootProject.file("scripts/native/officecli-launcher.c"),
         rootProject.file("scripts/native/tgcli-package-lock.json"),
         rootProject.file("scripts/patches/tgcli-android.patch"),
         rootProject.file("scripts/patches/tesseract-android.patch"),
     )
-    outputs.files(nativeTools)
-    outputs.dir(nativeToolAssets)
+    outputs.files(privateBackends)
+    outputs.dir(privateBackendAssets)
     commandLine(
-        rootProject.file("scripts/prepare-native-tools.sh"),
-        nativeToolsNdk.get(),
+        rootProject.file("scripts/prepare-private-backends.sh"),
+        privateBackendNdk.get(),
         layout.projectDirectory.dir("src/main/jniLibs/arm64-v8a").asFile.absolutePath,
-        nativeToolAssets.asFile.absolutePath,
+        privateBackendAssets.asFile.absolutePath,
     )
 }
 
 tasks.named("preBuild").configure {
     dependsOn(prepareCodexRuntime)
-    dependsOn(prepareNativeTools)
+    dependsOn(preparePrivateBackends)
 }
 
 val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {

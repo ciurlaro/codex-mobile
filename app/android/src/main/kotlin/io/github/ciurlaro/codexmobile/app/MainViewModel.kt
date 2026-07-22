@@ -29,6 +29,7 @@ import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthEvent
 import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthSession
+import io.github.ciurlaro.codexmobile.platform.android.TelegramDisconnectResult
 import java.util.ArrayDeque
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
@@ -914,9 +915,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         cancelTelegramAuthentication()
         mutableState.update { it.copy(isTelegramOperationInProgress = true, telegramError = null) }
         telegramJob = viewModelScope.launch(Dispatchers.IO) {
-            val disconnected = runCatching { graph.platform.disconnectTelegram() }.getOrDefault(false)
+            val disconnected = runCatching { graph.platform.disconnectTelegram() }
+                .getOrDefault(TelegramDisconnectResult.INDETERMINATE)
             mutableState.update {
-                if (disconnected) {
+                if (disconnected == TelegramDisconnectResult.CONFIRMED) {
                     it.copy(
                         statusMessage = "Telegram integration disconnected",
                         isTelegramConnected = false,
@@ -924,7 +926,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         isTelegramOperationInProgress = false,
                     )
                 } else {
-                    it.copy(isTelegramOperationInProgress = false, telegramError = "Telegram could not be disconnected")
+                    it.copy(
+                        isTelegramOperationInProgress = false,
+                        telegramError = "Telegram logout is indeterminate and was not retried. Check Telegram before trying again.",
+                    )
                 }
             }
         }

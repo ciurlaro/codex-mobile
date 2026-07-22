@@ -8,7 +8,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 build_jobs=${CODEX_MOBILE_NATIVE_JOBS:-4}
-native_libraries=(
+backend_libraries=(
   libcodex_mutool.so libcodex_tesseract.so
   libcodex_officecli.so libcodex_officecli_musl.so libcodex_officecli_gcc.so libcodex_officecli_cxx.so
   libcodex_tgcli.so libcodex_node.so libcodex_z.so libcodex_cares.so libcodex_sqlite3.so
@@ -27,15 +27,15 @@ cxx="$toolchain/aarch64-linux-android26-clang++"
 strip="$toolchain/llvm-strip"
 for command in bsdtar curl cmake ninja make npm patch patchelf zip; do
   command -v "$command" >/dev/null || {
-    echo "prepare-native-tools: missing build command: $command" >&2
+    echo "prepare-private-backends: missing build command: $command" >&2
     exit 1
   }
 done
 command -v sha256sum >/dev/null || command -v shasum >/dev/null || {
-  echo "prepare-native-tools: missing SHA-256 command" >&2
+  echo "prepare-private-backends: missing SHA-256 command" >&2
   exit 1
 }
-test -x "$cc" || { echo "prepare-native-tools: invalid NDK: $ndk" >&2; exit 1; }
+test -x "$cc" || { echo "prepare-private-backends: invalid NDK: $ndk" >&2; exit 1; }
 
 verify_sha256() {
   local expected=$1 file=$2 actual
@@ -45,7 +45,7 @@ verify_sha256() {
     actual=$(shasum -a 256 "$file" | cut -d' ' -f1)
   fi
   test "$actual" = "$expected" || {
-    echo "prepare-native-tools: checksum mismatch: $file" >&2
+    echo "prepare-private-backends: checksum mismatch: $file" >&2
     return 1
   }
 }
@@ -65,7 +65,7 @@ extract_deb() {
 }
 
 mkdir -p "$jni_out" "$assets_out"
-for library in "${native_libraries[@]}"; do
+for library in "${backend_libraries[@]}"; do
   rm -f "$jni_out/$library"
 done
 rm -rf "$assets_out"
@@ -166,7 +166,7 @@ patchelf --set-soname libcodex_officecli_cxx.so "$jni_out/libcodex_officecli_cxx
 
 # kfastov/tgcli 2.1.0 runs on a checksum-pinned Termux Node 24 runtime. The
 # Android patch uses Node's built-in SQLite and adds a JSON login prompt seam;
-# Codex still sees the unmodified upstream tgcli command surface on PATH.
+# Kotlin invokes this private backend by absolute path; Codex never sees it on PATH.
 termux="$work/termux"
 mkdir -p "$termux"
 while read -r path sha256; do
@@ -239,6 +239,17 @@ install -m 644 "$tgcli/LICENSE" "$assets_out/licenses/tgcli-LICENSE.txt"
 install -m 644 "$root/scripts/native/tgcli-package-lock.json" "$tgcli/package-lock.json"
 (cd "$tgcli" && npm ci --ignore-scripts --omit=dev)
 (cd "$tgcli" && npm audit --omit=dev --audit-level=high)
+
+# Sending is available only while the pinned sources prove one SDK submission
+# for retries=0 and reuse the generated random_id when resolving the update.
+grep -Fq 'const totalAttempts = (details.retries ?? 0) + 1' "$tgcli/cli.js"
+for method in send-text.js send-media.js; do
+  source_path=$(find "$tgcli/node_modules/@mtcute/core" -type f -name "$method" -print -quit)
+  test -n "$source_path"
+  test "$(grep -Fc 'const randomId = randomLong();' "$source_path")" -eq 1
+  test "$(grep -Fc 'const res = await _maybeInvokeWithBusinessConnection(' "$source_path")" -eq 1
+  grep -Fq '_findMessageInUpdate(client, res, false, !params.shouldDispatch, false, randomId);' "$source_path"
+done
 patch -d "$tgcli" -p1 < "$root/scripts/patches/tgcli-android.patch"
 rm -rf "$tgcli/node_modules/better-sqlite3"
 (cd "$tgcli" && zip -q -r "$assets_out/tgcli.zip" \
@@ -250,14 +261,14 @@ verify_android_dependencies() {
   while IFS= read -r needed; do
     case "$needed" in
       libcodex_*.so|libc.so|libm.so|libdl.so|liblog.so|libandroid.so) ;;
-      *) echo "prepare-native-tools: unexpected dependency $needed in $binary" >&2; return 1 ;;
+      *) echo "prepare-private-backends: unexpected dependency $needed in $binary" >&2; return 1 ;;
     esac
   done < <(patchelf --print-needed "$binary")
 }
-for library in "${native_libraries[@]}"; do
+for library in "${backend_libraries[@]}"; do
   verify_android_dependencies "$jni_out/$library"
 done
 verify_android_dependencies "$officecli"
 
 chmod 755 "$jni_out"/libcodex_*.so
-printf 'Prepared mutool, tesseract, officecli, and tgcli for Android arm64.\n'
+printf 'Prepared private Android arm64 document and Telegram backends.\n'

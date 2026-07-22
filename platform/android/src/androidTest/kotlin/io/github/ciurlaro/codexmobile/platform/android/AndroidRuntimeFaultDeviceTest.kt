@@ -11,8 +11,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
 
-class Step01AndroidPlatformFaultTest {
+class AndroidRuntimeFaultDeviceTest {
     private val context
         get() = InstrumentationRegistry.getInstrumentation().targetContext
 
@@ -45,8 +46,7 @@ class Step01AndroidPlatformFaultTest {
             assertTrue(runtime.setExecutable(true, true))
 
             val failure = runCatching {
-                AndroidPlatform(context, runtime)
-                    .launchCodexProcess()
+                runBlocking { AndroidPlatform(context, runtime).createCodexRuntime().start() }
             }.exceptionOrNull()
             assertTrue("corrupt runtime unexpectedly launched", failure != null)
         } finally {
@@ -101,8 +101,7 @@ class Step01AndroidPlatformFaultTest {
 
     private fun assertLaunchFails(runtime: File, expectedMessage: String) {
         val failure = runCatching {
-            AndroidPlatform(context, runtime)
-                .launchCodexProcess()
+            runBlocking { AndroidPlatform(context, runtime).createCodexRuntime().start() }
         }.exceptionOrNull()
 
         assertTrue(failure is IllegalStateException)

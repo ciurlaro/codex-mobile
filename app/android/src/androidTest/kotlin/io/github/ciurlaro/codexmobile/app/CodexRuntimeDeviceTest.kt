@@ -10,15 +10,14 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.ciurlaro.codexmobile.agent.codex.CodexAgentClient
+import io.github.ciurlaro.codexmobile.agent.codex.CodexJsonLine
+import io.github.ciurlaro.codexmobile.agent.codex.CodexRuntimeEvent
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.platform.android.AndroidPlatform
 import java.io.File
 import java.net.URI
-import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertSame
@@ -31,7 +30,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 
-class Step01RuntimePremiseDeviceTest {
+class CodexRuntimeDeviceTest {
     private val context
         get() = InstrumentationRegistry.getInstrumentation().targetContext
 
@@ -46,36 +45,32 @@ class Step01RuntimePremiseDeviceTest {
     }
 
     @Test
-    fun processStartStopRestartAndUnexpectedExit() {
+    fun processStartStopRestartAndUnexpectedExit(): Unit = runBlocking {
         val startupLatencies = mutableListOf<Long>()
         repeat(2) {
             val startedAt = SystemClock.elapsedRealtime()
-            val process = AndroidPlatform(context).launchCodexProcess()
-            val writer = process.outputStream.bufferedWriter(StandardCharsets.UTF_8)
-            val reader = process.inputStream.bufferedReader(StandardCharsets.UTF_8)
+            val runtime = AndroidPlatform(context).createCodexRuntime()
             try {
-                writer.sendJson(
-                    """{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex_mobile_test","title":"Codex Mobile Test","version":"0.1.0"}}}""",
+                runtime.start()
+                val initialized = async {
+                    withTimeout(30_000) {
+                        runtime.events.first { event ->
+                            event is CodexRuntimeEvent.Received && "\"id\":1" in event.line.value
+                        }
+                    }
+                }
+                runtime.send(
+                    CodexJsonLine(
+                        """{"id":1,"method":"initialize","params":{"clientInfo":{"name":"codex_mobile_test","title":"Codex Mobile Test","version":"0.1.0"}}}""",
+                    ),
                 )
-                assertTrue("app-server did not answer initialize", reader.awaitResponse(1))
+                initialized.await()
                 val startupLatency = SystemClock.elapsedRealtime() - startedAt
                 startupLatencies += startupLatency
                 assertTrue("app-server readiness exceeded 30 seconds", startupLatency < 30_000)
-
-                writer.sendJson("""{"method":"initialized","params":{}}""")
-                writer.sendJson("""{"id":2,"method":"account/read","params":{"refreshToken":false}}""")
-                assertTrue("app-server did not answer account/read", reader.awaitResponse(2))
             } finally {
-                runCatching { writer.close() }
-                runCatching { reader.close() }
-                runCatching { process.errorStream.close() }
-                process.destroy()
-                if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                    process.destroyForcibly()
-                    process.waitFor(5, TimeUnit.SECONDS)
-                }
+                runtime.close()
             }
-            assertFalse("app-server process survived close", process.isAlive)
         }
         InstrumentationRegistry.getInstrumentation().sendStatus(
             2,
@@ -85,7 +80,7 @@ class Step01RuntimePremiseDeviceTest {
 
     @Test
     fun authenticationUsesPersistedAccountOrStartsDeviceFlow(): Unit = runBlocking {
-        val client = CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000)
+        val client = CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000)
         try {
             val result = async { withTimeout(30_000) { client.events.first() } }
             client.authenticate()
@@ -113,7 +108,7 @@ class Step01RuntimePremiseDeviceTest {
     fun subscriptionAuthenticationFailuresAndPersistence(): Unit = runBlocking {
         requirePhysicalDevice()
         repeat(2) {
-            CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
+            CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000).use { client ->
                 requirePersistedAuthentication(client)
             }
         }
@@ -122,7 +117,7 @@ class Step01RuntimePremiseDeviceTest {
     @Test
     fun promptStreamingCancellationAndActivityRecreation(): Unit = runBlocking {
         requirePhysicalDevice()
-        CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
+        CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000).use { client ->
             requirePersistedAuthentication(client)
             val session = client.openSession()
 
@@ -164,13 +159,13 @@ class Step01RuntimePremiseDeviceTest {
     @Test
     fun restartRecordsAuthenticationAndSessionSurvival(): Unit = runBlocking {
         requirePhysicalDevice()
-        val session = CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
+        val session = CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000).use { client ->
             requirePersistedAuthentication(client)
             client.openSession().also {
                 assertTrue(runPrompt(client, it, "Reply with one short word.").isNotBlank())
             }
         }
-        CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
+        CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000).use { client ->
             requirePersistedAuthentication(client)
             assertEquals(session, client.openSession(session))
         }
@@ -271,25 +266,6 @@ class Step01RuntimePremiseDeviceTest {
         client.sendTurn(session, AgentTurnRequest("Write a long numbered list."))
         client.cancelTurn(session)
         assertTrue(terminal.await() is AgentEvent.TurnCompleted)
-    }
-
-    private fun java.io.BufferedWriter.sendJson(message: String) {
-        write(message)
-        newLine()
-        flush()
-    }
-
-    private fun java.io.BufferedReader.awaitResponse(id: Int): Boolean {
-        val executor = Executors.newSingleThreadExecutor()
-        return try {
-            executor.submit<Boolean> {
-                generateSequence(::readLine)
-                    .take(20)
-                    .any { line -> line.contains("\"id\":$id") && line.contains("\"result\"") }
-            }.get(30, TimeUnit.SECONDS)
-        } finally {
-            executor.shutdownNow()
-        }
     }
 
     private fun File.sha256(): String {

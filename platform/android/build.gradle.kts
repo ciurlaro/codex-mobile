@@ -15,7 +15,7 @@ val telegramApiHash = providers.gradleProperty("codexMobile.telegram.apiHash")
     .orElse(providers.environmentVariable("CODEX_MOBILE_TELEGRAM_API_HASH"))
     .orElse(localProperties.getProperty("codexMobile.telegram.apiHash", ""))
     .orElse("")
-val nativeBundleVersion = providers.gradleProperty("codexMobile.nativeBundleVersion")
+val privateBackendBundleVersion = providers.gradleProperty("codexMobile.privateBackendBundleVersion")
 
 fun String.asBuildConfigString(): String = "\"${replace("\\", "\\\\").replace("\"", "\\\"")}\""
 
@@ -30,8 +30,8 @@ android {
         buildConfigField("String", "TELEGRAM_API_HASH", telegramApiHash.get().asBuildConfigString())
         buildConfigField(
             "String",
-            "NATIVE_BUNDLE_VERSION",
-            nativeBundleVersion.get().asBuildConfigString(),
+            "PRIVATE_BACKEND_BUNDLE_VERSION",
+            privateBackendBundleVersion.get().asBuildConfigString(),
         )
     }
 
@@ -47,6 +47,9 @@ android {
 
 dependencies {
     implementation(project(":core"))
+    implementation(project(":agent:codex"))
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.serialization.json)
     testImplementation(kotlin("test-junit"))
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)

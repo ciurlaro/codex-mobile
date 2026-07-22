@@ -71,6 +71,17 @@ internal class WorkspaceManager(context: Context) {
         }
     }
 
+    fun resolveFile(workspacePath: String, value: String, mustExist: Boolean): File {
+        check(hasStoragePermission()) { "All-files access is required" }
+        val base = requireAllowedDirectory(File(workspacePath))
+        require(value.isNotBlank() && value.length <= 4_096) { "File path is invalid" }
+        val candidate = (if (File(value).isAbsolute) File(value) else File(base, value)).canonicalFile
+        require(candidate.isInside(base)) { "File path is outside the selected workspace" }
+        requireAllowedSharedPath(candidate)
+        if (mustExist) require(candidate.isFile && candidate.canRead()) { "File is unavailable" }
+        return candidate
+    }
+
     private fun requireAllowedDirectory(value: File): File {
         val candidate = value.canonicalFile
         require(candidate.isDirectory && candidate.canRead()) { "Workspace directory is unavailable" }
@@ -82,6 +93,16 @@ internal class WorkspaceManager(context: Context) {
             "Android does not allow this workspace"
         }
         return candidate
+    }
+
+    private fun requireAllowedSharedPath(candidate: File) {
+        val root = roots().firstOrNull { candidate.isInside(it) }
+            ?: throw SecurityException("File is outside Android shared storage")
+        val relative = candidate.relativeTo(root).invariantSeparatorsPath.lowercase()
+        require(
+            relative != "android/data" && !relative.startsWith("android/data/") &&
+                relative != "android/obb" && !relative.startsWith("android/obb/"),
+        ) { "Android does not allow this file" }
     }
 
     private fun File.isInside(root: File): Boolean = path == root.path || path.startsWith(root.path + File.separator)

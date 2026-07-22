@@ -17,9 +17,10 @@ internal class AppGraph(context: Context) {
     private val mutableBackgroundFailure = MutableStateFlow<String?>(null)
     val backgroundFailure = mutableBackgroundFailure.asStateFlow()
     fun newAgentClient(): AgentClient = CodexAgentClient(
-        launchCodexProcess = platform::launchCodexProcess,
+        runtimeFactory = platform::createCodexRuntime,
         clientVersion = clientVersion,
         pluginCacheDirectory = java.io.File(appContext.cacheDir, "plugin-catalogs"),
+        builtInToolDispatcher = platform.builtInToolDispatcher,
     )
 
     fun authorizeForegroundStart(): String = UUID.randomUUID().toString().also {

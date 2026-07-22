@@ -35,7 +35,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 
-class Step01ProtocolContractTest {
+class CodexProtocolContractTest {
     @Test
     fun `frames partial batched CRLF and UTF-8 input`() {
         val unicode = "Grüezi 👋"
@@ -84,7 +84,7 @@ class Step01ProtocolContractTest {
         var accountId: Long? = null
         var threadId: Long? = null
         var threadParams: JsonObject? = null
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "account/read" -> accountId = message.id
@@ -128,10 +128,9 @@ class Step01ProtocolContractTest {
             assertEquals("danger-full-access", params["sandbox"]!!.jsonPrimitive.content)
             val instructions = params["developerInstructions"]!!.jsonPrimitive.content
             listOf("mutool", "tesseract", "officecli", "tgcli").forEach { command ->
-                assertTrue(command in instructions)
+                assertFalse(command in instructions)
             }
-            assertFalse("read_document" in instructions)
-            assertFalse("view_document_pages" in instructions)
+            assertTrue("private backends are not shell commands" in instructions)
             val config = params["config"]!!.jsonObject
             assertEquals("live", config["web_search"]!!.jsonPrimitive.content)
             assertEquals(
@@ -169,7 +168,7 @@ class Step01ProtocolContractTest {
     fun `sign out uses the account endpoint and clears in-memory authentication`(): Unit = runBlocking {
         val accountReads = AtomicInteger()
         var logoutParams: JsonObject? = null
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "account/read" -> {
@@ -200,7 +199,7 @@ class Step01ProtocolContractTest {
 
     @Test
     fun `drains stderr and closes the process and all streams`(): Unit = runBlocking {
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> {
                     server.sendStderr("stderr is not JSON and must never enter stdout")
@@ -240,7 +239,7 @@ class Step01ProtocolContractTest {
             startClient.close()
         }
 
-        val exited = ScriptedProcess { message, server ->
+        val exited = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "account/read" -> server.exit(23)
@@ -257,7 +256,7 @@ class Step01ProtocolContractTest {
             exitClient.close()
         }
 
-        val eof = ScriptedProcess { message, server ->
+        val eof = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "account/read" -> server.closeStdout()
@@ -277,10 +276,10 @@ class Step01ProtocolContractTest {
 
     @Test
     fun `a dead process can restart and recheck authentication`(): Unit = runBlocking {
-        val processes = mutableListOf<ScriptedProcess>()
+        val processes = mutableListOf<FakeCodexRuntime>()
         val client = CodexAgentClient(
             {
-                ScriptedProcess { message, server ->
+                FakeCodexRuntime { message, server ->
                     when (message.method) {
                         "initialize" -> server.respond(message.id, buildJsonObject {})
                         "account/read" -> server.respond(
@@ -314,7 +313,7 @@ class Step01ProtocolContractTest {
     @Test
     fun `rejects malformed unknown and orphan messages without deadlock`(): Unit = runBlocking {
         val requestRejected = CountDownLatch(1)
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "account/read" -> {
@@ -345,7 +344,7 @@ class Step01ProtocolContractTest {
             client.close()
         }
 
-        val malformed = ScriptedProcess { message, server ->
+        val malformed = FakeCodexRuntime { message, server ->
             if (message.method == "initialize") server.sendRaw("not-json")
         }
         val malformedClient = CodexAgentClient({ malformed }, requestTimeoutMillis = 1_000)
@@ -364,7 +363,7 @@ class Step01ProtocolContractTest {
 
         val interruptReceived = CountDownLatch(1)
         val releaseInterrupt = CountDownLatch(1)
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "turn/start" -> server.respond(
@@ -399,7 +398,7 @@ class Step01ProtocolContractTest {
     @Test
     fun `a terminal notification racing the start response leaves the client usable`(): Unit = runBlocking {
         val turnIds = AtomicInteger()
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "turn/start" -> {
@@ -441,7 +440,7 @@ class Step01ProtocolContractTest {
 
     @Test
     fun `interrupt after provider completion is harmless`(): Unit = runBlocking {
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "turn/start" -> server.respond(
@@ -487,7 +486,7 @@ class Step01ProtocolContractTest {
     @Test
     fun `slow event consumers exert bounded backpressure`(): Unit = runBlocking {
         val sentAll = CountDownLatch(1)
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "turn/start" -> {
@@ -527,7 +526,7 @@ class Step01ProtocolContractTest {
 
     @Test
     fun `translates authentication session stream completion and failure events`(): Unit = runBlocking {
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "account/read" -> server.respond(
@@ -624,7 +623,7 @@ class Step01ProtocolContractTest {
     @Test
     fun `failed authentication can be retried without conflicting login state`(): Unit = runBlocking {
         val loginAttempts = AtomicInteger()
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "account/read" -> server.respond(
@@ -676,7 +675,7 @@ class Step01ProtocolContractTest {
     @Test
     fun `cancelled authentication suppresses the expected failure and can be retried`(): Unit = runBlocking {
         val loginAttempts = AtomicInteger()
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "account/read" -> server.respond(
@@ -730,7 +729,7 @@ class Step01ProtocolContractTest {
     @Test
     fun `authentication timeout is bounded and retryable`(): Unit = runBlocking {
         val reads = AtomicInteger()
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "account/read" -> if (reads.incrementAndGet() > 1) {
@@ -773,7 +772,7 @@ class Step01ProtocolContractTest {
         neverStarted.close()
 
         var observedPrompt: String? = null
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "turn/start" -> {

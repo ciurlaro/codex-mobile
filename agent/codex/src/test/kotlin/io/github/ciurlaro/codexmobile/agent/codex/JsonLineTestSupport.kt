@@ -35,8 +35,7 @@ internal fun readUtf8JsonLines(
 private fun ByteArray.dropTrailingCarriageReturn(): ByteArray =
     if (lastOrNull() == '\r'.code.toByte()) copyOf(size - 1) else this
 
-private fun ByteArray.decodeUtf8(): String = StandardCharsets.UTF_8
-    .newDecoder()
+private fun ByteArray.decodeUtf8(): String = StandardCharsets.UTF_8.newDecoder()
     .onMalformedInput(CodingErrorAction.REPORT)
     .onUnmappableCharacter(CodingErrorAction.REPORT)
     .decode(ByteBuffer.wrap(this))

@@ -1,4 +1,4 @@
-# Android MVP release and operations
+# Android release and operations
 
 > **Current status:** GitHub preview release only. Promotion to a production/store release still requires the stock-device, distribution-policy, native-license, hostile-file, emulator, and reproducible-release gates.
 
@@ -7,9 +7,10 @@
 - ARM64 (`arm64-v8a`) stock Android API 26–37.
 - One ChatGPT account through Codex-managed browser authentication.
 - Android **All files access** plus one user-selected shared-storage directory used as each turn's starting `cwd`.
-- Shell-visible `mutool`, English-data `tesseract`, and `officecli` commands for PDF, OCR, DOCX, PPTX, and XLSX work.
+- Installed-by-default Documents and Telegram plugins using strict app-server dynamic tools; both can be disabled but not uninstalled.
+- Private `mutool`, English-data `tesseract`, `officecli`, and `tgcli` backends invoked by fixed Android handlers and absent from Codex's shell `PATH`.
 - Ordinary shell reads/writes/overwrite/copy/move/delete in shared storage; no duplicate generic Android file tools.
-- Four user-selectable approval policies, model speed tiers, and direct browserless `tgcli` login/use.
+- Four user-selectable approval policies, model speed tiers, and browserless Telegram login. Typed Auto-review mutations are intentionally unavailable on app-server `0.144.6`.
 - Debug and release APKs; additional CPUs, iOS, KMP, accessibility automation, and runtime updating are unsupported.
 
 ## Reproducible signed build
@@ -33,7 +34,7 @@ scripts/verify-release.sh
 scripts/verify-reproducible-release.sh
 ```
 
-`assembleRelease` refuses to emit an unsigned APK. Release code and resources are shrunk. The verifier checks the signature, version, manifest exposure, cleartext/backup policy, one ABI/runtime, upstream license/notice, lock files, verification metadata, R8 mapping, and current SBOM. The reproducibility check performs two clean, cache-disabled signed builds and requires byte-for-byte identical APKs.
+`assembleRelease` refuses to emit an unsigned APK. Release code and resources are shrunk. The verifier checks the signature, version, manifest exposure, cleartext/backup policy, one ABI/runtime, both built-in plugin manifests/skills, private backend assets, upstream license/notice, lock files, verification metadata, R8 mapping, and current SBOM. The reproducibility check performs two clean, cache-disabled signed builds and requires byte-for-byte identical APKs.
 
 AGP's encrypted Play Console SDK-dependency block is omitted from APKs because its randomized ciphertext prevents byte-for-byte reproduction. The release lockfile, strict verification metadata, and checked-in SBOM remain the dependency inventory; a Play-distributed build can restore the block only if the release policy replaces the byte-identical APK requirement.
 
@@ -54,13 +55,13 @@ The command performs the verified signed release above, updates the existing app
 | Codex app-server | `0.144.6`; archive SHA-256 `3539380f431aa72ce1e9ba83cf4d9b2c2a70d12ddf3280bc67c8c59f93bb9eb5`; ARM64 executable SHA-256 `09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd` |
 | Gradle | Wrapper/distribution `9.4.1` with official checksums in `gradle/wrapper` |
 | Maven/plugins | Project lock files plus strict `gradle/verification-metadata.xml` SHA-256 verification |
-| Native tools | Checksum-pinned MuPDF 1.28.0, Tesseract 5.5.2/Leptonica 1.87.0, OfficeCLI 1.0.139, tgcli 2.1.0 commit `649d937`, Node 24.17.0, and runtime libraries in `scripts/prepare-native-tools.sh` |
+| Private native backends | Checksum-pinned MuPDF 1.28.0, Tesseract 5.5.2/Leptonica 1.87.0, OfficeCLI 1.0.139, tgcli 2.1.0 commit `649d937`, Node 24.17.0, and runtime libraries in `scripts/prepare-private-backends.sh`; the packaging step verifies the pinned Telegram single-submit/random-ID contract |
 | Inventory | Deterministic CycloneDX 1.6 `docs/sbom.cdx.json`, checked by `scripts/generate-sbom.py --check` |
 | License | Packaged third-party notices; MuPDF's AGPL-3.0 obligations are an explicit release gate |
 
-## Recorded budgets
+## Release budgets
 
-| Measure | MVP budget / hard bound |
+| Measure | Budget / hard bound |
 |---|---|
 | Cold UI available | 5 seconds |
 | Persisted-account session ready | 30 seconds on the stock test network |
@@ -69,7 +70,8 @@ The command performs the verified signed release above, updates the existing app
 | App plus runtime PSS | 192 MiB during the two-minute background profile; idle CPU below 1% |
 | Visible streamed response | 256 Ki characters, then an explicit truncation marker |
 | JSON-RPC message | 4 MiB |
-| Native command run | Must remain cancellable and within the device memory/storage watchdog during recorded hostile-file tests |
+| Document input/extraction | 100 MiB input, 20 read pages, 5 English OCR pages, 4 viewed pages, 2 MiB private extraction/image result |
+| Native backend run | Fixed command, bounded output, hard timeout, and device memory/storage watchdog during hostile-file tests |
 
 The release record must contain measured startup/session/first-token, long-stream/listing, PSS/CPU, FD/thread/process/grant, APK size/hash, and API/device results. A budget failure blocks release; the budget is not raised to fit a failing build.
 
@@ -81,6 +83,7 @@ The release record must contain measured startup/session/first-token, long-strea
 | Authentication failure/disabled device authorization | UI retains the bounded app-server error, an authentication diagnostic category, cancel control, and safe retry. The app opens only the validated official browser URL; account consent remains user-controlled. |
 | Protocol mismatch | Invalid frames or server methods fail the client closed with `protocol_failure`, `-32601`, or `-32602`. Restart after verifying the pinned runtime rather than ignoring the mismatch. |
 | Storage permission/workspace/offline | UI reports the bounded permission, file, or network failure. Restore all-files access, reselect the workspace, reconnect, or retry. |
+| Indeterminate mutation | Do not retry automatically. Inspect the destination document or Telegram conversation; the journal will replay the same structured result for the same call ID. |
 | App crash report request | Collect Android's content-free crash category/stack and the visible diagnostic reference only. Never request credentials, codes, prompts, document content, Codex private files, or the runtime diagnostic database. |
 
-Before promoting a preview to production, the release operator verifies a clean stock install, all-files permission disclosure, workspace-to-turn `cwd`, shell create/overwrite/copy/move/delete, all four approval modes, speed-tier selection, `mutool` extraction/rendering, bounded English OCR, Office read/write, hostile-file failure behavior, direct Telegram login/read/send/logout, Markdown/link handling, active-only notification behavior, keyboard resize, sign-out, app-data erasure, native licenses, and an in-place upgrade. Publication is intentionally not performed by CI.
+Before promoting a preview to production, the release operator verifies a clean stock install, all-files permission disclosure, workspace-to-turn `cwd`, ordinary shell create/overwrite/copy/move/delete, built-in plugin visibility/disablement, all four approval modes and the Auto-review mutation limitation, speed-tier selection, typed PDF extraction/rendering, bounded English OCR, transactional Office read/write, hostile-file failure behavior, browserless Telegram login/read/single-send/logout, crash recovery without resubmission, native commands absent from Codex `PATH`, official plugin use, Markdown/link handling, active-only notifications, keyboard resize, sign-out, app-data erasure, native licenses, and an in-place upgrade. Publication is intentionally not performed by CI.

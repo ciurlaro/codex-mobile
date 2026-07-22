@@ -31,7 +31,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 
-class Step06MvpReadinessTest {
+class AppReadinessDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
 
@@ -91,10 +91,10 @@ class Step06MvpReadinessTest {
     @Test
     fun signedOutAccountRequiresFreshUserAuthorization(): Unit = runBlocking {
         assumeTrue(
-            "Run only after the destructive sign-out phase with -e step06SignedOut true",
-            InstrumentationRegistry.getArguments().getString("step06SignedOut") == "true",
+            "Run only after the destructive sign-out phase with -e signedOut true",
+            InstrumentationRegistry.getArguments().getString("signedOut") == "true",
         )
-        CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
+        CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000).use { client ->
             val event = async { withTimeout(30_000) { client.events.first() } }
             client.authenticate()
             assertTrue(event.await() is AgentEvent.AuthenticationRequired)
@@ -105,11 +105,11 @@ class Step06MvpReadinessTest {
     @Test
     fun directAccountLogoutPersistsAcrossRuntimeRestart(): Unit = runBlocking {
         assumeTrue(
-            "Run only in the destructive logout phase with -e step06DirectSignOut true",
-            InstrumentationRegistry.getArguments().getString("step06DirectSignOut") == "true",
+            "Run only in the destructive logout phase with -e directSignOut true",
+            InstrumentationRegistry.getArguments().getString("directSignOut") == "true",
         )
-        CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { it.signOut() }
-        CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
+        CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000).use { it.signOut() }
+        CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000).use { client ->
             val event = async { withTimeout(30_000) { client.events.first() } }
             client.authenticate()
             assertTrue(event.await() is AgentEvent.AuthenticationRequired)

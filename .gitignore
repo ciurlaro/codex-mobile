@@ -13,4 +13,4 @@ captures/
 .DS_Store
 app/android/src/main/jniLibs/arm64-v8a/libcodex_app_server.so
 app/android/src/main/jniLibs/arm64-v8a/libcodex_*.so
-app/android/src/main/assets/runtime/
+app/android/src/main/assets/private-backends/

@@ -28,7 +28,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 
-class Step05BackgroundLifecycleTest {
+class ForegroundLifecycleDeviceTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val application = context.applicationContext as CodexMobileApplication
@@ -190,8 +190,8 @@ class Step05BackgroundLifecycleTest {
     @Test
     fun dataSyncTimeoutStopsWorkCleanly() {
         assumeTrue(
-            "Run with a shortened Android dataSync timeout and -e step05Timeout true",
-            InstrumentationRegistry.getArguments().getString("step05Timeout") == "true",
+            "Run with a shortened Android dataSync timeout and -e foregroundTimeout true",
+            InstrumentationRegistry.getArguments().getString("foregroundTimeout") == "true",
         )
         assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM)
         ensureNotificationPermission()
@@ -217,8 +217,8 @@ class Step05BackgroundLifecycleTest {
     @Test
     fun prolongedNetworkLossIsBoundedAndRetryable() {
         assumeTrue(
-            "Run separately with -e step05NetworkLoss true",
-            InstrumentationRegistry.getArguments().getString("step05NetworkLoss") == "true",
+            "Run separately with -e networkLoss true",
+            InstrumentationRegistry.getArguments().getString("networkLoss") == "true",
         )
         ensureNotificationPermission()
         cleanup()
@@ -282,8 +282,8 @@ class Step05BackgroundLifecycleTest {
     @Test
     fun sameDeviceBrowserHandoffKeepsOneForegroundOwner() {
         assumeTrue(
-            "Run separately with -e step05BrowserHandoff true",
-            InstrumentationRegistry.getArguments().getString("step05BrowserHandoff") == "true",
+            "Run separately with -e browserHandoff true",
+            InstrumentationRegistry.getArguments().getString("browserHandoff") == "true",
         )
         ensureNotificationPermission()
         cleanup()
@@ -323,8 +323,8 @@ class Step05BackgroundLifecycleTest {
     @Test
     fun profileHarnessHoldsLiveBackgroundRuntime() {
         assumeTrue(
-            "Run separately with -e step05Profile true",
-            InstrumentationRegistry.getArguments().getString("step05Profile") == "true",
+            "Run separately with -e lifecycleProfile true",
+            InstrumentationRegistry.getArguments().getString("lifecycleProfile") == "true",
         )
         ensureNotificationPermission()
         cleanup()
@@ -353,8 +353,8 @@ class Step05BackgroundLifecycleTest {
     @Test
     fun notificationPermissionDeniedHasExplainedVisibleFallback() {
         assumeTrue(
-            "Run in a separate process with notifications denied and -e step05NotificationDenied true",
-            InstrumentationRegistry.getArguments().getString("step05NotificationDenied") == "true",
+            "Run in a separate process with notifications denied and -e notificationDenied true",
+            InstrumentationRegistry.getArguments().getString("notificationDenied") == "true",
         )
         assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
         assertFalse(notifications.areNotificationsEnabled())
@@ -444,8 +444,8 @@ class Step05BackgroundLifecycleTest {
     @Test
     fun prepareExternalLifecycleFault() {
         assumeTrue(
-            "Run only with -e step05PrepareFault true before an external kill, force-stop, or reboot",
-            InstrumentationRegistry.getArguments().getString("step05PrepareFault") == "true",
+            "Run only with -e prepareLifecycleFault true before an external kill, force-stop, or reboot",
+            InstrumentationRegistry.getArguments().getString("prepareLifecycleFault") == "true",
         )
         ensureNotificationPermission()
         cleanup()
@@ -461,8 +461,8 @@ class Step05BackgroundLifecycleTest {
     @Test
     fun verifyExternalLifecycleFaultDidNotRestartWork() {
         assumeTrue(
-            "Run only with -e step05VerifyFault true after the external lifecycle fault",
-            InstrumentationRegistry.getArguments().getString("step05VerifyFault") == "true",
+            "Run only with -e verifyLifecycleFault true after the external lifecycle fault",
+            InstrumentationRegistry.getArguments().getString("verifyLifecycleFault") == "true",
         )
         assertTrue(application.graph.wasBackgroundActive())
         assertTrue(activeNotifications().isEmpty())

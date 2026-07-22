@@ -15,27 +15,28 @@ flowchart TB
 |---|---|
 | `:app:android` | Compose UI, settings, workspace picker, foreground lifecycle |
 | `:core` | Provider-neutral agent contracts |
-| `:agent:codex` | Authentication, app-server JSON-RPC, turns, approvals, and shell activity |
-| `:platform:android` | Runtime launch, shared-storage workspace, bundled CLI installation, Telegram login |
+| `:agent:codex` | Authentication, app-server JSON-RPC, turns, approvals, dynamic-tool authority, and shell activity |
+| `:platform:android` | Runtime launch, shared-storage validation, built-in plugin handlers, mutation journal, and Telegram login |
 
-Inside `:agent:codex`, the concrete `AppServerConnection` owns process startup, initialization, strict JSONL framing, pending request correlation, timeouts, writes, EOF/exit handling, and restart cleanup. `CodexAgentClient` owns Codex concepts only: authentication, conversations, turns, approvals, work activity, and conversion to provider-neutral `AgentEvent` values. `CodexProtocol` contains the pure wire builders and parsers shared by those paths.
+Inside `:agent:codex`, `AppServerConnection` owns JSON-RPC IDs, initialization, request correlation, protocol parsing, timeouts, and restart state without importing process or Android APIs. Its narrow `CodexRuntime` dependency emits received JSON lines plus typed start, I/O, EOF, and exit failures. `AndroidCodexRuntime` alone owns the app-server executable, `ProcessBuilder`, streams, environment, proxy, log guard, exit watcher, and deterministic shutdown. `CodexAgentClient` owns authentication, conversations, turns, approvals, plugin enablement, dynamic-tool dispatch, and conversion to provider-neutral events.
 
 ## Workspace and shell
 
 The user grants Android **All files access** and selects a directory from the app's small local picker. Its canonical absolute path is passed as `cwd` on every Codex turn. Codex's ordinary shell therefore lists, reads, creates, overwrites, copies, moves, and deletes files in that workspace without a duplicate Android file API.
 
-The bundled app-server process and credentials still live in backup-excluded app-private storage. The selected directory is a starting directory, not a security sandbox: `MANAGE_EXTERNAL_STORAGE` lets the app access shared storage except platform-protected locations such as `Android/data` and `Android/obb`. Codex's own approval policy remains the user-selectable control for shell commands.
+The bundled app-server process and credentials still live in backup-excluded app-private storage. For ordinary shell commands the selected directory is a starting directory, not a security sandbox: `MANAGE_EXTERNAL_STORAGE` lets the app access other shared storage except platform-protected locations. Built-in plugin paths are stricter: every request is canonicalized under that session's selected workspace, and escaped, app-private, `Android/data`, and `Android/obb` paths are rejected.
 
-At startup Android installs four ordinary commands into a private directory prepended to the app-server's `PATH`:
+## Built-in plugins and private backends
 
-- `mutool` reads, inspects, renders, and transforms PDFs.
-- `tesseract` performs local OCR on bounded images rendered by `mutool`.
-- `officecli` reads and edits DOCX, XLSX, and PPTX files.
-- `tgcli` reads and sends Telegram content after the user connects an account in Settings.
+One app-owned marketplace seeds `documents@codex-mobile` and `telegram@codex-mobile`. They are installed by default, cannot be uninstalled, and use the existing plugin UI and app-server `plugins.<id>.enabled` configuration. New chats receive only enabled tools and plugin-scoped skills. Existing chats keep the schemas advertised when they were created, but every invocation rechecks current enablement under the same global gate used for configuration changes.
 
-Two small local Codex skills explain when to use these familiar command surfaces. They are discovery hints, not another execution layer. Ghostscript and qpdf are intentionally not bundled because the current `mutool` surface covers the required PDF work without two more native distributions.
+Pinned app-server `0.144.6` transports strict `item/tool/call` requests for three Documents tools and seven Telegram tools. Schemas expose semantic fields, enums, and bounds—not commands, subcommands, argument vectors, or arbitrary property maps. Reads use immutable private snapshots and bounded cursors. Document mutations stage and validate a sibling file, require an expected SHA-256 for overwrite, and use atomic replacement. Telegram sends invoke exactly one private process with `--retries 0`.
 
-Telegram login is browserless: the Settings UI starts the bundled `tgcli`, collects the phone code and optional 2FA password, and keeps its session in backup-excluded private storage. Codex then invokes the same `tgcli` command under the selected approval policy.
+`mutool`, English-data `tesseract`, `officecli`, and `tgcli` remain packaged, but Kotlin starts them only by fixed absolute paths with backend-specific minimal environments. None is exposed on the app-server `PATH`. Telegram login remains browserless in Settings and uses the same private session; disabling the plugin removes agent authority without deleting that session.
+
+On app-server `0.144.6`, Never dispatches typed mutations directly; Ask me and Strict reuse the existing approval event with a one-use local permit; Auto review is unavailable because dynamic tools have no equivalent automatic-review bridge. Ordinary shell and file-change approvals keep their app-server paths.
+
+A minimal SQLite journal covers built-in mutations only. `(thread_id, turn_id, call_id)` is unique and bound to a canonical argument hash. Terminal duplicates replay the exact result. A call observed after `DISPATCHED` is reconciled or reported indeterminate and is never submitted to Telegram again. One global mutex deliberately serializes built-in calls and enablement changes; split locks only after measured contention.
 
 ## Session lifetime
 
@@ -43,11 +44,11 @@ A non-exported foreground service owns the active Codex client while authenticat
 
 ## Data lifecycle
 
-Credentials, Codex history, bundled runtime assets, and Telegram session data remain in backup-excluded app-private storage. The workspace preference stores only the selected path. A one-time migration releases obsolete persisted URI grants and removes the former SAF workspace databases. Sign-out removes ChatGPT authentication; confirmed full erasure delegates to Android's native app-data reset and never deletes shared user files.
+Credentials, Codex history, bundled runtime assets, document snapshots, mutation journal rows, and Telegram session data remain in backup-excluded app-private storage. The workspace preference stores only the selected path. Sign-out removes ChatGPT authentication; confirmed full erasure delegates to Android's native app-data reset and never deletes shared user files.
 
 ## Dependency rules
 
 - Core contains no Android SDK types.
 - App-server protocol DTOs stay inside `:agent:codex`.
 - Android permission, storage, process, and intent APIs stay inside Android modules.
-- Ordinary filesystem, document, and Telegram work uses the shell-visible CLI surface; Android code is limited to permission, installation, login, and lifecycle mechanics.
+- Ordinary filesystem work retains Codex's shell. Documents and Telegram cross a typed Android authority gate and never expose their native backend commands to that shell.

@@ -123,7 +123,7 @@ internal fun IntegrationsDialog(
                         buildString {
                             append("Telegram is connected")
                             state.telegramUsername?.let { append(" as @$it") }
-                            append(". Codex can use tgcli directly under your approval policy.")
+                            append(". The enabled Telegram plugin can use its typed tools; the private backend is not a shell command.")
                         },
                     )
                     state.telegramAuthPrompt == TelegramAuthPrompt.CODE -> OutlinedTextField(
@@ -433,24 +433,25 @@ private fun PrivacyDisclosure() {
         PrivacySection(
             "Storage access",
             "The selected workspace is Codex's starting folder, not a sandbox. With all-files access, " +
-                "Codex can navigate to other accessible shared-storage locations. Manage the permission in Android Settings.",
+                "ordinary Codex shell commands can navigate to other accessible shared-storage locations; " +
+                "built-in plugin file tools stay inside the selected workspace. Manage the permission in Android Settings.",
         )
         PrivacySection(
             "On-device document processing",
-            "PDF, image, and Office work runs locally through the bundled mutool, tesseract, and " +
-                "officecli commands. Files or extracted content are sent to OpenAI only when Codex includes " +
+            "PDF, image, and Office work runs locally through strict Documents plugin tools backed by private " +
+                "bundled processors. Files or extracted content are sent to OpenAI only when Codex includes " +
                 "them in the session.",
         )
         PrivacySection(
             "Local storage and logs",
-            "ChatGPT credentials, conversation state, settings, and integration data stay in app-private " +
-                "storage excluded from Android backup. Prompt and document contents are " +
+            "ChatGPT credentials, conversation state, bounded document snapshots, mutation recovery state, " +
+                "settings, and integration data stay in app-private storage excluded from Android backup. Prompt and document contents are " +
                 "not written to Codex Mobile logs.",
         )
         PrivacySection(
             "Integrations",
-            "An integration receives only requests explicitly tagged for it. Connected services keep their " +
-                "own authorization until you disconnect them or erase app data.",
+            "Enabled plugins receive only their typed requests. Connected services keep their own authorization " +
+                "until you disconnect them; erasing app data removes local state but does not prove remote logout.",
         )
         PrivacySection(
             "Plugins and external providers",

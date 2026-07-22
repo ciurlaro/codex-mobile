@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "docs" / "sbom.cdx.json"
 GRADLE_PROPERTIES = ROOT / "gradle.properties"
 APP_LOCK = ROOT / "app" / "android" / "gradle.lockfile"
-NATIVE_BUILD = ROOT / "scripts" / "prepare-native-tools.sh"
+PRIVATE_BACKEND_BUILD = ROOT / "scripts" / "prepare-private-backends.sh"
 TGCLI_LOCK = ROOT / "scripts" / "native" / "tgcli-package-lock.json"
 
 
@@ -65,6 +65,7 @@ def native_component(
         "name": name,
         "version": version,
         "purl": ref,
+        "description": "Packaged private Android backend/runtime component; not a Codex shell command.",
         "licenses": [license_choice(license_id)],
         "properties": [
             {"name": "codex-mobile:input-sha256", "value": input_hash},
@@ -104,7 +105,7 @@ def npm_components() -> list[dict]:
 
 
 def generate() -> str:
-    native_build = NATIVE_BUILD.read_text()
+    private_backend_build = PRIVATE_BACKEND_BUILD.read_text()
     version = gradle_property("codexMobile.versionName", r".+")
     codex_version = gradle_property("codexMobile.codexVersion", r".+")
     archive_hash = gradle_property("codexMobile.codexArchiveSha256", r"[0-9a-f]{64}")
@@ -122,9 +123,9 @@ def generate() -> str:
 
     app_ref = f"pkg:generic/codex-mobile@{version}?platform=android"
     internal = [
-        ("codex-mobile-core", "library"),
-        ("codex-mobile-agent-codex", "library"),
-        ("codex-mobile-platform-android", "library"),
+        ("codex-mobile-core", "library", "Provider-neutral agent contracts."),
+        ("codex-mobile-agent-codex", "library", "Pinned app-server protocol and built-in dynamic-tool authority."),
+        ("codex-mobile-platform-android", "library", "Android runtime, private backends, workspace validation, and mutation journal."),
     ]
     internal_components = [
         {
@@ -133,8 +134,9 @@ def generate() -> str:
             "name": name,
             "version": version,
             "purl": f"pkg:generic/{name}@{version}",
+            "description": description,
         }
-        for name, kind in internal
+        for name, kind, description in internal
     ]
     codex_ref = f"pkg:generic/openai/codex-app-server@{codex_version}?arch=arm64"
     codex_component = {
@@ -144,6 +146,7 @@ def generate() -> str:
         "name": "codex-app-server",
         "version": codex_version,
         "purl": codex_ref,
+        "description": "Pinned local Codex protocol runtime; native document and Telegram backends are not on its PATH.",
         "hashes": [{"alg": "SHA-256", "content": binary_hash}],
         "licenses": [{"license": {"id": "Apache-2.0"}}],
         "properties": [
@@ -170,8 +173,8 @@ def generate() -> str:
         ("zlib", "1.3.2", "Zlib", "75e7d0af17fcc3b40004309fdc00a1ddb9ae08346dce5e269902c34ac3966ac9", "Termux package", "library"),
     ]
     for spec in native_specs:
-        if spec[3] not in native_build:
-            raise SystemExit(f"native SBOM input is no longer pinned by build: {spec[0]}")
+        if spec[3] not in private_backend_build:
+            raise SystemExit(f"private backend SBOM input is no longer pinned by build: {spec[0]}")
     native_components = [native_component(*spec) for spec in native_specs]
     npm = npm_components()
     maven_components = [component(*coordinate) for coordinate in sorted(dependencies)]
@@ -189,6 +192,7 @@ def generate() -> str:
                 "name": "Codex Mobile",
                 "version": version,
                 "purl": app_ref,
+                "description": "Android Codex client with built-in typed Documents and Telegram plugins backed by private native handlers.",
             }
         },
         "components": internal_components + [codex_component] + native_components + npm + maven_components,
