@@ -18,6 +18,8 @@ flowchart TB
 | `:agent:codex` | Authentication, app-server JSON-RPC, turns, approvals, and shell activity |
 | `:platform:android` | Runtime launch, shared-storage workspace, bundled CLI installation, Telegram login |
 
+Inside `:agent:codex`, the concrete `AppServerConnection` owns process startup, initialization, strict JSONL framing, pending request correlation, timeouts, writes, EOF/exit handling, and restart cleanup. `CodexAgentClient` owns Codex concepts only: authentication, conversations, turns, approvals, work activity, and conversion to provider-neutral `AgentEvent` values. `CodexProtocol` contains the pure wire builders and parsers shared by those paths.
+
 ## Workspace and shell
 
 The user grants Android **All files access** and selects a directory from the app's small local picker. Its canonical absolute path is passed as `cwd` on every Codex turn. Codex's ordinary shell therefore lists, reads, creates, overwrites, copies, moves, and deletes files in that workspace without a duplicate Android file API.

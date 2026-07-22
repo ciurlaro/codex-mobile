@@ -1,6 +1,7 @@
 package io.github.ciurlaro.codexmobile.app
 
 import io.github.ciurlaro.codexmobile.core.AgentClient
+import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
 import io.github.ciurlaro.codexmobile.core.AgentConversation
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentEvent
@@ -22,16 +23,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 internal data class ForegroundSessionState(
-    val status: String = "Starting background session…",
+    val statusMessage: String = "Starting background session…",
     val streamedText: String = "",
     val shellExitCode: Int? = null,
     val sessionId: SessionId? = null,
-    val authenticated: Boolean = false,
+    val isAuthenticated: Boolean = false,
     val activeModel: String? = null,
     val activeEffort: String? = null,
     val activeServiceTier: String? = null,
     val signInUrl: String? = null,
-    val turnActive: Boolean = false,
+    val isTurnActive: Boolean = false,
     val pendingApproval: AgentEvent.ApprovalRequested? = null,
     val workActivity: AgentWorkActivity? = null,
     val attentionRequired: Boolean = false,
@@ -62,7 +63,7 @@ internal class ForegroundSessionController(
         if (!shouldStart) return
         mutableState.update {
             it.copy(
-                status = "Checking sign-in…",
+                statusMessage = "Checking sign-in…",
                 signInUrl = null,
                 attentionRequired = false,
                 diagnosticCode = null,
@@ -73,21 +74,19 @@ internal class ForegroundSessionController(
 
     fun cancelAuthentication() {
         if (closed.get()) return
-        mutableState.update { it.copy(status = "Cancelling sign-in…") }
+        mutableState.update { it.copy(statusMessage = "Cancelling sign-in…") }
         launchVisibleFailure(resetAuthentication = true) {
             agentClient.cancelAuthentication()
             synchronized(lock) { authenticationStarted = false }
             mutableState.update {
-                it.copy(status = "Ready to sign in", signInUrl = null)
+                it.copy(statusMessage = "Ready to sign in", signInUrl = null)
             }
         }
     }
 
-    fun submit(prompt: String): Boolean = submit(AgentTurnRequest(prompt = prompt))
-
     fun submit(request: AgentTurnRequest): Boolean {
         if (request.prompt.isBlank() && request.capabilities.isEmpty()) {
-            mutableState.update { it.copy(status = "Enter a prompt first") }
+            mutableState.update { it.copy(statusMessage = "Enter a prompt first") }
             return false
         }
         if (!beginTurn("Codex is responding…")) return false
@@ -108,7 +107,7 @@ internal class ForegroundSessionController(
 
     fun submitShell(command: String, settings: AgentRuntimeSettings): Boolean {
         if (command.isBlank()) {
-            mutableState.update { it.copy(status = "Enter a shell command after !") }
+            mutableState.update { it.copy(statusMessage = "Enter a shell command after !") }
             return false
         }
         if (!beginTurn("Running command…")) return false
@@ -121,9 +120,9 @@ internal class ForegroundSessionController(
         return true
     }
 
-    private fun beginTurn(status: String): Boolean {
-        if (!state.value.authenticated) {
-            mutableState.update { it.copy(status = "Sign in before sending a message") }
+    private fun beginTurn(statusMessage: String): Boolean {
+        if (!state.value.isAuthenticated) {
+            mutableState.update { it.copy(statusMessage = "Sign in before sending a message") }
             return false
         }
         if (closed.get() || !turnClaimed.compareAndSet(false, true)) return false
@@ -132,10 +131,10 @@ internal class ForegroundSessionController(
         turnStartCompleted.set(false)
         mutableState.update {
             it.copy(
-                status = status,
+                statusMessage = statusMessage,
                 streamedText = "",
                 shellExitCode = null,
-                turnActive = true,
+                isTurnActive = true,
                 attentionRequired = false,
                 diagnosticCode = null,
             )
@@ -143,24 +142,24 @@ internal class ForegroundSessionController(
         return true
     }
 
-    fun resolveApproval(requestId: String, accept: Boolean) {
+    fun resolveApproval(requestId: String, decision: AgentApprovalDecision) {
         val pending = state.value.pendingApproval ?: return
         if (pending.requestId != requestId || closed.get()) return
         mutableState.update {
             it.copy(
-                status = if (accept) "Continuing…" else "Declining…",
+                statusMessage = if (decision == AgentApprovalDecision.ACCEPT) "Continuing…" else "Declining…",
                 pendingApproval = null,
                 attentionRequired = false,
             )
         }
-        launchVisibleFailure { agentClient.resolveApproval(requestId, accept) }
+        launchVisibleFailure { agentClient.resolveApproval(requestId, decision) }
     }
 
-    fun freshChat(): Boolean {
-        if (!state.value.authenticated || state.value.turnActive || closed.get()) return false
+    fun startNewChat(): Boolean {
+        if (!state.value.isAuthenticated || state.value.isTurnActive || closed.get()) return false
         mutableState.update {
             it.copy(
-                status = "Ready",
+                statusMessage = "Ready",
                 streamedText = "",
                 sessionId = null,
                 diagnosticCode = null,
@@ -174,9 +173,9 @@ internal class ForegroundSessionController(
         sessionId: SessionId,
         settings: AgentRuntimeSettings = AgentRuntimeSettings(),
     ): Boolean {
-        if (!state.value.authenticated || state.value.turnActive || closed.get()) return false
+        if (!state.value.isAuthenticated || state.value.isTurnActive || closed.get()) return false
         mutableState.update {
-            it.copy(status = "Loading conversation…", streamedText = "", diagnosticCode = null)
+            it.copy(statusMessage = "Loading conversation…", streamedText = "", diagnosticCode = null)
         }
         launchVisibleFailure { agentClient.openSession(sessionId, settings) }
         return true
@@ -197,38 +196,33 @@ internal class ForegroundSessionController(
 
     fun cancelTurn() {
         if (
-            !state.value.turnActive || closed.get() ||
+            !state.value.isTurnActive || closed.get() ||
             !cancellationStarted.compareAndSet(false, true)
         ) {
             return
         }
-        mutableState.update { it.copy(status = "Cancelling…") }
+        mutableState.update { it.copy(statusMessage = "Cancelling…") }
         if (turnStartCompleted.get()) state.value.sessionId?.let(::dispatchCancellation)
     }
 
     suspend fun stopAndClose(reason: String, signOut: Boolean = false): Boolean {
         if (!closed.compareAndSet(false, true)) return false
         val before = state.value
-        synchronized(lock) {
-            authenticationStarted = false
-        }
-        turnClaimed.set(false)
-        turnStartCompleted.set(false)
-        cancellationStarted.set(false)
-        cancellationDispatched.set(false)
+        resetAuthenticationState()
+        resetTurnState()
         mutableState.update {
             it.copy(
-                status = reason,
+                statusMessage = reason,
                 sessionId = null,
-                authenticated = false,
+                isAuthenticated = false,
                 signInUrl = null,
-                turnActive = false,
+                isTurnActive = false,
                 pendingApproval = null,
                 workActivity = null,
                 diagnosticCode = null,
             )
         }
-        if (before.turnActive && before.sessionId != null) {
+        if (before.isTurnActive && before.sessionId != null) {
             withTimeoutOrNull(STOP_TIMEOUT_MILLIS) {
                 runCatching { agentClient.cancelTurn(before.sessionId) }
             }
@@ -240,7 +234,7 @@ internal class ForegroundSessionController(
         eventJob.cancel()
         mutableState.update {
             it.copy(
-                status = if (signedOut) it.status else "ChatGPT sign-out failed; try again",
+                statusMessage = if (signedOut) it.statusMessage else "ChatGPT sign-out failed; try again",
                 terminal = true,
             )
         }
@@ -249,20 +243,15 @@ internal class ForegroundSessionController(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        synchronized(lock) {
-            authenticationStarted = false
-        }
-        turnClaimed.set(false)
-        turnStartCompleted.set(false)
-        cancellationStarted.set(false)
-        cancellationDispatched.set(false)
+        resetAuthenticationState()
+        resetTurnState()
         mutableState.update {
             it.copy(
-                status = "Background work ended",
+                statusMessage = "Background work ended",
                 sessionId = null,
-                authenticated = false,
+                isAuthenticated = false,
                 signInUrl = null,
-                turnActive = false,
+                isTurnActive = false,
                 pendingApproval = null,
                 workActivity = null,
                 diagnosticCode = null,
@@ -278,7 +267,7 @@ internal class ForegroundSessionController(
         when (event) {
             is AgentEvent.AuthenticationRequired -> mutableState.update {
                 it.copy(
-                    status = "Finish sign-in in your browser",
+                    statusMessage = "Finish sign-in in your browser",
                     signInUrl = event.signInUrl,
                 )
             }
@@ -287,8 +276,8 @@ internal class ForegroundSessionController(
                 synchronized(lock) { authenticationStarted = false }
                 mutableState.update {
                     it.copy(
-                        status = "Ready",
-                        authenticated = true,
+                        statusMessage = "Ready",
+                        isAuthenticated = true,
                         signInUrl = null,
                         diagnosticCode = null,
                     )
@@ -297,9 +286,9 @@ internal class ForegroundSessionController(
 
             is AgentEvent.SessionOpened -> mutableState.update {
                 it.copy(
-                    status = "Ready",
+                    statusMessage = "Ready",
                     sessionId = event.sessionId,
-                    authenticated = true,
+                    isAuthenticated = true,
                     activeModel = event.model ?: it.activeModel,
                     activeEffort = event.effort ?: it.activeEffort,
                     activeServiceTier = event.serviceTier ?: it.activeServiceTier,
@@ -316,13 +305,10 @@ internal class ForegroundSessionController(
             }
 
             is AgentEvent.TurnCompleted -> {
-                turnClaimed.set(false)
-                turnStartCompleted.set(false)
-                cancellationStarted.set(false)
-                cancellationDispatched.set(false)
+                resetTurnState()
                 mutableState.update {
                     if (it.sessionId == event.sessionId) {
-                        it.copy(status = "Ready", turnActive = false, diagnosticCode = null)
+                        it.copy(statusMessage = "Ready", isTurnActive = false, diagnosticCode = null)
                     } else {
                         it
                     }
@@ -330,19 +316,14 @@ internal class ForegroundSessionController(
             }
 
             is AgentEvent.Failure -> {
-                turnClaimed.set(false)
-                turnStartCompleted.set(false)
-                cancellationStarted.set(false)
-                cancellationDispatched.set(false)
-                synchronized(lock) {
-                    authenticationStarted = false
-                }
+                resetTurnState()
+                resetAuthenticationState()
                 mutableState.update {
                     it.copy(
-                        status = event.message.take(MAX_VISIBLE_ERROR_CHARS),
+                        statusMessage = event.message.take(MAX_VISIBLE_ERROR_CHARS),
                         sessionId = if (event.sessionId == null) null else it.sessionId,
                         signInUrl = null,
-                        turnActive = false,
+                        isTurnActive = false,
                         pendingApproval = null,
                         workActivity = null,
                         attentionRequired = true,
@@ -355,13 +336,15 @@ internal class ForegroundSessionController(
                 if (mutableState.value.pendingApproval == null) {
                     mutableState.update {
                         it.copy(
-                            status = "Approval needed",
+                            statusMessage = "Approval needed",
                             pendingApproval = event,
                             attentionRequired = true,
                         )
                     }
                 } else {
-                    launchVisibleFailure { agentClient.resolveApproval(event.requestId, false) }
+                    launchVisibleFailure {
+                        agentClient.resolveApproval(event.requestId, AgentApprovalDecision.DECLINE)
+                    }
                 }
             }
 
@@ -393,6 +376,17 @@ internal class ForegroundSessionController(
         }
     }
 
+    private fun resetTurnState() {
+        turnClaimed.set(false)
+        turnStartCompleted.set(false)
+        cancellationStarted.set(false)
+        cancellationDispatched.set(false)
+    }
+
+    private fun resetAuthenticationState() {
+        synchronized(lock) { authenticationStarted = false }
+    }
+
     private fun launchVisibleFailure(
         resetAuthentication: Boolean = false,
         resetTurn: Boolean = false,
@@ -411,9 +405,9 @@ internal class ForegroundSessionController(
                 if (!closed.get()) {
                     mutableState.update {
                         it.copy(
-                            status = error.message?.take(MAX_VISIBLE_ERROR_CHARS) ?: "Codex failed",
+                            statusMessage = error.message?.take(MAX_VISIBLE_ERROR_CHARS) ?: "Codex failed",
                             signInUrl = null,
-                            turnActive = false,
+                            isTurnActive = false,
                             attentionRequired = true,
                             diagnosticCode = "client_request",
                         )

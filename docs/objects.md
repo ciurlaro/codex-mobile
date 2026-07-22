@@ -3,7 +3,8 @@
 | Object | Responsibility | Lifetime / truth |
 |---|---|---|
 | `AgentClient` | Authenticate, create sessions, send/cancel turns, expose provider-neutral events | Process-local; provider owns conversation semantics |
-| `CodexAgentClient` | Implement app-server JSON-RPC and include the selected workspace as each turn's `cwd` | Process-local |
+| `AppServerConnection` | Own app-server process lifecycle, JSONL framing, request correlation, writes, timeouts, and restart cleanup | One per Codex client |
+| `CodexAgentClient` | Map authentication, conversations, turns, approvals, and shell activity between Codex protocol values and core events | Process-local |
 | `AgentEvent` | Represent authentication, session, text, approvals, shell work, completion, and failure events | Transient stream |
 | `ForegroundSessionController` | Own one client/session while UI visibility changes | One active service lifetime |
 | `AgentApprovalPreset` | Map Never, Auto review, Ask me, and Strict to app-server policy/reviewer fields | Persisted setting; Never is default |

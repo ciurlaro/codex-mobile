@@ -42,23 +42,23 @@ enum class VisualScenario(val id: String) {
 
     fun state(): MainUiState = when (this) {
         FRESH -> baseState()
-        DRAWER -> conversationState().copy(drawerOpen = true)
+        DRAWER -> conversationState().copy(isHistoryOpen = true)
         FOCUSED_COMPOSER -> baseState().copy(
             draft = "Draft a concise implementation plan\nwith verification steps.",
         )
         EFFORT_SELECTOR -> baseState().copy(
             draft = "Draft a concise implementation plan\nwith verification steps.",
-            popup = ChatPopup.EFFORT,
+            activeSelector = ChatSelector.EFFORT,
         )
         MODEL_SELECTOR -> baseState().copy(
             draft = "Draft a concise implementation plan\nwith verification steps.",
-            popup = ChatPopup.MODEL,
+            activeSelector = ChatSelector.MODEL,
         )
-        SETTINGS -> conversationState().copy(destination = AppDestination.SETTINGS)
+        SETTINGS -> conversationState().copy(screen = AppScreen.SETTINGS)
         TAGGED_CONVERSATION -> conversationState(messages = listOf(TAGGED_USER_MESSAGE))
         THINKING -> conversationState(
             messages = listOf(TAGGED_USER_MESSAGE, THINKING_CODEX_MESSAGE),
-        ).copy(turnActive = true, status = "Thinking")
+        ).copy(isTurnActive = true, statusMessage = "Thinking")
         COMPLETED -> conversationState(
             messages = listOf(TAGGED_USER_MESSAGE, COMPLETED_CODEX_MESSAGE),
         )
@@ -119,12 +119,12 @@ private val THINKING_CODEX_MESSAGE = ChatMessage(
     text = "",
     model = MODELS.first().id,
     effort = "high",
-    streaming = true,
+    isStreaming = true,
 )
 
 private fun baseState() = MainUiState(
-    status = "Ready",
-    authenticated = true,
+    statusMessage = "Ready",
+    isAuthenticated = true,
     conversations = CONVERSATIONS,
     models = MODELS,
     selectedModel = MODELS.first().id,

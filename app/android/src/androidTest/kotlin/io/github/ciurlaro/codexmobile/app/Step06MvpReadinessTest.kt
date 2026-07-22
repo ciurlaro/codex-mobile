@@ -94,7 +94,7 @@ class Step06MvpReadinessTest {
             "Run only after the destructive sign-out phase with -e step06SignedOut true",
             InstrumentationRegistry.getArguments().getString("step06SignedOut") == "true",
         )
-        CodexAgentClient(AndroidPlatform(context)::launchProcess, 30_000).use { client ->
+        CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
             val event = async { withTimeout(30_000) { client.events.first() } }
             client.authenticate()
             assertTrue(event.await() is AgentEvent.AuthenticationRequired)
@@ -108,8 +108,8 @@ class Step06MvpReadinessTest {
             "Run only in the destructive logout phase with -e step06DirectSignOut true",
             InstrumentationRegistry.getArguments().getString("step06DirectSignOut") == "true",
         )
-        CodexAgentClient(AndroidPlatform(context)::launchProcess, 30_000).use { it.signOut() }
-        CodexAgentClient(AndroidPlatform(context)::launchProcess, 30_000).use { client ->
+        CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { it.signOut() }
+        CodexAgentClient(AndroidPlatform(context)::launchCodexProcess, 30_000).use { client ->
             val event = async { withTimeout(30_000) { client.events.first() } }
             client.authenticate()
             assertTrue(event.await() is AgentEvent.AuthenticationRequired)
@@ -137,7 +137,7 @@ class Step06MvpReadinessTest {
             val settingsTitle = findNode("Settings")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) assertTrue(settingsTitle.isHeading)
             val folderLabel = if (
-                (context.applicationContext as CodexMobileApplication).graph.platform.currentWorkspacePath() == null
+                (context.applicationContext as CodexMobileApplication).graph.platform.configuredWorkspacePath() == null
             ) {
                 "Select workspace"
             } else {
@@ -192,7 +192,7 @@ class Step06MvpReadinessTest {
             scenario.onActivity { activity -> assertTrue(activity.resources.configuration.fontScale >= 1.9f) }
             val minimumPixels = 48f * context.resources.displayMetrics.density - 1f
             val folderLabel = if (
-                (context.applicationContext as CodexMobileApplication).graph.platform.currentWorkspacePath() == null
+                (context.applicationContext as CodexMobileApplication).graph.platform.configuredWorkspacePath() == null
             ) {
                 "Select workspace"
             } else {

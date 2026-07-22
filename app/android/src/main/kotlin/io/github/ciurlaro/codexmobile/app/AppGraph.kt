@@ -10,11 +10,15 @@ import kotlinx.coroutines.flow.asStateFlow
 
 internal class AppGraph(context: Context) {
     private val appContext = context.applicationContext
+    private val clientVersion = runCatching {
+        appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName
+    }.getOrNull() ?: "unknown"
     val platform = AndroidPlatform(context)
     private val mutableBackgroundFailure = MutableStateFlow<String?>(null)
     val backgroundFailure = mutableBackgroundFailure.asStateFlow()
     fun newAgentClient(): AgentClient = CodexAgentClient(
-        launchProcess = platform::launchProcess,
+        launchCodexProcess = platform::launchCodexProcess,
+        clientVersion = clientVersion,
     )
 
     fun authorizeForegroundStart(): String = UUID.randomUUID().toString().also {

@@ -41,10 +41,10 @@ class CodexForegroundService : Service() {
         controller = ForegroundSessionController(graph.newAgentClient(), serviceScope)
         serviceScope.launch {
             controller.state.collect { state ->
-                val active = needsForeground(state)
+                val active = state.needsForeground()
                 when {
-                    active && foregroundStarted -> updateNotification(notificationText(state))
-                    active && foregroundAuthorized -> promoteToForeground(notificationText(state))
+                    active && foregroundStarted -> updateNotification(state.notificationText())
+                    active && foregroundAuthorized -> promoteToForeground(state.notificationText())
                     !active && foregroundStarted -> leaveForeground()
                 }
             }
@@ -150,26 +150,6 @@ class CodexForegroundService : Service() {
         notificationManager.notify(NOTIFICATION_ID, notification(text))
     }
 
-    private fun notificationText(state: ForegroundSessionState): String = when {
-        state.terminal -> "Background work stopped"
-        state.pendingApproval != null -> "Waiting for your approval"
-        state.attentionRequired -> "Open Codex Mobile to retry"
-        state.workActivity != null -> when (state.workActivity) {
-            io.github.ciurlaro.codexmobile.core.AgentWorkActivity.RUNNING_COMMAND -> "Running a command"
-            io.github.ciurlaro.codexmobile.core.AgentWorkActivity.READING_FILES -> "Reading files"
-            io.github.ciurlaro.codexmobile.core.AgentWorkActivity.WRITING_FILES -> "Writing files"
-        }
-        state.turnActive -> "Codex is responding"
-        state.signInUrl != null -> "Waiting for ChatGPT sign-in"
-        else -> "Starting Codex"
-    }
-
-    private fun needsForeground(state: ForegroundSessionState): Boolean =
-        !state.terminal && (
-            !state.authenticated || state.signInUrl != null || state.turnActive ||
-                state.pendingApproval != null || state.workActivity != null
-            )
-
     private fun notification(text: String): Notification {
         val openApp = PendingIntent.getActivity(
             this,
@@ -249,3 +229,22 @@ class CodexForegroundService : Service() {
             Intent(context, CodexForegroundService::class.java).setAction(ACTION_STOP)
     }
 }
+
+private fun ForegroundSessionState.notificationText(): String = when {
+    terminal -> "Background work stopped"
+    pendingApproval != null -> "Waiting for your approval"
+    attentionRequired -> "Open Codex Mobile to retry"
+    workActivity != null -> when (workActivity) {
+        io.github.ciurlaro.codexmobile.core.AgentWorkActivity.RUNNING_COMMAND -> "Running a command"
+        io.github.ciurlaro.codexmobile.core.AgentWorkActivity.WRITING_FILES -> "Writing files"
+    }
+    isTurnActive -> "Codex is responding"
+    signInUrl != null -> "Waiting for ChatGPT sign-in"
+    else -> "Starting Codex"
+}
+
+private fun ForegroundSessionState.needsForeground(): Boolean =
+    !terminal && (
+        !isAuthenticated || signInUrl != null || isTurnActive ||
+            pendingApproval != null || workActivity != null
+        )

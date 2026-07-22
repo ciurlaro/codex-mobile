@@ -50,7 +50,7 @@ class ChatRuntimeContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             val sessionId = SessionId("thread-history")
             client.renameSession(sessionId, "  Useful name  ")
@@ -131,7 +131,7 @@ class ChatRuntimeContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             val session = client.openSession(
                 settings = AgentRuntimeSettings(workingDirectory = "/storage/emulated/0/Documents"),
@@ -250,7 +250,7 @@ class ChatRuntimeContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             val models = client.listModels()
             assertEquals(listOf(null, "models-2"), modelCursors)
@@ -307,7 +307,7 @@ class ChatRuntimeContractTest {
                 }
             }
         }
-        val client = CodexAgentClient({ _, _ -> process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             val opened = async {
                 withTimeout(1_000) { client.events.filterIsInstance<AgentEvent.SessionOpened>().first() }
