@@ -75,6 +75,7 @@ internal enum class IconGlyph {
     PIN,
     EDIT,
     TRASH,
+    PUZZLE,
 }
 
 @Composable
@@ -352,6 +353,20 @@ internal fun AppIcon(
                 )
                 line(Offset(size.width * .18f, size.height * .25f), Offset(size.width * .82f, size.height * .25f))
                 line(Offset(size.width * .40f, size.height * .14f), Offset(size.width * .60f, size.height * .14f))
+            }
+
+            IconGlyph.PUZZLE -> {
+                drawRoundRect(
+                    tint,
+                    Offset(size.width * .18f, size.height * .18f),
+                    Size(size.width * .64f, size.height * .64f),
+                    CornerRadius(size.width * .08f),
+                    style = Stroke(stroke),
+                )
+                drawCircle(tint, size.minDimension * .10f, Offset(center.x, size.height * .18f))
+                drawCircle(ChatColors.ElevatedStrong, size.minDimension * .06f, Offset(center.x, size.height * .18f))
+                drawCircle(tint, size.minDimension * .10f, Offset(size.width * .82f, center.y))
+                drawCircle(ChatColors.ElevatedStrong, size.minDimension * .06f, Offset(size.width * .82f, center.y))
             }
 
         }

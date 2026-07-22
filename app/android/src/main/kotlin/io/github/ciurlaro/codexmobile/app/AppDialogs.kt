@@ -16,12 +16,15 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
@@ -29,6 +32,13 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentElicitation
+import io.github.ciurlaro.codexmobile.core.AgentElicitationAction
+import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
+import io.github.ciurlaro.codexmobile.core.AgentFormField
+import io.github.ciurlaro.codexmobile.core.AgentFormFieldType
+import io.github.ciurlaro.codexmobile.core.AgentFormValue
+import io.github.ciurlaro.codexmobile.core.AgentMcpAuthStatus
 import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthPrompt
 import java.io.File
 
@@ -63,6 +73,8 @@ internal fun IntegrationsDialog(
     onSubmitAuthentication: (String) -> Unit,
     onDisconnect: () -> Unit,
     onCancelAuthentication: () -> Unit,
+    onConnectApp: (String) -> Unit,
+    onConnectMcp: (String) -> Unit,
 ) {
     var phoneNumber by rememberSaveable { mutableStateOf("") }
     var authenticationAnswer by rememberSaveable { mutableStateOf("") }
@@ -79,8 +91,31 @@ internal fun IntegrationsDialog(
         title = { Text("Integrations") },
         text = {
             Column {
+                state.connectors.forEach { connector ->
+                    IntegrationRow(
+                        name = connector.name,
+                        status = if (connector.isAccessible) "Connected" else "Connection required",
+                        canConnect = !connector.isAccessible && connector.installUrl != null,
+                        onConnect = { onConnectApp(connector.id) },
+                    )
+                }
+                state.mcpServers.forEach { server ->
+                    IntegrationRow(
+                        name = server.displayName,
+                        status = when (server.authStatus) {
+                            AgentMcpAuthStatus.NOT_LOGGED_IN -> "Connection required"
+                            AgentMcpAuthStatus.UNSUPPORTED -> "Managed outside Codex Mobile"
+                            else -> "Connected"
+                        },
+                        canConnect = server.authStatus == AgentMcpAuthStatus.NOT_LOGGED_IN,
+                        onConnect = { onConnectMcp(server.name) },
+                    )
+                }
+                if (state.connectors.isNotEmpty() || state.mcpServers.isNotEmpty()) {
+                    Spacer(Modifier.height(16.dp))
+                }
                 when {
-                    !state.isTelegramAvailable -> Text(
+                    !state.isTelegramAvailable && state.connectors.isEmpty() && state.mcpServers.isEmpty() -> Text(
                         "No integrations are available in this build.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -126,7 +161,7 @@ internal fun IntegrationsDialog(
         },
         confirmButton = {
             when {
-                !state.isTelegramAvailable -> Button(onClick = onDismiss) { Text("Close") }
+                !state.isTelegramAvailable -> Button(onClick = onDismiss) { Text("Done") }
                 state.isTelegramConnected -> Button(
                     onClick = onDisconnect,
                     enabled = !state.isTelegramOperationInProgress,
@@ -153,6 +188,154 @@ internal fun IntegrationsDialog(
             null
         },
     )
+}
+
+@Composable
+private fun IntegrationRow(
+    name: String,
+    status: String,
+    canConnect: Boolean,
+    onConnect: () -> Unit,
+) {
+    androidx.compose.foundation.layout.Row(
+        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(name)
+            Text(status, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        if (canConnect) Button(onClick = onConnect) { Text("Connect") }
+    }
+}
+
+@Composable
+internal fun ElicitationDialog(
+    elicitation: AgentElicitation,
+    onResponse: (AgentElicitationResponse) -> Unit,
+) {
+    val form = elicitation.form
+    val answers = remember(elicitation.requestId) {
+        mutableStateMapOf<String, AgentFormValue>().apply {
+            form.orEmpty().forEach { field -> field.defaultValue?.let { put(field.name, it) } }
+        }
+    }
+    AlertDialog(
+        onDismissRequest = {
+            onResponse(AgentElicitationResponse(AgentElicitationAction.CANCEL))
+        },
+        title = { Text(elicitation.serverName) },
+        text = {
+            Column(
+                Modifier.heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(elicitation.message)
+                if (elicitation.url != null) {
+                    Text("Complete the secure authorization window, or cancel here.")
+                }
+                form.orEmpty().forEach { field ->
+                    Text(field.title)
+                    field.description?.let {
+                        Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    when (field.type) {
+                        AgentFormFieldType.STRING,
+                        AgentFormFieldType.NUMBER,
+                        AgentFormFieldType.INTEGER,
+                        -> OutlinedTextField(
+                            value = when (val value = answers[field.name]) {
+                                is AgentFormValue.Text -> value.value
+                                is AgentFormValue.Number -> value.value.toString()
+                                else -> ""
+                            },
+                            onValueChange = { value ->
+                                answers[field.name] = when (field.type) {
+                                    AgentFormFieldType.STRING -> AgentFormValue.Text(value)
+                                    else -> value.toDoubleOrNull()?.let(AgentFormValue::Number)
+                                        ?: AgentFormValue.Text(value)
+                                }
+                            },
+                            singleLine = true,
+                        )
+                        AgentFormFieldType.BOOLEAN -> androidx.compose.foundation.layout.Row(
+                            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                        ) {
+                            val checked = (answers[field.name] as? AgentFormValue.BooleanValue)?.value == true
+                            Checkbox(
+                                checked = checked,
+                                onCheckedChange = { answers[field.name] = AgentFormValue.BooleanValue(it) },
+                            )
+                            Text(if (checked) "Yes" else "No")
+                        }
+                        AgentFormFieldType.SINGLE_SELECT -> field.options.forEach { option ->
+                            val selected = (answers[field.name] as? AgentFormValue.Text)?.value == option.value
+                            Text(
+                                (if (selected) "✓ " else "") + option.title,
+                                Modifier.fillMaxWidth().clickable {
+                                    answers[field.name] = AgentFormValue.Text(option.value)
+                                }.padding(vertical = 8.dp),
+                            )
+                        }
+                        AgentFormFieldType.MULTI_SELECT -> field.options.forEach { option ->
+                            val selected = (answers[field.name] as? AgentFormValue.TextList)
+                                ?.value.orEmpty()
+                            androidx.compose.foundation.layout.Row(
+                                verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                            ) {
+                                Checkbox(
+                                    checked = option.value in selected,
+                                    onCheckedChange = { checked ->
+                                        answers[field.name] = AgentFormValue.TextList(
+                                            if (checked) selected + option.value else selected - option.value,
+                                        )
+                                    },
+                                )
+                                Text(option.title)
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            if (form != null) {
+                val valid = form.all { field -> isValidElicitationAnswer(field, answers[field.name]) }
+                Button(
+                    enabled = valid,
+                    onClick = {
+                        onResponse(AgentElicitationResponse(AgentElicitationAction.ACCEPT, answers.toMap()))
+                    },
+                ) { Text("Continue") }
+            }
+        },
+        dismissButton = {
+            Button(onClick = {
+                onResponse(AgentElicitationResponse(AgentElicitationAction.CANCEL))
+            }) { Text("Cancel") }
+        },
+    )
+}
+
+internal fun isValidElicitationAnswer(field: AgentFormField, value: AgentFormValue?): Boolean {
+    if (value == null) return !field.required
+    val minimum = field.minimum
+    val maximum = field.maximum
+    return when (field.type) {
+        AgentFormFieldType.STRING -> value is AgentFormValue.Text && (!field.required || value.value.isNotBlank())
+        AgentFormFieldType.NUMBER -> (value as? AgentFormValue.Number)?.value?.let {
+            (minimum == null || it >= minimum) && (maximum == null || it <= maximum)
+        } == true
+        AgentFormFieldType.INTEGER -> (value as? AgentFormValue.Number)?.value?.let {
+            it % 1.0 == 0.0 && (minimum == null || it >= minimum) &&
+                (maximum == null || it <= maximum)
+        } == true
+        AgentFormFieldType.BOOLEAN -> value is AgentFormValue.BooleanValue
+        AgentFormFieldType.SINGLE_SELECT -> value is AgentFormValue.Text &&
+            field.options.any { it.value == value.value }
+        AgentFormFieldType.MULTI_SELECT -> value is AgentFormValue.TextList &&
+            value.value.all { selected -> field.options.any { it.value == selected } }
+    }
 }
 
 @Composable
@@ -268,6 +451,12 @@ private fun PrivacyDisclosure() {
             "Integrations",
             "An integration receives only requests explicitly tagged for it. Connected services keep their " +
                 "own authorization until you disconnect them or erase app data.",
+        )
+        PrivacySection(
+            "Plugins and external providers",
+            "Installed plugins and connectors may send the prompt and selected context needed for a request " +
+                "to external providers under their own privacy policies and terms. Codex Mobile only lists " +
+                "plugins from OpenAI's official catalogs.",
         )
     }
 }

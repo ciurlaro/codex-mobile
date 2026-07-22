@@ -111,6 +111,14 @@ internal fun SettingsScreen(
                         subtitle = state.approvalPreset.displayName,
                         onClick = { onEvent(ChatUiEvent.OpenSelector(ChatSelector.APPROVAL)) },
                     )
+                    SettingsDivider()
+                    SettingsRow(
+                        glyph = IconGlyph.PUZZLE,
+                        title = "Skills & plugins",
+                        subtitle = "${state.skills.count { it.enabled }} skills · " +
+                            "${state.plugins.count { it.installed && it.enabled }} plugins",
+                        onClick = { onEvent(ChatUiEvent.OpenCapabilities) },
+                    )
                 }
             }
             item("access-settings") {

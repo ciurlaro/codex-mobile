@@ -233,6 +233,8 @@ class CodexForegroundService : Service() {
 private fun ForegroundSessionState.notificationText(): String = when {
     terminal -> "Background work stopped"
     pendingApproval != null -> "Waiting for your approval"
+    pendingElicitation != null -> "Waiting for your input"
+    externalOperation != null -> externalOperation
     attentionRequired -> "Open Codex Mobile to retry"
     workActivity != null -> when (workActivity) {
         io.github.ciurlaro.codexmobile.core.AgentWorkActivity.RUNNING_COMMAND -> "Running a command"
@@ -246,5 +248,6 @@ private fun ForegroundSessionState.notificationText(): String = when {
 private fun ForegroundSessionState.needsForeground(): Boolean =
     !terminal && (
         !isAuthenticated || signInUrl != null || isTurnActive ||
-            pendingApproval != null || workActivity != null
+            pendingApproval != null || pendingElicitation != null || workActivity != null ||
+            externalOperation != null
         )

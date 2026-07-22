@@ -4,7 +4,15 @@ import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentConnector
+import io.github.ciurlaro.codexmobile.core.AgentElicitation
+import io.github.ciurlaro.codexmobile.core.AgentInvocation
+import io.github.ciurlaro.codexmobile.core.AgentMcpServer
 import io.github.ciurlaro.codexmobile.core.AgentModel
+import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
+import io.github.ciurlaro.codexmobile.core.AgentPluginAuthPolicy
+import io.github.ciurlaro.codexmobile.core.AgentPluginSummary
+import io.github.ciurlaro.codexmobile.core.AgentSkill
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
@@ -21,6 +29,20 @@ data class MainUiState(
     val models: List<AgentModel> = emptyList(),
     val draft: String = "",
     val selectedCapabilities: Set<AgentCapability> = emptySet(),
+    val selectedInvocations: List<AgentInvocation> = emptyList(),
+    val skills: List<AgentSkill> = emptyList(),
+    val plugins: List<AgentPluginSummary> = emptyList(),
+    val connectors: List<AgentConnector> = emptyList(),
+    val mcpServers: List<AgentMcpServer> = emptyList(),
+    val selectedPlugin: AgentPluginDetail? = null,
+    val capabilitySearch: String = "",
+    val capabilityTab: CapabilityTab = CapabilityTab.SKILLS,
+    val isCapabilitiesLoading: Boolean = false,
+    val capabilityError: String? = null,
+    val pluginChangesNeedNewChat: Boolean = false,
+    val connectorAuthUrl: String? = null,
+    val connectorAuthName: String? = null,
+    val pendingElicitation: AgentElicitation? = null,
     val selectedModel: String? = null,
     val selectedEffort: String? = null,
     val selectedSpeedTier: String? = null,
@@ -57,6 +79,7 @@ internal fun MainUiState.withSubmittedTurn(
         role = AgentMessageRole.USER,
         text = request.prompt,
         capabilities = if (shellCommand == null) request.capabilities else emptySet(),
+        invocations = if (shellCommand == null) request.invocations else emptyList(),
         model = request.model,
         effort = request.effort,
     ) + ChatMessage(
@@ -68,6 +91,7 @@ internal fun MainUiState.withSubmittedTurn(
     ),
     draft = "",
     selectedCapabilities = emptySet(),
+    selectedInvocations = emptyList(),
     activeSelector = null,
 )
 
@@ -78,11 +102,13 @@ internal fun MainUiState.withNewChat() = copy(
     messages = emptyList(),
     draft = "",
     selectedCapabilities = emptySet(),
+    selectedInvocations = emptyList(),
     isHistoryOpen = false,
     screen = AppScreen.CHAT,
     activeSelector = null,
     historySearch = "",
     isConversationLoading = false,
+    pluginChangesNeedNewChat = false,
 )
 
 internal fun MainUiState.withoutConversation(sessionId: SessionId): MainUiState {
@@ -119,3 +145,19 @@ internal fun List<ChatMessage>.withStreamingAssistant(
 
 internal fun MainUiState.selectedModelOrNull(): AgentModel? =
     models.firstOrNull { it.id == selectedModel }
+
+internal fun MainUiState.connectorsNeedingOnUseAuthentication(): List<AgentConnector> {
+    val selectedPlugins = selectedInvocations.filterIsInstance<AgentInvocation.Plugin>().mapNotNull { invocation ->
+        plugins.firstOrNull { it.reference.uri == invocation.uri }
+            ?.takeIf { it.authPolicy == AgentPluginAuthPolicy.ON_USE }
+    }
+    return connectors.filter { connector ->
+        !connector.isAccessible && connector.installUrl != null && selectedPlugins.any { plugin ->
+            connector.id.equals(plugin.reference.name, ignoreCase = true) ||
+                connector.pluginNames.any {
+                    it.equals(plugin.displayName, ignoreCase = true) ||
+                        it.equals(plugin.reference.name, ignoreCase = true)
+                }
+        }
+    }
+}

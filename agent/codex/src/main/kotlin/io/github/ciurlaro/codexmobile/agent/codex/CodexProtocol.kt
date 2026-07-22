@@ -4,6 +4,7 @@ import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
+import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import io.github.ciurlaro.codexmobile.core.deriveConversationTitle
@@ -40,16 +41,20 @@ internal fun conversationMessage(rawItem: JsonElement): AgentMessage? {
     val item = rawItem.jsonObject
     return when (item.requiredString("type")) {
         "userMessage" -> {
-            val prompts = item.requiredArray("content").mapNotNull { content ->
-                content.jsonObject.takeIf { it.optionalString("type") == "text" }?.let(::parsePrompt)
+            val content = item.requiredArray("content").map(JsonElement::jsonObject)
+            val invocations = content.mapNotNull(::parseInvocation).distinctBy(AgentInvocation::key)
+            val prompts = content.mapNotNull { input ->
+                input.takeIf { it.optionalString("type") == "text" }
+                    ?.let { parsePrompt(it, invocations) }
             }
-            if (prompts.isEmpty()) return null
+            if (prompts.isEmpty() && invocations.isEmpty()) return null
             AgentMessage(
                 id = item.requiredString("id"),
                 clientId = item.optionalString("clientId"),
                 role = AgentMessageRole.USER,
                 text = prompts.joinToString("\n", transform = ParsedPrompt::text),
                 capabilities = prompts.flatMap(ParsedPrompt::capabilities).toSet(),
+                invocations = invocations,
             )
         }
 
@@ -66,7 +71,16 @@ internal fun conversationMessage(rawItem: JsonElement): AgentMessage? {
 
 internal fun turnInput(request: AgentTurnRequest): JsonArray {
     val capabilities = request.capabilities.sortedBy(AgentCapability::id)
-    val tagBlock = capabilities.joinToString("\n", transform = AgentCapability::promptLabel)
+    val invocations = request.invocations.distinctBy(AgentInvocation::key)
+    val tagBlock = buildList {
+        addAll(capabilities.map(AgentCapability::promptLabel))
+        addAll(invocations.map {
+            when (it) {
+                is AgentInvocation.Skill -> "\$${it.name}"
+                is AgentInvocation.Plugin -> "@${it.name}"
+            }
+        })
+    }.joinToString("\n")
     val text = when {
         tagBlock.isEmpty() -> request.prompt
         request.prompt.isBlank() -> tagBlock
@@ -102,10 +116,14 @@ internal fun turnInput(request: AgentTurnRequest): JsonArray {
                 }
             },
         )
+        invocations.forEach { add(invocationInput(it)) }
     }
 }
 
-internal fun parsePrompt(input: JsonObject): ParsedPrompt {
+internal fun parsePrompt(
+    input: JsonObject,
+    invocations: List<AgentInvocation> = emptyList(),
+): ParsedPrompt {
     val text = input.requiredText("text")
     val bytes = text.toByteArray(StandardCharsets.UTF_8)
     val capabilities = input.optionalArray("text_elements").mapNotNull { rawElement ->
@@ -123,8 +141,15 @@ internal fun parsePrompt(input: JsonObject): ParsedPrompt {
             }
         }.getOrNull()
     }.toSet()
-    val tagBlock = capabilities.sortedBy(AgentCapability::id)
-        .joinToString("\n", transform = AgentCapability::promptLabel)
+    val tagBlock = buildList {
+        addAll(capabilities.sortedBy(AgentCapability::id).map(AgentCapability::promptLabel))
+        addAll(invocations.map {
+            when (it) {
+                is AgentInvocation.Skill -> "\$${it.name}"
+                is AgentInvocation.Plugin -> "@${it.name}"
+            }
+        })
+    }.joinToString("\n")
     val visibleText = when {
         tagBlock.isEmpty() -> text
         text == tagBlock -> ""

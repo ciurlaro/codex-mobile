@@ -44,7 +44,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.ciurlaro.codexmobile.core.AgentCapability
-import kotlinx.coroutines.flow.drop
+import io.github.ciurlaro.codexmobile.core.AgentInvocation
 
 @Composable
 internal fun Composer(
@@ -53,10 +53,12 @@ internal fun Composer(
 ) {
     var focused by remember { mutableStateOf(false) }
     val shellMode = state.draft.startsWith('!')
-    val expanded = focused || state.draft.contains('\n') || state.selectedCapabilities.isNotEmpty()
+    val expanded = focused || state.draft.contains('\n') || state.selectedCapabilities.isNotEmpty() ||
+        state.selectedInvocations.isNotEmpty()
     val canSend = state.isAuthenticated &&
         if (shellMode) state.draft.drop(1).isNotBlank()
-        else state.draft.isNotBlank() || state.selectedCapabilities.isNotEmpty()
+        else state.draft.isNotBlank() || state.selectedCapabilities.isNotEmpty() ||
+            state.selectedInvocations.isNotEmpty()
     val composerColor by animateColorAsState(
         if (shellMode) Color(0xFF182433) else ChatColors.Elevated,
         label = "composer-mode",
@@ -85,6 +87,10 @@ internal fun Composer(
         }
         state.selectedCapabilities.forEach { capability ->
             CapabilityChip(capability) { onEvent(ChatUiEvent.RemoveCapability(capability)) }
+            Spacer(Modifier.height(4.dp))
+        }
+        state.selectedInvocations.forEach { invocation ->
+            InvocationChip(invocation) { onEvent(ChatUiEvent.RemoveInvocation(invocation.key)) }
             Spacer(Modifier.height(4.dp))
         }
         BasicTextField(
@@ -127,6 +133,7 @@ internal fun Composer(
                 }
             },
         )
+        InvocationSuggestions(state, onEvent)
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -156,6 +163,53 @@ internal fun Composer(
             }
         }
     }
+}
+
+@Composable
+private fun InvocationSuggestions(state: MainUiState, onEvent: (ChatUiEvent) -> Unit) {
+    val suggestions = state.suggestedInvocations()
+    if (suggestions.isEmpty()) return
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(ChatColors.ElevatedStrong, RoundedCornerShape(ChatDimensions.ControlCorner))
+            .padding(vertical = 4.dp),
+    ) {
+        suggestions.forEach { invocation ->
+            Text(
+                text = invocationLabel(invocation),
+                modifier = Modifier.fillMaxWidth().clickable {
+                    onEvent(ChatUiEvent.AddInvocation(invocation))
+                }.padding(horizontal = 14.dp, vertical = 11.dp),
+                color = ChatColors.Primary,
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+    }
+}
+
+@Composable
+private fun InvocationChip(invocation: AgentInvocation, onRemove: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .heightIn(min = ChatDimensions.TouchTarget)
+            .background(ChatColors.ElevatedStrong, RoundedCornerShape(ChatDimensions.ControlCorner))
+            .padding(start = 14.dp, end = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(invocationLabel(invocation), color = ChatColors.Accent, style = MaterialTheme.typography.labelLarge)
+        IconButton(
+            onClick = onRemove,
+            modifier = Modifier.size(ChatDimensions.TouchTarget).semantics {
+                contentDescription = "Remove ${invocation.name}"
+            },
+        ) { AppIcon(IconGlyph.CLOSE, Modifier.size(18.dp), ChatColors.Secondary) }
+    }
+}
+
+private fun invocationLabel(invocation: AgentInvocation): String = when (invocation) {
+    is AgentInvocation.Skill -> "\$${invocation.name}"
+    is AgentInvocation.Plugin -> "@${invocation.name}"
 }
 
 @Composable

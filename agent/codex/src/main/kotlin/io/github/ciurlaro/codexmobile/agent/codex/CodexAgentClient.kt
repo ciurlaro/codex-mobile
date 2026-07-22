@@ -2,13 +2,25 @@ package io.github.ciurlaro.codexmobile.agent.codex
 
 import io.github.ciurlaro.codexmobile.core.AgentClient
 import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentConnector
 import io.github.ciurlaro.codexmobile.core.AgentConversation
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
+import io.github.ciurlaro.codexmobile.core.AgentElicitationAction
+import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentFormValue
+import io.github.ciurlaro.codexmobile.core.AgentInvocation
+import io.github.ciurlaro.codexmobile.core.AgentMcpServer
 import io.github.ciurlaro.codexmobile.core.AgentModel
 import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
+import io.github.ciurlaro.codexmobile.core.AgentPluginAuthPolicy
+import io.github.ciurlaro.codexmobile.core.AgentPluginCatalog
+import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
+import io.github.ciurlaro.codexmobile.core.AgentPluginInstallResult
+import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentServiceTier
+import io.github.ciurlaro.codexmobile.core.AgentSkillCatalog
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
 import io.github.ciurlaro.codexmobile.core.SessionId
@@ -22,8 +34,11 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -42,6 +57,7 @@ class CodexAgentClient(
     private val loginStateLock = Any()
     private val cancelledLoginIds = mutableSetOf<String>()
     private val pendingApprovalRequests = ConcurrentHashMap<String, JsonElement>()
+    private val pendingElicitationRequests = ConcurrentHashMap<String, JsonElement>()
     private val workItems = ConcurrentHashMap<String, Pair<SessionId, AgentWorkActivity>>()
     private val userShellItems = ConcurrentHashMap.newKeySet<String>()
     private val openedSessions = ConcurrentHashMap.newKeySet<SessionId>()
@@ -197,6 +213,117 @@ class CodexAgentClient(
         )
     }
 
+    override suspend fun listSkills(
+        workingDirectory: String,
+        forceReload: Boolean,
+    ): AgentSkillCatalog {
+        require(workingDirectory.startsWith('/')) { "Working directory must be absolute" }
+        val result = request(
+            "skills/list",
+            buildJsonObject {
+                put("cwds", buildJsonArray { add(JsonPrimitive(workingDirectory)) })
+                put("forceReload", forceReload)
+            },
+        ).jsonObject
+        val entries = result.requiredArray("data").map(JsonElement::jsonObject)
+        return AgentSkillCatalog(
+            skills = entries.flatMap { it.requiredArray("skills") }.map { parseSkill(it.jsonObject) }
+                .distinctBy { it.path },
+            errors = entries.flatMap { it.requiredArray("errors") }.map { error ->
+                error.jsonObject.let { "${it.requiredString("path")}: ${it.requiredText("message")}" }
+            },
+        )
+    }
+
+    override suspend fun setSkillEnabled(path: String, enabled: Boolean) {
+        require(path.startsWith('/')) { "Skill path must be absolute" }
+        request(
+            "skills/config/write",
+            buildJsonObject {
+                put("path", path)
+                put("enabled", enabled)
+            },
+        )
+    }
+
+    override suspend fun listPlugins(workingDirectory: String): AgentPluginCatalog {
+        require(workingDirectory.startsWith('/')) { "Working directory must be absolute" }
+        val params = buildJsonObject {
+            put("cwds", buildJsonArray { add(JsonPrimitive(workingDirectory)) })
+        }
+        val catalog = request("plugin/list", params).jsonObject
+        val installed = request("plugin/installed", params).jsonObject
+        val byId = linkedMapOf<String, io.github.ciurlaro.codexmobile.core.AgentPluginSummary>()
+        (parsePluginMarketplaces(catalog) + parsePluginMarketplaces(installed)).forEach {
+            val previous = byId[it.reference.id]
+            if (previous == null || it.installed) byId[it.reference.id] = it
+        }
+        val errors = (catalog.optionalArray("marketplaceLoadErrors") +
+            installed.optionalArray("marketplaceLoadErrors")).mapNotNull { raw ->
+            raw.jsonObject.optionalString("message")
+        }.distinct()
+        return AgentPluginCatalog(byId.values.toList(), errors)
+    }
+
+    override suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail {
+        requireOfficial(plugin)
+        return parsePluginDetail(request("plugin/read", pluginParams(plugin)).jsonObject)
+    }
+
+    override suspend fun installPlugin(plugin: AgentPluginReference): AgentPluginInstallResult {
+        requireOfficial(plugin)
+        val result = request("plugin/install", pluginParams(plugin)).jsonObject
+        return AgentPluginInstallResult(
+            authPolicy = enumValueOf(result.requiredString("authPolicy")),
+            connectorsNeedingAuthentication = result.requiredArray("appsNeedingAuth").map {
+                parseConnector(it.jsonObject)
+            },
+        )
+    }
+
+    override suspend fun uninstallPlugin(pluginId: String) {
+        require(pluginId.isNotBlank()) { "Plugin ID must not be blank" }
+        request("plugin/uninstall", buildJsonObject { put("pluginId", pluginId) })
+    }
+
+    override suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) {
+        require(pluginId.isNotBlank() && '.' !in pluginId) { "Invalid plugin ID" }
+        request(
+            "config/value/write",
+            buildJsonObject {
+                put("keyPath", "plugins.$pluginId.enabled")
+                put("value", enabled)
+                put("mergeStrategy", "upsert")
+            },
+        )
+    }
+
+    override suspend fun listConnectors(
+        sessionId: SessionId?,
+        forceReload: Boolean,
+    ): List<AgentConnector> = requestAllPages(
+        "app/list",
+        buildJsonObject {
+            sessionId?.let { put("threadId", it.value) }
+            put("forceRefetch", forceReload)
+        },
+        ::parseConnector,
+    )
+
+    override suspend fun listMcpServers(): List<AgentMcpServer> =
+        requestAllPages("mcpServerStatus/list", transform = ::parseMcpServer)
+
+    override suspend fun startMcpOauth(serverName: String, sessionId: SessionId?): String {
+        require(serverName.isNotBlank()) { "MCP server name must not be blank" }
+        return request(
+            "mcpServer/oauth/login",
+            buildJsonObject {
+                put("name", serverName)
+                sessionId?.let { put("threadId", it.value) }
+            },
+        ).jsonObject.requiredString("authorizationUrl").also(::requireSafeAuthUrl)
+    }
+
     override suspend fun listSessions(): List<AgentConversationSummary> = requestAllPages(
         "thread/list",
         buildJsonObject {
@@ -273,15 +400,27 @@ class CodexAgentClient(
                     put("shell_tool", true)
                     put("code_mode", false)
                     put("multi_agent", false)
-                    put("apps", false)
-                    put("enable_mcp_apps", false)
-                    put("plugins", false)
+                    put("apps", true)
+                    put("enable_mcp_apps", true)
+                    put("plugins", true)
                     put("image_generation", false)
                     put("goals", false)
                     put("hooks", false)
                     put("skill_mcp_dependency_install", false)
                     put("workspace_dependencies", false)
                     put("standalone_web_search", false)
+                }
+                putJsonObject("shell_environment_policy") {
+                    put("inherit", "all")
+                    put(
+                        "exclude",
+                        buildJsonArray {
+                            listOf(
+                                "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                                "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+                            ).forEach { add(JsonPrimitive(it)) }
+                        },
+                    )
                 }
             }
         }
@@ -300,8 +439,14 @@ class CodexAgentClient(
     }
 
     override suspend fun sendTurn(sessionId: SessionId, request: AgentTurnRequest) {
-        val snapshot = request.copy(capabilities = request.capabilities.toSet())
-        require(snapshot.prompt.isNotBlank() || snapshot.capabilities.isNotEmpty()) {
+        val snapshot = request.copy(
+            capabilities = request.capabilities.toSet(),
+            invocations = request.invocations.distinctBy(AgentInvocation::key),
+        )
+        require(
+            snapshot.prompt.isNotBlank() || snapshot.capabilities.isNotEmpty() ||
+                snapshot.invocations.isNotEmpty(),
+        ) {
             "Prompt must not be blank"
         }
         require(snapshot.prompt.length <= MAX_PROMPT_CHARS) { "Prompt is too large" }
@@ -411,9 +556,19 @@ class CodexAgentClient(
         )
     }
 
+    override suspend fun resolveElicitation(
+        requestId: String,
+        response: AgentElicitationResponse,
+    ) {
+        val wireId = pendingElicitationRequests.remove(requestId)
+            ?: error("Elicitation request is no longer pending")
+        connection.respond(wireId, elicitationResponse(response))
+    }
+
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
         pendingApprovalRequests.clear()
+        pendingElicitationRequests.clear()
         workItems.clear()
         userShellItems.clear()
         openedSessions.clear()
@@ -432,7 +587,33 @@ class CodexAgentClient(
             handleApprovalRequest(id, method, rawParams)
             return
         }
+        if (method == "mcpServer/elicitation/request") {
+            handleElicitationRequest(id, rawParams)
+            return
+        }
         rejectServerRequest(id, method)
+    }
+
+    private fun handleElicitationRequest(id: JsonElement, rawParams: JsonElement?) {
+        val elicitation = runCatching {
+            val params = rawParams as? JsonObject ?: error("Elicitation params are missing")
+            val requestId = id.toString()
+            val parsed = parseElicitation(requestId, params)
+            check(parsed.sessionId in openedSessions) { "Elicitation session is not open" }
+            check(pendingElicitationRequests.putIfAbsent(requestId, id) == null) {
+                "Elicitation request ID is already pending"
+            }
+            parsed
+        }.getOrElse {
+            runBlocking {
+                connection.respond(
+                    id,
+                    buildJsonObject { put("action", "decline") },
+                )
+            }
+            return
+        }
+        emitBlocking(AgentEvent.ElicitationRequested(elicitation))
     }
 
     private fun handleApprovalRequest(
@@ -506,6 +687,18 @@ class CodexAgentClient(
                     emitBlockingAuthenticated()
                 }
             }
+
+            "skills/changed" -> emitBlocking(AgentEvent.SkillsChanged)
+
+            "app/list/updated" -> emitBlocking(AgentEvent.ConnectorsChanged)
+
+            "mcpServer/oauthLogin/completed" -> emitBlocking(
+                AgentEvent.McpOauthCompleted(
+                    serverName = params.requiredString("name"),
+                    success = params.requiredBoolean("success"),
+                    error = params.optionalString("error"),
+                ),
+            )
 
             "item/agentMessage/delta" -> {
                 val sessionId = SessionId(params.requiredString("threadId"))
@@ -666,6 +859,7 @@ class CodexAgentClient(
             cancellingTurns.clear()
         }
         pendingApprovalRequests.clear()
+        pendingElicitationRequests.clear()
         workItems.clear()
         userShellItems.clear()
         openedSessions.clear()
@@ -693,6 +887,37 @@ class CodexAgentClient(
             check(cursor == null || seenCursors.add(cursor)) { "App-server repeated a pagination cursor" }
         } while (cursor != null)
         return values
+    }
+
+    private fun pluginParams(plugin: AgentPluginReference) = buildJsonObject {
+        put("pluginName", plugin.name)
+        plugin.marketplacePath?.let { put("marketplacePath", it) }
+            ?: put("remoteMarketplaceName", plugin.marketplaceName)
+    }
+
+    private fun requireOfficial(plugin: AgentPluginReference) {
+        require(plugin.marketplaceName in OFFICIAL_MARKETPLACES) {
+            "Only official OpenAI marketplaces are supported"
+        }
+    }
+
+    private fun elicitationResponse(response: AgentElicitationResponse) = buildJsonObject {
+        put("action", response.action.name.lowercase())
+        if (response.action == AgentElicitationAction.ACCEPT) {
+            putJsonObject("content") {
+                response.content.forEach { (name, value) ->
+                    put(
+                        name,
+                        when (value) {
+                            is AgentFormValue.Text -> JsonPrimitive(value.value)
+                            is AgentFormValue.Number -> JsonPrimitive(value.value)
+                            is AgentFormValue.BooleanValue -> JsonPrimitive(value.value)
+                            is AgentFormValue.TextList -> JsonArray(value.value.map(::JsonPrimitive))
+                        },
+                    )
+                }
+            }
+        }
     }
 
     private data class LoginCompletion(

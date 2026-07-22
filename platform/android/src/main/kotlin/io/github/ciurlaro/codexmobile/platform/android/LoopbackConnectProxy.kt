@@ -4,6 +4,8 @@ import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
+import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
@@ -87,12 +89,18 @@ internal class LoopbackConnectProxy : AutoCloseable {
             val authority = lines.first().split(' ').getOrNull(1).orEmpty()
             val destination = runCatching { URI("https://$authority") }.getOrNull()
             val host = destination?.host
-            if (host == null || destination.port != 443 || !host.isAllowedCodexHost()) {
+            val addresses = host?.let { runCatching { InetAddress.getAllByName(it).toList() }.getOrNull() }
+            if (
+                host == null || destination.port != 443 || addresses.isNullOrEmpty() ||
+                addresses.any { !it.isPublicProxyAddress() }
+            ) {
                 respond(client, 403, "Forbidden")
                 return
             }
 
-            upstream = Socket().apply { connect(InetSocketAddress(host, 443), CONNECT_TIMEOUT_MILLIS) }
+            upstream = Socket().apply {
+                connect(InetSocketAddress(addresses.first(), 443), CONNECT_TIMEOUT_MILLIS)
+            }
             sockets += upstream
             client.soTimeout = 0
             respond(client, 200, "Connection Established")
@@ -158,16 +166,38 @@ internal class LoopbackConnectProxy : AutoCloseable {
         workers.shutdownNow()
     }
 
-    private fun String.isAllowedCodexHost(): Boolean {
-        val normalized = lowercase()
-        return normalized == "openai.com" || normalized.endsWith(".openai.com") ||
-            normalized == "chatgpt.com" || normalized.endsWith(".chatgpt.com")
-    }
-
     private companion object {
         const val LOOPBACK = "127.0.0.1"
         const val CONNECT_TIMEOUT_MILLIS = 20_000
         const val MAX_HEADER_BYTES = 16 * 1024
         val HEADER_END = byteArrayOf('\r'.code.toByte(), '\n'.code.toByte(), '\r'.code.toByte(), '\n'.code.toByte())
+    }
+}
+
+internal fun InetAddress.isPublicProxyAddress(): Boolean {
+    if (
+        isAnyLocalAddress || isLoopbackAddress || isLinkLocalAddress || isSiteLocalAddress ||
+        isMulticastAddress
+    ) return false
+    val bytes = address.map(Byte::toInt).map { it and 0xff }
+    return when (this) {
+        is Inet4Address -> when {
+            bytes[0] == 0 || bytes[0] == 10 || bytes[0] == 127 || bytes[0] >= 224 -> false
+            bytes[0] == 100 && bytes[1] in 64..127 -> false
+            bytes[0] == 169 && bytes[1] == 254 -> false
+            bytes[0] == 172 && bytes[1] in 16..31 -> false
+            bytes[0] == 192 && bytes[1] == 168 -> false
+            bytes[0] == 192 && bytes[1] == 0 && bytes[2] in setOf(0, 2) -> false
+            bytes[0] == 198 && bytes[1] in 18..19 -> false
+            bytes[0] == 198 && bytes[1] == 51 && bytes[2] == 100 -> false
+            bytes[0] == 203 && bytes[1] == 0 && bytes[2] == 113 -> false
+            else -> true
+        }
+        is Inet6Address -> {
+            val uniqueLocal = bytes[0] and 0xfe == 0xfc
+            val documentation = bytes.take(4) == listOf(0x20, 0x01, 0x0d, 0xb8)
+            !uniqueLocal && !documentation
+        }
+        else -> false
     }
 }

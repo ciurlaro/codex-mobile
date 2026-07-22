@@ -6,9 +6,14 @@ import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
+import io.github.ciurlaro.codexmobile.core.AgentInvocation
+import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
 import io.github.ciurlaro.codexmobile.core.SessionId
 
-enum class AppScreen { CHAT, SETTINGS }
+enum class AppScreen { CHAT, SETTINGS, CAPABILITIES }
+
+enum class CapabilityTab { SKILLS, PLUGINS }
 
 enum class ChatSelector { TAGS, EFFORT, MODEL, SPEED, APPROVAL }
 
@@ -18,6 +23,10 @@ sealed interface ChatUiEvent {
     data object StartNewChat : ChatUiEvent
     data object OpenSettings : ChatUiEvent
     data object CloseSettings : ChatUiEvent
+    data object OpenCapabilities : ChatUiEvent
+    data object CloseCapabilities : ChatUiEvent
+    data object RefreshCapabilities : ChatUiEvent
+    data object ClosePluginDetails : ChatUiEvent
     data class OpenSelector(val selector: ChatSelector) : ChatUiEvent
     data object DismissSelector : ChatUiEvent
     data object Send : ChatUiEvent
@@ -45,6 +54,19 @@ sealed interface ChatUiEvent {
     data class SelectEffort(val effort: String) : ChatUiEvent
     data class SelectSpeed(val tier: String?) : ChatUiEvent
     data class SelectApproval(val preset: AgentApprovalPreset) : ChatUiEvent
+    data class SelectCapabilityTab(val tab: CapabilityTab) : ChatUiEvent
+    data class SearchCapabilities(val query: String) : ChatUiEvent
+    data class ToggleSkill(val path: String, val enabled: Boolean) : ChatUiEvent
+    data class OpenPlugin(val plugin: AgentPluginReference) : ChatUiEvent
+    data class InstallPlugin(val plugin: AgentPluginReference) : ChatUiEvent
+    data class UninstallPlugin(val pluginId: String) : ChatUiEvent
+    data class TogglePlugin(val pluginId: String, val enabled: Boolean) : ChatUiEvent
+    data class ConnectApp(val connectorId: String) : ChatUiEvent
+    data class ConnectMcp(val serverName: String) : ChatUiEvent
+    data class ResolveElicitation(
+        val requestId: String,
+        val response: AgentElicitationResponse,
+    ) : ChatUiEvent
     data class ConnectTelegram(val phoneNumber: String) : ChatUiEvent
     data class SubmitTelegramAuthentication(val value: String) : ChatUiEvent
     data class ResolveCodexApproval(
@@ -53,6 +75,8 @@ sealed interface ChatUiEvent {
     ) : ChatUiEvent
     data class AddCapability(val capability: AgentCapability) : ChatUiEvent
     data class RemoveCapability(val capability: AgentCapability) : ChatUiEvent
+    data class AddInvocation(val invocation: AgentInvocation) : ChatUiEvent
+    data class RemoveInvocation(val key: String) : ChatUiEvent
 }
 
 data class ChatMessage(
@@ -60,6 +84,7 @@ data class ChatMessage(
     val role: AgentMessageRole,
     val text: String,
     val capabilities: Set<AgentCapability> = emptySet(),
+    val invocations: List<AgentInvocation> = emptyList(),
     val model: String? = null,
     val effort: String? = null,
     val isStreaming: Boolean = false,
@@ -69,6 +94,33 @@ data class ChatMessage(
 
 internal fun String.shellCommandOrNull(): String? =
     takeIf { it.startsWith('!') }?.drop(1)?.trim()
+
+internal fun String.withoutActiveInvocationToken(invocation: AgentInvocation): String {
+    val marker = if (invocation is AgentInvocation.Skill) '$' else '@'
+    val match = Regex("(?:^|\\s)([@${'$'}])[A-Za-z0-9_-]*${'$'}").find(this) ?: return this
+    if (match.groupValues[1].singleOrNull() != marker) return this
+    val markerIndex = match.range.first + match.value.indexOf(marker)
+    return removeRange(markerIndex, length).trimEnd()
+}
+
+internal fun MainUiState.suggestedInvocations(): List<AgentInvocation> {
+    if (draft.startsWith('!')) return emptyList()
+    val match = Regex("(?:^|\\s)([@${'$'}])([A-Za-z0-9_-]*)${'$'}").find(draft)
+        ?: return emptyList()
+    val marker = match.groupValues[1].single()
+    val query = match.groupValues[2]
+    if (marker == '@' && query.isEmpty()) return emptyList()
+    val matches = when (marker) {
+        '$' -> skills.asSequence().filter { it.enabled && it.name.startsWith(query, true) }
+            .map { AgentInvocation.Skill(it.name, it.path) }
+        '@' -> plugins.asSequence().filter {
+            it.installed && it.enabled && it.reference.name.startsWith(query, true)
+        }.map { AgentInvocation.Plugin(it.reference.name, it.reference.uri) }
+        else -> emptySequence()
+    }
+    return matches.filter { candidate -> selectedInvocations.none { it.key == candidate.key } }
+        .take(5).toList()
+}
 
 private val bareTaskMarker = Regex("""^(\s*)(\[[ xX]])(?=\s|$)""")
 
@@ -108,6 +160,7 @@ internal fun AgentMessage.toChatMessage(): ChatMessage = ChatMessage(
     role = role,
     text = text,
     capabilities = capabilities,
+    invocations = invocations,
 )
 
 internal fun effortLabel(value: String): String = when (value.lowercase()) {

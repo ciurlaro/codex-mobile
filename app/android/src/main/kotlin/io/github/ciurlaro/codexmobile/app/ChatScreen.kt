@@ -151,6 +151,7 @@ internal fun CodexMobileApp(
                 when (state.screen) {
                     AppScreen.CHAT -> ChatDrawer(state, onEvent)
                     AppScreen.SETTINGS -> SettingsScreen(state, onEvent)
+                    AppScreen.CAPABILITIES -> CapabilitiesScreen(state, onEvent)
                 }
                 if (state.activeSelector != null) {
                     SelectorOverlay(
@@ -163,12 +164,13 @@ internal fun CodexMobileApp(
         }
         BackHandler(
             enabled = state.activeSelector != null || state.isHistoryOpen ||
-                state.screen == AppScreen.SETTINGS,
+                state.screen != AppScreen.CHAT,
         ) {
             when {
                 state.activeSelector != null -> onEvent(ChatUiEvent.DismissSelector)
                 state.isHistoryOpen -> onEvent(ChatUiEvent.CloseHistory)
                 state.screen == AppScreen.SETTINGS -> onEvent(ChatUiEvent.CloseSettings)
+                state.screen == AppScreen.CAPABILITIES -> onEvent(ChatUiEvent.CloseCapabilities)
             }
         }
     }

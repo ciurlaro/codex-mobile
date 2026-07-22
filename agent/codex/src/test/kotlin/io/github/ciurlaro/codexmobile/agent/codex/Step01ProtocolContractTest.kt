@@ -143,9 +143,6 @@ class Step01ProtocolContractTest {
             listOf(
                 "code_mode",
                 "multi_agent",
-                "apps",
-                "enable_mcp_apps",
-                "plugins",
                 "image_generation",
                 "goals",
                 "hooks",
@@ -154,7 +151,15 @@ class Step01ProtocolContractTest {
             ).forEach { feature ->
                 assertEquals(false, features[feature]!!.jsonPrimitive.content.toBoolean())
             }
+            listOf("apps", "enable_mcp_apps", "plugins").forEach { feature ->
+                assertEquals(true, features[feature]!!.jsonPrimitive.content.toBoolean())
+            }
             assertEquals(true, features["shell_tool"]!!.jsonPrimitive.content.toBoolean())
+            val shellEnvironment = config["shell_environment_policy"]!!.jsonObject
+            assertEquals("all", shellEnvironment["inherit"]!!.jsonPrimitive.content)
+            assertTrue(
+                "HTTPS_PROXY" in shellEnvironment["exclude"]!!.jsonArray.map { it.jsonPrimitive.content },
+            )
         } finally {
             client.close()
         }

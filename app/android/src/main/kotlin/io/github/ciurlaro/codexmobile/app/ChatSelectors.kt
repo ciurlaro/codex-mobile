@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentModel
+import io.github.ciurlaro.codexmobile.core.AgentInvocation
 
 @Composable
 internal fun SelectorOverlay(
@@ -272,7 +273,7 @@ private fun TagSelector(
             .padding(vertical = 12.dp),
     ) {
         Text(
-            "Prompt tags",
+            "Add to prompt",
             color = ChatColors.Secondary,
             style = MaterialTheme.typography.labelLarge,
             modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
@@ -284,9 +285,50 @@ private fun TagSelector(
                 onClick = { onEvent(ChatUiEvent.AddCapability(capability)) },
             )
         }
-        if (tags.isEmpty()) {
+        val skills = state.skills.filter { skill ->
+            skill.enabled && state.selectedInvocations.none { it.key == "skill:${skill.path}" }
+        }
+        if (skills.isNotEmpty()) {
             Text(
-                "All available tags are already added",
+                "Skills",
+                color = ChatColors.Secondary,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            skills.forEach { skill ->
+                val invocation = AgentInvocation.Skill(skill.name, skill.path)
+                SelectorRow(
+                    title = "\$${skill.name}",
+                    subtitle = skill.description,
+                    selected = false,
+                    onClick = { onEvent(ChatUiEvent.AddInvocation(invocation)) },
+                )
+            }
+        }
+        val plugins = state.plugins.filter { plugin ->
+            plugin.installed && plugin.enabled &&
+                state.selectedInvocations.none { it.key == "plugin:${plugin.reference.uri}" }
+        }
+        if (plugins.isNotEmpty()) {
+            Text(
+                "Plugins",
+                color = ChatColors.Secondary,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            )
+            plugins.forEach { plugin ->
+                val invocation = AgentInvocation.Plugin(plugin.reference.name, plugin.reference.uri)
+                SelectorRow(
+                    title = "@${plugin.displayName}",
+                    subtitle = plugin.description,
+                    selected = false,
+                    onClick = { onEvent(ChatUiEvent.AddInvocation(invocation)) },
+                )
+            }
+        }
+        if (tags.isEmpty() && skills.isEmpty() && plugins.isEmpty()) {
+            Text(
+                "All available items are already added",
                 color = ChatColors.Secondary,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
             )

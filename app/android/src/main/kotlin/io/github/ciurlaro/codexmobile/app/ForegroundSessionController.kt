@@ -4,9 +4,19 @@ import io.github.ciurlaro.codexmobile.core.AgentClient
 import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
 import io.github.ciurlaro.codexmobile.core.AgentConversation
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
+import io.github.ciurlaro.codexmobile.core.AgentConnector
+import io.github.ciurlaro.codexmobile.core.AgentElicitation
+import io.github.ciurlaro.codexmobile.core.AgentElicitationAction
+import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentMcpServer
 import io.github.ciurlaro.codexmobile.core.AgentModel
+import io.github.ciurlaro.codexmobile.core.AgentPluginCatalog
+import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
+import io.github.ciurlaro.codexmobile.core.AgentPluginInstallResult
+import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
+import io.github.ciurlaro.codexmobile.core.AgentSkillCatalog
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
 import io.github.ciurlaro.codexmobile.core.SessionId
@@ -34,6 +44,11 @@ internal data class ForegroundSessionState(
     val signInUrl: String? = null,
     val isTurnActive: Boolean = false,
     val pendingApproval: AgentEvent.ApprovalRequested? = null,
+    val pendingElicitation: AgentElicitation? = null,
+    val skillsRevision: Int = 0,
+    val connectorsRevision: Int = 0,
+    val oauthCompletion: AgentEvent.McpOauthCompleted? = null,
+    val externalOperation: String? = null,
     val workActivity: AgentWorkActivity? = null,
     val attentionRequired: Boolean = false,
     val diagnosticCode: String? = null,
@@ -85,7 +100,7 @@ internal class ForegroundSessionController(
     }
 
     fun submit(request: AgentTurnRequest): Boolean {
-        if (request.prompt.isBlank() && request.capabilities.isEmpty()) {
+        if (request.prompt.isBlank() && request.capabilities.isEmpty() && request.invocations.isEmpty()) {
             mutableState.update { it.copy(statusMessage = "Enter a prompt first") }
             return false
         }
@@ -155,6 +170,13 @@ internal class ForegroundSessionController(
         launchVisibleFailure { agentClient.resolveApproval(requestId, decision) }
     }
 
+    fun resolveElicitation(requestId: String, response: AgentElicitationResponse) {
+        val pending = state.value.pendingElicitation ?: return
+        if (pending.requestId != requestId || closed.get()) return
+        mutableState.update { it.copy(pendingElicitation = null, attentionRequired = false) }
+        launchVisibleFailure { agentClient.resolveElicitation(requestId, response) }
+    }
+
     fun startNewChat(): Boolean {
         if (!state.value.isAuthenticated || state.value.isTurnActive || closed.get()) return false
         mutableState.update {
@@ -182,6 +204,37 @@ internal class ForegroundSessionController(
     }
 
     suspend fun listModels(): List<AgentModel> = agentClient.listModels()
+
+    suspend fun listSkills(workingDirectory: String, forceReload: Boolean = false): AgentSkillCatalog =
+        agentClient.listSkills(workingDirectory, forceReload)
+
+    suspend fun setSkillEnabled(path: String, enabled: Boolean) =
+        runExternalOperation("Updating skill") { agentClient.setSkillEnabled(path, enabled) }
+
+    suspend fun listPlugins(workingDirectory: String): AgentPluginCatalog =
+        agentClient.listPlugins(workingDirectory)
+
+    suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail =
+        agentClient.readPlugin(plugin)
+
+    suspend fun installPlugin(plugin: AgentPluginReference): AgentPluginInstallResult =
+        runExternalOperation("Installing ${plugin.name}") { agentClient.installPlugin(plugin) }
+
+    suspend fun uninstallPlugin(pluginId: String) =
+        runExternalOperation("Removing plugin") { agentClient.uninstallPlugin(pluginId) }
+
+    suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) =
+        runExternalOperation("Updating plugin") { agentClient.setPluginEnabled(pluginId, enabled) }
+
+    suspend fun listConnectors(forceReload: Boolean = false): List<AgentConnector> =
+        agentClient.listConnectors(state.value.sessionId, forceReload)
+
+    suspend fun listMcpServers(): List<AgentMcpServer> = agentClient.listMcpServers()
+
+    suspend fun startMcpOauth(serverName: String): String =
+        runExternalOperation("Connecting to $serverName") {
+            agentClient.startMcpOauth(serverName, state.value.sessionId)
+        }
 
     suspend fun listConversations(): List<AgentConversationSummary> = agentClient.listSessions()
 
@@ -218,6 +271,7 @@ internal class ForegroundSessionController(
                 signInUrl = null,
                 isTurnActive = false,
                 pendingApproval = null,
+                pendingElicitation = null,
                 workActivity = null,
                 diagnosticCode = null,
             )
@@ -253,6 +307,7 @@ internal class ForegroundSessionController(
                 signInUrl = null,
                 isTurnActive = false,
                 pendingApproval = null,
+                pendingElicitation = null,
                 workActivity = null,
                 diagnosticCode = null,
                 terminal = true,
@@ -325,6 +380,7 @@ internal class ForegroundSessionController(
                         signInUrl = null,
                         isTurnActive = false,
                         pendingApproval = null,
+                        pendingElicitation = null,
                         workActivity = null,
                         attentionRequired = true,
                         diagnosticCode = event.code,
@@ -351,6 +407,36 @@ internal class ForegroundSessionController(
             is AgentEvent.WorkActivityChanged -> mutableState.update {
                 if (it.sessionId == event.sessionId) it.copy(workActivity = event.activity) else it
             }
+
+            AgentEvent.SkillsChanged -> mutableState.update {
+                it.copy(skillsRevision = it.skillsRevision + 1)
+            }
+
+            AgentEvent.ConnectorsChanged -> mutableState.update {
+                it.copy(connectorsRevision = it.connectorsRevision + 1)
+            }
+
+            is AgentEvent.McpOauthCompleted -> mutableState.update {
+                it.copy(oauthCompletion = event, externalOperation = null)
+            }
+
+            is AgentEvent.ElicitationRequested -> mutableState.update {
+                if (it.pendingElicitation == null) {
+                    it.copy(
+                        statusMessage = "Information needed",
+                        pendingElicitation = event.elicitation,
+                        attentionRequired = true,
+                    )
+                } else {
+                    launchVisibleFailure {
+                        agentClient.resolveElicitation(
+                            event.elicitation.requestId,
+                            AgentElicitationResponse(AgentElicitationAction.DECLINE),
+                        )
+                    }
+                    it
+                }
+            }
         }
     }
 
@@ -366,6 +452,15 @@ internal class ForegroundSessionController(
                     it.copy(streamedText = it.streamedText + text.take(remaining) + TRUNCATION_MARKER)
                 }
             }
+        }
+    }
+
+    private suspend fun <T> runExternalOperation(label: String, block: suspend () -> T): T {
+        mutableState.update { it.copy(externalOperation = label) }
+        return try {
+            block()
+        } finally {
+            mutableState.update { it.copy(externalOperation = null) }
         }
     }
 

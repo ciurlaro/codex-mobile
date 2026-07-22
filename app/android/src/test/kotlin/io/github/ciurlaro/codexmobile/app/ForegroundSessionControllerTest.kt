@@ -6,10 +6,18 @@ import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
 import io.github.ciurlaro.codexmobile.core.AgentConversation
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentConnector
+import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
+import io.github.ciurlaro.codexmobile.core.AgentMcpServer
 import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentModel
+import io.github.ciurlaro.codexmobile.core.AgentPluginCatalog
+import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
+import io.github.ciurlaro.codexmobile.core.AgentPluginInstallResult
+import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
+import io.github.ciurlaro.codexmobile.core.AgentSkillCatalog
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import java.util.concurrent.CopyOnWriteArrayList
@@ -381,6 +389,28 @@ class ForegroundSessionControllerTest {
 
         override suspend fun listModels(): List<AgentModel> = emptyList()
 
+        override suspend fun listSkills(workingDirectory: String, forceReload: Boolean) =
+            AgentSkillCatalog(emptyList())
+
+        override suspend fun setSkillEnabled(path: String, enabled: Boolean) = Unit
+
+        override suspend fun listPlugins(workingDirectory: String) = AgentPluginCatalog(emptyList())
+
+        override suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail = error("unused")
+
+        override suspend fun installPlugin(plugin: AgentPluginReference): AgentPluginInstallResult = error("unused")
+
+        override suspend fun uninstallPlugin(pluginId: String) = Unit
+
+        override suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) = Unit
+
+        override suspend fun listConnectors(sessionId: SessionId?, forceReload: Boolean): List<AgentConnector> =
+            emptyList()
+
+        override suspend fun listMcpServers(): List<AgentMcpServer> = emptyList()
+
+        override suspend fun startMcpOauth(serverName: String, sessionId: SessionId?): String = error("unused")
+
         override suspend fun listSessions(): List<AgentConversationSummary> = listOf(SUMMARY)
 
         override suspend fun readSession(sessionId: SessionId): AgentConversation = CONVERSATION
@@ -400,6 +430,11 @@ class ForegroundSessionControllerTest {
         override suspend fun resolveApproval(
             requestId: String,
             decision: AgentApprovalDecision,
+        ) = Unit
+
+        override suspend fun resolveElicitation(
+            requestId: String,
+            response: AgentElicitationResponse,
         ) = Unit
 
         override fun close() {

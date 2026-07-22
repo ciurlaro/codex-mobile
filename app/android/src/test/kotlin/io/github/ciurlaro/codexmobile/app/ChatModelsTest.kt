@@ -4,10 +4,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
+import io.github.ciurlaro.codexmobile.core.AgentConnector
+import io.github.ciurlaro.codexmobile.core.AgentFormField
+import io.github.ciurlaro.codexmobile.core.AgentFormFieldType
+import io.github.ciurlaro.codexmobile.core.AgentFormValue
+import io.github.ciurlaro.codexmobile.core.AgentInvocation
+import io.github.ciurlaro.codexmobile.core.AgentPluginAuthPolicy
+import io.github.ciurlaro.codexmobile.core.AgentPluginInstallPolicy
+import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentPluginSummary
+import io.github.ciurlaro.codexmobile.core.AgentSkill
+import io.github.ciurlaro.codexmobile.core.AgentSkillScope
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertTrue
 
 class ChatModelsTest {
     @Test
@@ -118,5 +131,75 @@ class ChatModelsTest {
             emptyList(),
             messages.withStreamingAssistant("assistant", "", isStreaming = false, exitCode = null),
         )
+    }
+
+    @Test
+    fun invocationAutocompleteRespectsBoundariesMatchesAndDuplicates() {
+        val skill = AgentSkill("review", "Review", "Review code", "/skills/review/SKILL.md", AgentSkillScope.SYSTEM, true)
+        val plugin = AgentPluginSummary(
+            reference = AgentPluginReference("drive@openai-curated", "drive", "openai-curated"),
+            displayName = "Drive",
+            description = "Drive files",
+            installed = true,
+            enabled = true,
+            installPolicy = AgentPluginInstallPolicy.AVAILABLE,
+            authPolicy = AgentPluginAuthPolicy.ON_USE,
+            available = true,
+        )
+        val state = MainUiState(skills = listOf(skill), plugins = listOf(plugin))
+
+        assertEquals(listOf(AgentInvocation.Skill("review", skill.path)), state.copy(draft = "Use \$rev").suggestedInvocations())
+        assertEquals(listOf(AgentInvocation.Plugin("drive", plugin.reference.uri)), state.copy(draft = "@dri").suggestedInvocations())
+        assertEquals(emptyList(), state.copy(draft = "email@example.com").suggestedInvocations())
+        assertEquals(emptyList(), state.copy(draft = "@the_iurlix").suggestedInvocations())
+        assertEquals(emptyList(), state.copy(
+            draft = "\$rev",
+            selectedInvocations = listOf(AgentInvocation.Skill("review", skill.path)),
+        ).suggestedInvocations())
+    }
+
+    @Test
+    fun elicitationValidationRejectsMalformedAndOutOfRangeValues() {
+        val integer = AgentFormField(
+            name = "count",
+            title = "Count",
+            required = true,
+            type = AgentFormFieldType.INTEGER,
+            minimum = 1.0,
+            maximum = 5.0,
+        )
+
+        assertTrue(isValidElicitationAnswer(integer, AgentFormValue.Number(3.0)))
+        assertFalse(isValidElicitationAnswer(integer, AgentFormValue.Number(3.5)))
+        assertFalse(isValidElicitationAnswer(integer, AgentFormValue.Number(6.0)))
+        assertFalse(isValidElicitationAnswer(integer, AgentFormValue.Text("3")))
+    }
+
+    @Test
+    fun onUseAuthenticationOnlySelectsMatchingDisconnectedConnectors() {
+        val plugin = AgentPluginSummary(
+            reference = AgentPluginReference("drive@openai-curated", "drive", "openai-curated"),
+            displayName = "Drive",
+            description = "Drive files",
+            installed = true,
+            enabled = true,
+            installPolicy = AgentPluginInstallPolicy.AVAILABLE,
+            authPolicy = AgentPluginAuthPolicy.ON_USE,
+            available = true,
+        )
+        val disconnected = AgentConnector(
+            "connector",
+            "Drive",
+            installUrl = "https://example.com/connect",
+            pluginNames = listOf("Drive"),
+        )
+        val unrelated = AgentConnector("mail", "Mail", pluginNames = listOf("Mail"))
+        val state = MainUiState(
+            selectedInvocations = listOf(AgentInvocation.Plugin("drive", plugin.reference.uri)),
+            plugins = listOf(plugin),
+            connectors = listOf(disconnected, unrelated),
+        )
+
+        assertEquals(listOf(disconnected), state.connectorsNeedingOnUseAuthentication())
     }
 }

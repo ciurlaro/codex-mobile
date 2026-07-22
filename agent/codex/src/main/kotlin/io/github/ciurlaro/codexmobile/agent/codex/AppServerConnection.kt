@@ -121,6 +121,10 @@ internal class AppServerConnection(
                             put("title", "Codex Mobile")
                             put("version", clientVersion)
                         }
+                        putJsonObject("capabilities") {
+                            put("experimentalApi", true)
+                            put("mcpServerOpenaiFormElicitation", false)
+                        }
                     },
                 )
                 notify("initialized", buildJsonObject {})

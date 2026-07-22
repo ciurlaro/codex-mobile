@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
             var workspaceBrowserPath by rememberSaveable { mutableStateOf<String?>(null) }
             var pendingWorkspaceSelection by rememberSaveable { mutableStateOf(false) }
             var openedSignInUrl by rememberSaveable { mutableStateOf<String?>(null) }
+            var openedConnectorUrl by rememberSaveable { mutableStateOf<String?>(null) }
             fun openSignIn(rawUrl: String?) {
                 val signInUri = rawUrl?.toOfficialSignInUri()
                 if (signInUri == null) {
@@ -57,10 +58,53 @@ class MainActivity : ComponentActivity() {
             ) {
                 viewModel.authenticate()
             }
+            val connectorAuthentication = rememberLauncherForActivityResult(
+                ActivityResultContracts.StartActivityForResult(),
+            ) { result ->
+                openedConnectorUrl = null
+                viewModel.connectorAuthenticationFinished(result.resultCode == RESULT_OK)
+            }
+            val elicitationAuthentication = rememberLauncherForActivityResult(
+                ActivityResultContracts.StartActivityForResult(),
+            ) { result ->
+                state.pendingElicitation?.let { elicitation ->
+                    viewModel.resolveElicitation(
+                        elicitation.requestId,
+                        io.github.ciurlaro.codexmobile.core.AgentElicitationResponse(
+                            if (result.resultCode == RESULT_OK) {
+                                io.github.ciurlaro.codexmobile.core.AgentElicitationAction.ACCEPT
+                            } else {
+                                io.github.ciurlaro.codexmobile.core.AgentElicitationAction.CANCEL
+                            },
+                        ),
+                    )
+                }
+            }
             LaunchedEffect(state.signInUrl) {
                 state.signInUrl?.takeIf { it != openedSignInUrl }?.let {
                     openedSignInUrl = it
                     openSignIn(it)
+                }
+            }
+            LaunchedEffect(state.connectorAuthUrl) {
+                val url = state.connectorAuthUrl
+                if (url != null && url != openedConnectorUrl) {
+                    openedConnectorUrl = url
+                    connectorAuthentication.launch(
+                        ConnectorAuthActivity.intent(
+                            this@MainActivity,
+                            url,
+                            checkNotNull(state.connectorAuthName),
+                            state.mcpServers.any { it.name == state.connectorAuthName },
+                        ),
+                    )
+                }
+            }
+            LaunchedEffect(state.pendingElicitation?.requestId) {
+                state.pendingElicitation?.url?.let { url ->
+                    elicitationAuthentication.launch(
+                        ConnectorAuthActivity.elicitationIntent(this@MainActivity, url),
+                    )
                 }
             }
             LaunchedEffect(state.hasStorageAccess, pendingWorkspaceSelection) {
@@ -95,6 +139,10 @@ class MainActivity : ComponentActivity() {
                         ChatUiEvent.StartNewChat -> viewModel.startNewChat()
                         ChatUiEvent.OpenSettings -> viewModel.openSettings()
                         ChatUiEvent.CloseSettings -> viewModel.closeSettings()
+                        ChatUiEvent.OpenCapabilities -> viewModel.openCapabilities()
+                        ChatUiEvent.CloseCapabilities -> viewModel.closeCapabilities()
+                        ChatUiEvent.RefreshCapabilities -> viewModel.refreshCapabilities()
+                        ChatUiEvent.ClosePluginDetails -> viewModel.closePluginDetails()
                         is ChatUiEvent.OpenSelector -> viewModel.openSelector(event.selector)
                         ChatUiEvent.DismissSelector -> viewModel.dismissSelector()
                         ChatUiEvent.Send -> viewModel.sendMessage()
@@ -137,6 +185,17 @@ class MainActivity : ComponentActivity() {
                         is ChatUiEvent.SelectEffort -> viewModel.selectEffort(event.effort)
                         is ChatUiEvent.SelectSpeed -> viewModel.selectSpeed(event.tier)
                         is ChatUiEvent.SelectApproval -> viewModel.selectApproval(event.preset)
+                        is ChatUiEvent.SelectCapabilityTab -> viewModel.selectCapabilityTab(event.tab)
+                        is ChatUiEvent.SearchCapabilities -> viewModel.searchCapabilities(event.query)
+                        is ChatUiEvent.ToggleSkill -> viewModel.toggleSkill(event.path, event.enabled)
+                        is ChatUiEvent.OpenPlugin -> viewModel.openPlugin(event.plugin)
+                        is ChatUiEvent.InstallPlugin -> viewModel.installPlugin(event.plugin)
+                        is ChatUiEvent.UninstallPlugin -> viewModel.uninstallPlugin(event.pluginId)
+                        is ChatUiEvent.TogglePlugin -> viewModel.togglePlugin(event.pluginId, event.enabled)
+                        is ChatUiEvent.ConnectApp -> viewModel.connectApp(event.connectorId)
+                        is ChatUiEvent.ConnectMcp -> viewModel.connectMcp(event.serverName)
+                        is ChatUiEvent.ResolveElicitation ->
+                            viewModel.resolveElicitation(event.requestId, event.response)
                         is ChatUiEvent.ConnectTelegram -> viewModel.connectTelegram(event.phoneNumber)
                         is ChatUiEvent.SubmitTelegramAuthentication ->
                             viewModel.submitTelegramAuthentication(event.value)
@@ -146,9 +205,12 @@ class MainActivity : ComponentActivity() {
                         )
                         is ChatUiEvent.AddCapability -> viewModel.addCapability(event.capability)
                         is ChatUiEvent.RemoveCapability -> viewModel.removeCapability(event.capability)
+                        is ChatUiEvent.AddInvocation -> viewModel.addInvocation(event.invocation)
+                        is ChatUiEvent.RemoveInvocation -> viewModel.removeInvocation(event.key)
                     }
                 }
                 val codexApproval = state.codexApproval
+                val elicitation = state.pendingElicitation
                 when {
                     codexApproval != null -> CodexApprovalDialog(codexApproval) { decision ->
                         viewModel.resolveCodexApproval(codexApproval.requestId, decision)
@@ -171,6 +233,8 @@ class MainActivity : ComponentActivity() {
                         onSubmitAuthentication = viewModel::submitTelegramAuthentication,
                         onDisconnect = viewModel::disconnectTelegram,
                         onCancelAuthentication = viewModel::cancelTelegramAuthentication,
+                        onConnectApp = viewModel::connectApp,
+                        onConnectMcp = viewModel::connectMcp,
                     )
                     showEraseConfirmation -> EraseDataDialog(
                         onConfirm = {
@@ -181,6 +245,12 @@ class MainActivity : ComponentActivity() {
                     )
                     showPrivacyDisclosure -> PrivacyDialog(
                         onDismiss = { showPrivacyDisclosure = false },
+                    )
+                    elicitation != null -> ElicitationDialog(
+                        elicitation = elicitation,
+                        onResponse = { response ->
+                            viewModel.resolveElicitation(elicitation.requestId, response)
+                        },
                     )
                 }
             }

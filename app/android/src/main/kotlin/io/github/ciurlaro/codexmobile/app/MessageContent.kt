@@ -44,6 +44,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import com.mikepenz.markdown.m3.Markdown
 import com.mikepenz.markdown.compose.components.markdownComponents
 import com.mikepenz.markdown.compose.elements.MarkdownCodeBlock
@@ -73,6 +74,16 @@ internal fun UserMessage(message: ChatMessage) {
             message.capabilities.forEach { capability ->
                 Text(
                     text = capabilityPrompt(capability),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            }
+            message.invocations.forEach { invocation ->
+                Text(
+                    text = when (invocation) {
+                        is AgentInvocation.Skill -> "Use \$${invocation.name}"
+                        is AgentInvocation.Plugin -> "Use @${invocation.name}"
+                    },
+                    color = ChatColors.Accent,
                     style = MaterialTheme.typography.bodyLarge,
                 )
             }
