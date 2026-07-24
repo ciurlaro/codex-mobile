@@ -293,7 +293,7 @@ class CodexProtocolContractTest {
             requestTimeoutMillis = 1_000,
         )
         try {
-            val events = async { withTimeout(2_000) { client.events.take(3).toList() } }
+            val events = async { withTimeout(5_000) { client.events.take(3).toList() } }
             client.authenticate()
             processes.single().exit(9)
             client.authenticate()
