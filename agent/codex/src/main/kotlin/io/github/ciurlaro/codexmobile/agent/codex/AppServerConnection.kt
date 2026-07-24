@@ -211,8 +211,11 @@ internal class AppServerConnection(
         val error = RuntimeFailureException(message)
         pendingRequests.values.forEach { it.completeExceptionally(error) }
         pendingRequests.clear()
-        stopRuntime(failed)
-        onFailure(code, message)
+        try {
+            onFailure(code, message)
+        } finally {
+            stopRuntime(failed)
+        }
     }
 
     private fun stopRuntime(target: CodexRuntime?) {
