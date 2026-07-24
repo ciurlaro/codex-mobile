@@ -54,7 +54,7 @@ jobs:
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
           bash scripts/verify-structure.sh
-          ./gradlew test assembleDebug assembleDebugAndroidTest lint assembleRelease --stacktrace
+          ./gradlew test assembleDebug assembleDebugAndroidTest lint assembleRelease bundleRelease --stacktrace
           scripts/verify-release.sh
           scripts/verify-reproducible-release.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

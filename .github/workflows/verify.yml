@@ -44,7 +44,7 @@ jobs:
           CODEX_MOBILE_RELEASE_KEY_PASSWORD: android
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
-          ./gradlew test assembleDebug assembleDebugAndroidTest lint assembleRelease --stacktrace
+          ./gradlew test assembleDebug assembleDebugAndroidTest lint assembleRelease bundleRelease --stacktrace
           scripts/verify-release.sh
           scripts/verify-reproducible-release.sh
       - name: Upload verified host candidate
