@@ -2,21 +2,16 @@
 
 | Decision | Why | Revisit when |
 |---|---|---|
-| Put app-server mechanics behind `CodexRuntime` | `AppServerConnection` should own protocol state without importing processes, streams, or Android; the boundary has only one Android implementation and a tiny test fake | A second real runtime appears or the event contract proves insufficient |
-| Keep process mechanics outside core | Process launch is infrastructure, not domain policy | Another runtime needs the same contract |
-| Preserve typed mutation authority for app-server `0.144.6` | Never dispatches directly; Ask me and Strict use one-use approval permits; Auto review has no dynamic-tool Guardian bridge and therefore fails closed | Pinned app-server exposes a demonstrably equivalent review bridge |
-| Default approval to Never; expose four Settings choices | Desktop-like autonomy is the product default while the user retains control | Upstream policy semantics change |
-| Use `MANAGE_EXTERNAL_STORAGE` and turn `cwd` | Codex already provides shell CRUD, overwrite behavior, and command approval | Store policy or product scope requires a narrow grant again |
-| Use app-server dynamic tools for Documents and Telegram | Strict schemas let Android enforce plugin enablement, workspace containment, limits, one-shot provider dispatch, and recovery | Pinned app-server removes dynamic tools or a narrower native platform API replaces them |
-| Keep native backends private and absolute-path only | Shell-visible aliases bypass typed authority and leak backend-only environment variables | A backend becomes safe and intentionally supported as a public shell command |
-| Use one global built-in-tool mutex | It closes disablement and pre-dispatch races with the smallest auditable policy | Measured contention requires per-plugin locks |
-| Journal built-in mutations only | Exact replay and no-resubmit recovery are needed for typed side effects, while ordinary shell/file changes already have app-server semantics | App-server provides equivalent dynamic-tool idempotency and recovery |
-| Use a small local directory picker | The permission grants storage access; the picker only chooses the starting `cwd` | Platform offers a better absolute-directory chooser |
-| Use an active-only foreground service | Authentication and active work may outlive the Activity; idle work does not justify a notification | Android offers a narrower continuation primitive |
-| Use `kfastov/tgcli` privately for Telegram | It supports browserless login and fixed typed operations; sends are pinned to one SDK submission with retries disabled | Its provider-call structure or maintenance posture becomes unsuitable |
-| Render Markdown with a maintained Compose renderer | Hand-parsing fenced code cannot correctly support the model's full Markdown | The renderer becomes unmaintained or unsafe |
-| Keep KMP disabled | Portability is not a current requirement | iOS work is funded |
-| Package a pinned ARM64 app-server | It is the proven local runtime path | Codex ships an Android-native runtime |
-| Use native app-data reset for full erasure | Android authoritatively clears all private locations and permissions | Android changes that contract |
-
-The journal records only closed built-in plugin mutations and never becomes a second plugin, enablement, or ordinary filesystem store.
+| Put App Server mechanics behind `CodexRuntime` | Protocol code must not import processes, streams, or Android | A second real runtime appears |
+| Pin App Server `0.144.6` and use dynamic tools | It preserves the Codex harness while typed providers enforce local authority | The pinned protocol gains a better native extension API |
+| Use the standard Codex Git marketplace | One catalog, lifecycle, skill UX, and enablement truth work across hosts | App Server replaces this surface |
+| Install Android providers as signed feature splits | Android enforces package identity and signer, uninstall removes code, and the base stays lean | Android offers an equally strict first-party add-on mechanism |
+| Persist only provider package lifecycle | Package updates must survive process replacement without becoming enablement state | PackageInstaller offers an atomic continuation into App Server installation |
+| Keep schemas and semantic DTOs portable | Shared contracts help other targets without converting the host to multiplatform or inventing abstractions | A second host needs additional proven common logic |
+| Use direct in-process Kotlin entry points | They need no transport, provider process, Binder API, or generic backend framework | Isolation is required by measured security evidence |
+| Show cached catalog data during one bounded refresh | `plugin/list` returns one response; cache-first UI improves latency without fake streaming or retry storms | App Server provides an incremental catalog protocol |
+| Prohibit provider helper processes | A single typed authority path keeps execution, retry, environment, and packaging auditable | Never; standalone work belongs to App Server |
+| Use one global provider-tool mutex | It closes disablement and pre-dispatch races with the smallest policy | Measured contention requires narrower locks |
+| Journal provider mutations only | Provider side effects need exact replay and no-resubmit recovery; shell work already has App Server semantics | App Server supplies equivalent recovery |
+| Keep Auto-review mutations unavailable | App Server `0.144.6` dynamic tools have no equivalent Guardian bridge | The pinned protocol exposes equivalent authority |
+| Use Android package/data facilities as authority | Android owns split installation, removal, signing, and full app-data erasure | Platform contracts change |

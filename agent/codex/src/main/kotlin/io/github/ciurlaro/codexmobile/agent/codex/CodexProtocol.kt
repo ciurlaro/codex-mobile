@@ -41,6 +41,9 @@ internal fun conversationMessage(rawItem: JsonElement): AgentMessage? {
     val item = rawItem.jsonObject
     return when (item.requiredString("type")) {
         "userMessage" -> {
+            if (item.optionalString("clientId")?.startsWith("codex-mobile:plugin-availability:") == true) {
+                return null
+            }
             val content = item.requiredArray("content").map(JsonElement::jsonObject)
             val invocations = content.mapNotNull(::parseInvocation).distinctBy(AgentInvocation::key)
             val prompts = content.mapNotNull { input ->

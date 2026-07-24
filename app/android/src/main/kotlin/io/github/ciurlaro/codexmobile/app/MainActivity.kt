@@ -170,8 +170,6 @@ class MainActivity : ComponentActivity() {
                             showIntegrations = true
                             viewModel.refreshIntegrations()
                         }
-                        ChatUiEvent.DisconnectTelegram -> viewModel.disconnectTelegram()
-                        ChatUiEvent.CancelTelegramAuthentication -> viewModel.cancelTelegramAuthentication()
                         ChatUiEvent.ShowEraseConfirmation -> showEraseConfirmation = true
                         ChatUiEvent.SelectScope -> if (state.hasStorageAccess) {
                             workspaceBrowserPath = state.workspacePath ?: viewModel.workspaceRoots().firstOrNull()
@@ -200,22 +198,22 @@ class MainActivity : ComponentActivity() {
                         is ChatUiEvent.OpenGitHubSkill -> viewModel.openGitHubSkill(event.url)
                         is ChatUiEvent.SelectGitHubSkill -> viewModel.selectGitHubSkill(event.skill)
                         ChatUiEvent.DismissGitHubSkillImport -> viewModel.dismissGitHubSkillImport()
+                        is ChatUiEvent.AddPluginSource -> viewModel.addPluginSource(event.url)
+                        ChatUiEvent.DismissPluginSource -> viewModel.dismissPluginSource()
                         is ChatUiEvent.InstallSkill -> viewModel.installSkill(event.skill)
                         is ChatUiEvent.RequestUninstallSkill -> viewModel.requestUninstallSkill(event.skill)
                         is ChatUiEvent.OpenPlugin -> viewModel.openPlugin(event.plugin)
                         is ChatUiEvent.InstallPlugin -> viewModel.installPlugin(event.plugin)
                         is ChatUiEvent.RequestUninstallPlugin ->
-                            viewModel.requestUninstallPlugin(event.pluginId, event.displayName)
+                            viewModel.requestUninstallPlugin(event.plugin, event.displayName)
                         ChatUiEvent.ConfirmCapabilityRemoval -> viewModel.confirmCapabilityRemoval()
                         ChatUiEvent.DismissCapabilityRemoval -> viewModel.dismissCapabilityRemoval()
                         is ChatUiEvent.TogglePlugin -> viewModel.togglePlugin(event.pluginId, event.enabled)
+                        is ChatUiEvent.OpenProviderSettings -> viewModel.openProviderSettings(event.pluginId)
                         is ChatUiEvent.ConnectApp -> viewModel.connectApp(event.connectorId)
                         is ChatUiEvent.ConnectMcp -> viewModel.connectMcp(event.serverName)
                         is ChatUiEvent.ResolveElicitation ->
                             viewModel.resolveElicitation(event.requestId, event.response)
-                        is ChatUiEvent.ConnectTelegram -> viewModel.connectTelegram(event.phoneNumber)
-                        is ChatUiEvent.SubmitTelegramAuthentication ->
-                            viewModel.submitTelegramAuthentication(event.value)
                         is ChatUiEvent.ResolveCodexApproval -> viewModel.resolveCodexApproval(
                             event.requestId,
                             event.decision,
@@ -246,10 +244,6 @@ class MainActivity : ComponentActivity() {
                     showIntegrations -> IntegrationsDialog(
                         state = state,
                         onDismiss = { showIntegrations = false },
-                        onConnect = viewModel::connectTelegram,
-                        onSubmitAuthentication = viewModel::submitTelegramAuthentication,
-                        onDisconnect = viewModel::disconnectTelegram,
-                        onCancelAuthentication = viewModel::cancelTelegramAuthentication,
                         onConnectApp = viewModel::connectApp,
                         onConnectMcp = viewModel::connectMcp,
                     )

@@ -18,9 +18,9 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-internal enum class MutationState { PREPARED, DISPATCHED, SUCCEEDED, FAILED, INDETERMINATE }
+enum class MutationState { PREPARED, DISPATCHED, SUCCEEDED, FAILED, INDETERMINATE }
 
-internal data class JournalEntry(
+data class JournalEntry(
     val state: MutationState,
     val result: BuiltInToolResult?,
     val beforeHash: String?,
@@ -34,8 +34,8 @@ private data class StoredJournalEntry(
     val entry: JournalEntry,
 )
 
-internal class BuiltInMutationJournal(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "built-in-mutations.sqlite", null, 1) {
+class BuiltInMutationJournal(context: Context) :
+    SQLiteOpenHelper(context.applicationContext, "built-in-mutations.sqlite", null, 1), AutoCloseable {
 
     override fun onCreate(database: SQLiteDatabase) {
         database.execSQL(
@@ -110,6 +110,39 @@ internal class BuiltInMutationJournal(context: Context) :
     ) {
         require(state in TERMINAL_STATES)
         update(call, state, result, beforeHash, afterHash)
+    }
+
+    @Synchronized
+    fun compact(pluginId: String) {
+        require(pluginId.isNotBlank()) { "Plugin ID must not be blank" }
+        val database = writableDatabase
+        database.beginTransaction()
+        try {
+            database.delete(
+                "mutations",
+                "plugin=? AND state=?",
+                arrayOf(pluginId, MutationState.PREPARED.name),
+            )
+            database.update(
+                "mutations",
+                ContentValues().apply { put("state", MutationState.INDETERMINATE.name) },
+                "plugin=? AND state=?",
+                arrayOf(pluginId, MutationState.DISPATCHED.name),
+            )
+            database.update(
+                "mutations",
+                ContentValues().apply {
+                    putNull("result")
+                    putNull("before_hash")
+                    putNull("after_hash")
+                },
+                "plugin=?",
+                arrayOf(pluginId),
+            )
+            database.setTransactionSuccessful()
+        } finally {
+            database.endTransaction()
+        }
     }
 
     private fun update(

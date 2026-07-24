@@ -153,14 +153,24 @@ internal fun SettingsScreen(
             }
             item("integration-settings") {
                 SettingsGroup("Integrations") {
+                    state.providerSettings.forEach { provider ->
+                        SettingsRow(
+                            glyph = IconGlyph.PUZZLE,
+                            title = provider.displayName,
+                            subtitle = provider.message ?: if (provider.removalNeedsRetry) {
+                                "Removal needs retry"
+                            } else {
+                                "Configure provider"
+                            },
+                            onClick = { onEvent(ChatUiEvent.OpenProviderSettings(provider.pluginId)) },
+                        )
+                        SettingsDivider()
+                    }
                     SettingsRow(
                         glyph = IconGlyph.LINK,
                         title = "Integrations",
-                        subtitle = when {
-                            state.isTelegramConnected -> "Telegram connected"
-                            state.isTelegramAvailable -> "Telegram available"
-                            else -> "No integrations available"
-                        },
+                        subtitle = "${state.connectors.count { it.isAccessible }} apps · " +
+                            "${state.mcpServers.count { it.authStatus.name != "NOT_LOGGED_IN" }} MCP servers",
                         onClick = { onEvent(ChatUiEvent.ShowIntegrations) },
                     )
                 }

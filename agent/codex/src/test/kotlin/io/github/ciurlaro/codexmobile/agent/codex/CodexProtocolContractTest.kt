@@ -127,10 +127,8 @@ class CodexProtocolContractTest {
             assertEquals("user", params["approvalsReviewer"]!!.jsonPrimitive.content)
             assertEquals("danger-full-access", params["sandbox"]!!.jsonPrimitive.content)
             val instructions = params["developerInstructions"]!!.jsonPrimitive.content
-            listOf("mutool", "tesseract", "officecli", "tgcli").forEach { command ->
-                assertFalse(command in instructions)
-            }
-            assertTrue("private backends are not shell commands" in instructions)
+            assertFalse("raw argv" in instructions)
+            assertTrue("advertised typed contracts" in instructions)
             val config = params["config"]!!.jsonObject
             assertEquals("live", config["web_search"]!!.jsonPrimitive.content)
             assertEquals(

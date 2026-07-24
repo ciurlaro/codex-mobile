@@ -96,6 +96,7 @@ data class AgentPluginDetail(
     val connectors: List<AgentConnector>,
     val mcpServers: List<String>,
     val hookCount: Int,
+    val providerManaged: Boolean = false,
 )
 
 data class AgentPluginSkill(
@@ -108,6 +109,14 @@ data class AgentPluginSkill(
 data class AgentPluginInstallResult(
     val authPolicy: AgentPluginAuthPolicy,
     val connectorsNeedingAuthentication: List<AgentConnector>,
+    val restartRequired: Boolean = false,
+    val message: String? = null,
+)
+
+data class AgentPluginRemovalResult(
+    val completed: Boolean,
+    val restartRequired: Boolean = false,
+    val message: String? = null,
 )
 
 class AgentPluginUnavailableException(

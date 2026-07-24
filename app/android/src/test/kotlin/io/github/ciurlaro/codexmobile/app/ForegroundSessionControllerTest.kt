@@ -16,6 +16,7 @@ import io.github.ciurlaro.codexmobile.core.AgentPluginCatalog
 import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
 import io.github.ciurlaro.codexmobile.core.AgentPluginInstallResult
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentPluginRemovalResult
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentSkillCatalog
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
@@ -405,7 +406,7 @@ class ForegroundSessionControllerTest {
 
         override suspend fun installPlugin(plugin: AgentPluginReference): AgentPluginInstallResult = error("unused")
 
-        override suspend fun uninstallPlugin(pluginId: String) = Unit
+        override suspend fun uninstallPlugin(plugin: AgentPluginReference) = AgentPluginRemovalResult(completed = true)
 
         override suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) = Unit
 

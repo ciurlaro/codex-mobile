@@ -5,9 +5,11 @@ import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
+import io.github.ciurlaro.codexmobile.core.SessionId
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -32,8 +34,8 @@ import kotlinx.serialization.json.putJsonObject
 class BuiltInToolsProtocolTest {
     @Test
     fun `schemas are closed and contain only the stable tool set`() {
-        val tools = builtInDynamicTools(setOf(DOCUMENTS_PLUGIN_ID, TELEGRAM_PLUGIN_ID))
-        assertEquals(BUILT_IN_TOOL_PLUGINS.keys.toList(), tools.map { it.jsonObject["name"]!!.jsonPrimitive.content })
+        val tools = builtInDynamicTools(setOf(ALPHA_PLUGIN_ID, BETA_PLUGIN_ID), TEST_DEFINITIONS)
+        assertEquals(TEST_DEFINITIONS.map { it.name }, tools.map { it.jsonObject["name"]!!.jsonPrimitive.content })
         tools.forEach { raw ->
             val schema = raw.jsonObject["inputSchema"]!!.jsonObject
             assertEquals("false", schema["additionalProperties"]!!.jsonPrimitive.content)
@@ -50,16 +52,17 @@ class BuiltInToolsProtocolTest {
         val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
-                "plugin/installed" -> server.respond(message.id, pluginCatalog(documents = true, telegram = false))
+                "plugin/installed" -> server.respond(message.id, pluginCatalog(alpha = true, beta = false))
                 "thread/start" -> {
                     threadStart = message.objectValue["params"]!!.jsonObject
                     server.respond(message.id, thread("thread-1"))
                 }
                 "turn/start" -> {
                     server.respond(message.id, turn("turn-1"))
-                    server.request(900, "item/tool/call", toolCall("documents_read", "call-1"))
+                    server.request(900, "item/tool/call", toolCall("alpha_read", "call-1"))
                 }
                 "config/value/write" -> server.respond(message.id, buildJsonObject {})
+                "turn/steer" -> server.respond(message.id, buildJsonObject { put("turnId", "turn-1") })
                 null -> when (message.id) {
                     900L -> firstResponse.countDown()
                     901L -> disabledResponse.countDown()
@@ -69,9 +72,9 @@ class BuiltInToolsProtocolTest {
         val client = CodexAgentClient(
             runtimeFactory = { process },
             requestTimeoutMillis = 1_000,
-            builtInToolDispatcher = BuiltInToolDispatcher {
+            builtInToolDispatcher = dispatcher {
                 calls.incrementAndGet()
-                BuiltInToolResult.text("document")
+                BuiltInToolResult.text("result")
             },
         )
         try {
@@ -81,17 +84,16 @@ class BuiltInToolsProtocolTest {
             val names = threadStart!!["dynamicTools"]!!.jsonArray.map {
                 it.jsonObject["name"]!!.jsonPrimitive.content
             }
-            assertEquals(listOf("documents_read", "documents_view_pages", "documents_edit"), names)
+            assertEquals(listOf("alpha_read", "alpha_view", "alpha_edit"), names)
 
             client.sendTurn(session, AgentTurnRequest("read", workingDirectory = "/workspace"))
             assertTrue(firstResponse.await(1, TimeUnit.SECONDS))
             assertEquals(1, calls.get())
 
-            client.setPluginEnabled(DOCUMENTS_PLUGIN_ID, false)
-            process.request(901, "item/tool/call", toolCall("documents_read", "call-2"))
+            client.setPluginEnabled(ALPHA_PLUGIN_ID, false)
+            process.request(901, "item/tool/call", toolCall("alpha_read", "call-2"))
             assertTrue(disabledResponse.await(1, TimeUnit.SECONDS))
             assertEquals(1, calls.get())
-            assertFailsWith<IllegalArgumentException> { client.uninstallPlugin(DOCUMENTS_PLUGIN_ID) }
         } finally {
             client.close()
         }
@@ -103,7 +105,7 @@ class BuiltInToolsProtocolTest {
         val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
-                "plugin/installed" -> server.respond(message.id, pluginCatalog(documents = true, telegram = false))
+                "plugin/installed" -> server.respond(message.id, pluginCatalog(alpha = true, beta = false))
                 "thread/start" -> {
                     advertised += message.objectValue["params"]!!.jsonObject["dynamicTools"]!!.jsonArray.map {
                         it.jsonObject["name"]!!.jsonPrimitive.content
@@ -121,27 +123,135 @@ class BuiltInToolsProtocolTest {
         CodexAgentClient(
             runtimeFactory = { process },
             requestTimeoutMillis = 1_000,
-            builtInToolDispatcher = BuiltInToolDispatcher { BuiltInToolResult.text("unused") },
+            builtInToolDispatcher = dispatcher { BuiltInToolResult.text("unused") },
         ).use { client ->
             client.openSession(settings = AgentRuntimeSettings(workingDirectory = "/workspace"))
-            assertFailsWith<RpcException> { client.setPluginEnabled(DOCUMENTS_PLUGIN_ID, false) }
+            assertFailsWith<RpcException> { client.setPluginEnabled(ALPHA_PLUGIN_ID, false) }
             client.openSession(settings = AgentRuntimeSettings(workingDirectory = "/workspace"))
             assertEquals(advertised[0], advertised[1])
-            assertTrue("documents_edit" in advertised[1])
+            assertTrue("alpha_edit" in advertised[1])
+        }
+    }
+
+    @Test
+    fun `resumed chat is notified when its original provider has disappeared`(): Unit = runBlocking {
+        val states = Files.createTempDirectory("thread-providers-").toFile()
+        try {
+            val firstRuntime = FakeCodexRuntime { message, server ->
+                when (message.method) {
+                    "initialize" -> server.respond(message.id, buildJsonObject {})
+                    "plugin/installed" -> server.respond(message.id, pluginCatalog(alpha = true, beta = false))
+                    "thread/start" -> server.respond(message.id, thread("thread-1"))
+                }
+            }
+            CodexAgentClient(
+                runtimeFactory = { firstRuntime },
+                requestTimeoutMillis = 1_000,
+                threadProviderStateDirectory = states,
+                builtInToolDispatcher = dispatcher { BuiltInToolResult.text("unused") },
+            ).use { client ->
+                client.openSession(settings = AgentRuntimeSettings(workingDirectory = "/workspace"))
+            }
+
+            var notice: String? = null
+            val resumedRuntime = FakeCodexRuntime { message, server ->
+                when (message.method) {
+                    "initialize" -> server.respond(message.id, buildJsonObject {})
+                    "thread/resume" -> server.respond(message.id, thread("thread-1"))
+                    "thread/inject_items" -> {
+                        notice = message.objectValue["params"]!!.jsonObject["items"]!!.jsonArray
+                            .single().jsonObject["content"]!!.jsonArray.single().jsonObject["text"]!!
+                            .jsonPrimitive.content
+                        server.respond(message.id, buildJsonObject {})
+                    }
+                }
+            }
+            CodexAgentClient(
+                runtimeFactory = { resumedRuntime },
+                requestTimeoutMillis = 1_000,
+                threadProviderStateDirectory = states,
+            ).use { client ->
+                client.openSession(SessionId("thread-1"), AgentRuntimeSettings(workingDirectory = "/workspace"))
+            }
+
+            assertTrue(checkNotNull(notice).contains("$ALPHA_PLUGIN_ID=unavailable"))
+        } finally {
+            states.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `failed active turn steering is injected after completion and reenable keeps the thread`(): Unit = runBlocking {
+        val steered = CountDownLatch(1)
+        val firstInjected = CountDownLatch(1)
+        val secondInjected = CountDownLatch(1)
+        val notices = mutableListOf<String>()
+        val process = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/installed" -> server.respond(message.id, pluginCatalog(alpha = true, beta = false))
+                "thread/start" -> server.respond(message.id, thread("thread-1"))
+                "turn/start" -> server.respond(message.id, turn("turn-1"))
+                "config/value/write" -> server.respond(message.id, buildJsonObject {})
+                "turn/steer" -> {
+                    steered.countDown()
+                    server.sendRaw(buildJsonObject {
+                        put("id", message.id)
+                        putJsonObject("error") { put("code", -32602); put("message", "turn already completed") }
+                    }.toString())
+                }
+                "thread/inject_items" -> {
+                    notices += message.objectValue["params"]!!.jsonObject["items"]!!.jsonArray
+                        .single().jsonObject["content"]!!.jsonArray.single().jsonObject["text"]!!
+                        .jsonPrimitive.content
+                    server.respond(message.id, buildJsonObject {})
+                    if (notices.size == 1) firstInjected.countDown() else secondInjected.countDown()
+                }
+            }
+        }
+        CodexAgentClient(
+            runtimeFactory = { process },
+            requestTimeoutMillis = 1_000,
+            builtInToolDispatcher = dispatcher { BuiltInToolResult.text("unused") },
+        ).use { client ->
+            val session = client.openSession(settings = AgentRuntimeSettings(workingDirectory = "/workspace"))
+            client.sendTurn(session, AgentTurnRequest("work", workingDirectory = "/workspace"))
+            client.setPluginEnabled(ALPHA_PLUGIN_ID, false)
+            assertTrue(steered.await(1, TimeUnit.SECONDS))
+
+            process.notify("turn/completed", buildJsonObject {
+                put("threadId", session.value)
+                putJsonObject("turn") { put("id", "turn-1"); put("status", "completed") }
+            })
+            assertTrue(firstInjected.await(1, TimeUnit.SECONDS))
+            assertTrue(notices.single().contains("$ALPHA_PLUGIN_ID=unavailable"))
+
+            client.setPluginEnabled(ALPHA_PLUGIN_ID, true)
+            assertTrue(secondInjected.await(1, TimeUnit.SECONDS))
+            assertTrue(notices.last().contains("$ALPHA_PLUGIN_ID=enabled"))
         }
     }
 
     @Test
     fun `manual mutation approval is one use and auto review mutations fail closed`(): Unit = runBlocking {
         val dispatches = AtomicInteger()
+        val secondBoundaryRejected = java.util.concurrent.atomic.AtomicBoolean()
         val response = CountDownLatch(1)
-        val process = telegramMutationRuntime(response)
+        val process = providerMutationRuntime(response)
         val client = CodexAgentClient(
             runtimeFactory = { process },
             requestTimeoutMillis = 1_000,
-            builtInToolDispatcher = BuiltInToolDispatcher {
-                dispatches.incrementAndGet()
-                BuiltInToolResult.text("sent")
+            builtInToolDispatcher = object : BuiltInToolDispatcher {
+                override fun definitions() = TEST_DEFINITIONS
+
+                override suspend fun execute(call: BuiltInToolCall) = BuiltInToolResult.text("unused", false)
+
+                override suspend fun execute(call: BuiltInToolCall, beforeMutationDispatch: () -> Unit): BuiltInToolResult {
+                    beforeMutationDispatch()
+                    dispatches.incrementAndGet()
+                    secondBoundaryRejected.set(runCatching { beforeMutationDispatch() }.isFailure)
+                    return BuiltInToolResult.text("sent")
+                }
             },
         )
         try {
@@ -164,6 +274,7 @@ class BuiltInToolsProtocolTest {
             client.resolveApproval(event.requestId, AgentApprovalDecision.ACCEPT)
             assertTrue(response.await(1, TimeUnit.SECONDS))
             assertEquals(1, dispatches.get())
+            assertTrue(secondBoundaryRejected.get())
             assertFailsWith<IllegalStateException> {
                 client.resolveApproval(event.requestId, AgentApprovalDecision.ACCEPT)
             }
@@ -173,11 +284,11 @@ class BuiltInToolsProtocolTest {
 
         val autoDispatches = AtomicInteger()
         val autoResponse = CountDownLatch(1)
-        val autoProcess = telegramMutationRuntime(autoResponse)
+        val autoProcess = providerMutationRuntime(autoResponse)
         CodexAgentClient(
             runtimeFactory = { autoProcess },
             requestTimeoutMillis = 1_000,
-            builtInToolDispatcher = BuiltInToolDispatcher {
+            builtInToolDispatcher = dispatcher {
                 autoDispatches.incrementAndGet()
                 BuiltInToolResult.text("must not run")
             },
@@ -198,26 +309,26 @@ class BuiltInToolsProtocolTest {
         }
     }
 
-    private fun telegramMutationRuntime(response: CountDownLatch) = FakeCodexRuntime { message, server ->
+    private fun providerMutationRuntime(response: CountDownLatch) = FakeCodexRuntime { message, server ->
         when (message.method) {
             "initialize" -> server.respond(message.id, buildJsonObject {})
-            "plugin/installed" -> server.respond(message.id, pluginCatalog(documents = false, telegram = true))
+            "plugin/installed" -> server.respond(message.id, pluginCatalog(alpha = false, beta = true))
             "thread/start" -> server.respond(message.id, thread("thread-1"))
             "turn/start" -> {
                 server.respond(message.id, turn("turn-1"))
-                server.request(950, "item/tool/call", toolCall("telegram_send_text", "send-1"))
+                server.request(950, "item/tool/call", toolCall("beta_send", "send-1"))
             }
             null -> if (message.id == 950L) response.countDown()
         }
     }
 
-    private fun pluginCatalog(documents: Boolean, telegram: Boolean) = buildJsonObject {
+    private fun pluginCatalog(alpha: Boolean, beta: Boolean) = buildJsonObject {
         putJsonArray("marketplaces") {
             add(buildJsonObject {
                 put("name", "codex-mobile")
                 putJsonArray("plugins") {
-                    add(plugin("documents@codex-mobile", "documents", documents))
-                    add(plugin("telegram@codex-mobile", "telegram", telegram))
+                    add(plugin(ALPHA_PLUGIN_ID, "alpha", alpha))
+                    add(plugin(BETA_PLUGIN_ID, "beta", beta))
                 }
             })
         }
@@ -229,7 +340,7 @@ class BuiltInToolsProtocolTest {
         put("name", name)
         put("installed", true)
         put("enabled", enabled)
-        put("installPolicy", "INSTALLED_BY_DEFAULT")
+        put("installPolicy", "AVAILABLE")
         put("authPolicy", "ON_USE")
         put("availability", "AVAILABLE")
         putJsonObject("interface") {
@@ -255,11 +366,37 @@ class BuiltInToolsProtocolTest {
         put("startedAtMs", System.currentTimeMillis())
         put(
             "arguments",
-            if (tool == "documents_read") {
-                buildJsonObject { put("path", "a.pdf") }
+            if (tool == "alpha_read") {
+                buildJsonObject { put("path", "item") }
             } else {
                 buildJsonObject { put("to", "me"); put("message", "hello") }
             },
         )
     }
+}
+
+private const val ALPHA_PLUGIN_ID = "alpha@fixture"
+private const val BETA_PLUGIN_ID = "beta@fixture"
+
+private val TEST_DEFINITIONS = listOf(
+    "alpha_read", "alpha_view", "alpha_edit",
+).map { tool -> testDefinition(ALPHA_PLUGIN_ID, tool, tool == "alpha_edit") } + listOf(
+    "beta_list", "beta_send",
+).map { tool -> testDefinition(BETA_PLUGIN_ID, tool, tool == "beta_send") }
+
+private fun testDefinition(pluginId: String, name: String, mutation: Boolean) = BuiltInToolDefinition(
+    pluginId,
+    name,
+    name,
+    buildJsonObject {
+        put("type", "object")
+        putJsonObject("properties") {}
+        put("additionalProperties", false)
+    },
+    mutation,
+)
+
+private fun dispatcher(block: suspend (BuiltInToolCall) -> BuiltInToolResult) = object : BuiltInToolDispatcher {
+    override fun definitions() = TEST_DEFINITIONS
+    override suspend fun execute(call: BuiltInToolCall) = block(call)
 }

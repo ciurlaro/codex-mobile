@@ -15,6 +15,7 @@ import io.github.ciurlaro.codexmobile.core.AgentPluginCatalog
 import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
 import io.github.ciurlaro.codexmobile.core.AgentPluginInstallResult
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentPluginRemovalResult
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentSkillCatalog
 import io.github.ciurlaro.codexmobile.core.AgentSkill
@@ -52,6 +53,7 @@ internal data class ForegroundSessionState(
     val pendingApproval: AgentEvent.ApprovalRequested? = null,
     val pendingElicitation: AgentElicitation? = null,
     val skillsRevision: Int = 0,
+    val pluginsRevision: Int = 0,
     val connectorsRevision: Int = 0,
     val oauthCompletion: AgentEvent.McpOauthCompleted? = null,
     val externalOperation: String? = null,
@@ -258,14 +260,17 @@ internal class ForegroundSessionController(
         forceRefresh: Boolean = false,
     ): AgentPluginCatalog = agentClient.listAvailablePlugins(workingDirectory, forceRefresh)
 
+    suspend fun addPluginMarketplace(sourceUrl: String) =
+        runExternalOperation("Adding plugin source") { agentClient.addPluginMarketplace(sourceUrl) }
+
     suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail =
         agentClient.readPlugin(plugin)
 
     suspend fun installPlugin(plugin: AgentPluginReference): AgentPluginInstallResult =
         runExternalOperation("Installing ${plugin.name}") { agentClient.installPlugin(plugin) }
 
-    suspend fun uninstallPlugin(pluginId: String) =
-        runExternalOperation("Removing plugin") { agentClient.uninstallPlugin(pluginId) }
+    suspend fun uninstallPlugin(plugin: AgentPluginReference): AgentPluginRemovalResult =
+        runExternalOperation("Removing plugin") { agentClient.uninstallPlugin(plugin) }
 
     suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) =
         runExternalOperation("Updating plugin") { agentClient.setPluginEnabled(pluginId, enabled) }
@@ -454,6 +459,10 @@ internal class ForegroundSessionController(
 
             AgentEvent.SkillsChanged -> mutableState.update {
                 it.copy(skillsRevision = it.skillsRevision + 1)
+            }
+
+            AgentEvent.PluginsChanged -> mutableState.update {
+                it.copy(pluginsRevision = it.pluginsRevision + 1)
             }
 
             AgentEvent.ConnectorsChanged -> mutableState.update {

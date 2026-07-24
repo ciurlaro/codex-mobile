@@ -9,11 +9,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Checkbox
@@ -27,8 +25,6 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
 import io.github.ciurlaro.codexmobile.core.AgentEvent
@@ -39,7 +35,6 @@ import io.github.ciurlaro.codexmobile.core.AgentFormField
 import io.github.ciurlaro.codexmobile.core.AgentFormFieldType
 import io.github.ciurlaro.codexmobile.core.AgentFormValue
 import io.github.ciurlaro.codexmobile.core.AgentMcpAuthStatus
-import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthPrompt
 import java.io.File
 
 @Composable
@@ -69,25 +64,11 @@ internal fun CodexApprovalDialog(
 internal fun IntegrationsDialog(
     state: MainUiState,
     onDismiss: () -> Unit,
-    onConnect: (String) -> Unit,
-    onSubmitAuthentication: (String) -> Unit,
-    onDisconnect: () -> Unit,
-    onCancelAuthentication: () -> Unit,
     onConnectApp: (String) -> Unit,
     onConnectMcp: (String) -> Unit,
 ) {
-    var phoneNumber by rememberSaveable { mutableStateOf("") }
-    var authenticationAnswer by rememberSaveable { mutableStateOf("") }
-    fun dismiss() {
-        if (!state.isTelegramConnected &&
-            (state.isTelegramOperationInProgress || state.telegramAuthPrompt != null)
-        ) {
-            onCancelAuthentication()
-        }
-        onDismiss()
-    }
     AlertDialog(
-        onDismissRequest = ::dismiss,
+        onDismissRequest = onDismiss,
         title = { Text("Integrations") },
         text = {
             Column {
@@ -111,82 +92,13 @@ internal fun IntegrationsDialog(
                         onConnect = { onConnectMcp(server.name) },
                     )
                 }
-                if (state.connectors.isNotEmpty() || state.mcpServers.isNotEmpty()) {
-                    Spacer(Modifier.height(16.dp))
-                }
-                when {
-                    !state.isTelegramAvailable && state.connectors.isEmpty() && state.mcpServers.isEmpty() -> Text(
-                        "No integrations are available in this build.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    state.isTelegramConnected -> Text(
-                        buildString {
-                            append("Telegram is connected")
-                            state.telegramUsername?.let { append(" as @$it") }
-                            append(". The enabled Telegram plugin can use its typed tools; the private backend is not a shell command.")
-                        },
-                    )
-                    state.telegramAuthPrompt == TelegramAuthPrompt.CODE -> OutlinedTextField(
-                        value = authenticationAnswer,
-                        onValueChange = { authenticationAnswer = it },
-                        label = { Text("Code from Telegram") },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        singleLine = true,
-                    )
-                    state.telegramAuthPrompt == TelegramAuthPrompt.PASSWORD -> OutlinedTextField(
-                        value = authenticationAnswer,
-                        onValueChange = { authenticationAnswer = it },
-                        label = { Text("Telegram 2FA password") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true,
-                    )
-                    state.isTelegramOperationInProgress -> Text("Connecting to Telegram…")
-                    else -> {
-                        Text("Connect directly with Telegram. No browser or installed Telegram app is required.")
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedTextField(
-                            value = phoneNumber,
-                            onValueChange = { phoneNumber = it },
-                            label = { Text("Phone number (+…)") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                            singleLine = true,
-                        )
-                    }
-                }
-                state.telegramError?.let {
-                    Spacer(Modifier.height(10.dp))
-                    Text(it, color = MaterialTheme.colorScheme.error)
-                }
+                if (state.connectors.isEmpty() && state.mcpServers.isEmpty()) Text(
+                    "No app or MCP integrations are available.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         },
-        confirmButton = {
-            when {
-                !state.isTelegramAvailable -> Button(onClick = onDismiss) { Text("Done") }
-                state.isTelegramConnected -> Button(
-                    onClick = onDisconnect,
-                    enabled = !state.isTelegramOperationInProgress,
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                ) { Text("Disconnect Telegram") }
-                state.telegramAuthPrompt != null -> Button(
-                    onClick = {
-                        onSubmitAuthentication(authenticationAnswer)
-                        authenticationAnswer = ""
-                    },
-                    enabled = !state.isTelegramOperationInProgress && authenticationAnswer.isNotBlank(),
-                ) { Text("Continue") }
-                else -> Button(
-                    onClick = { onConnect(phoneNumber) },
-                    enabled = !state.isTelegramOperationInProgress && phoneNumber.isNotBlank(),
-                ) {
-                    Text(if (state.isTelegramOperationInProgress) "Connecting…" else "Connect Telegram")
-                }
-            }
-        },
-        dismissButton = if (state.isTelegramAvailable) {
-            { Button(onClick = ::dismiss) { Text(if (state.telegramAuthPrompt != null) "Cancel" else "Done") } }
-        } else {
-            null
-        },
+        confirmButton = { Button(onClick = onDismiss) { Text("Done") } },
     )
 }
 
@@ -434,18 +346,12 @@ private fun PrivacyDisclosure() {
             "Storage access",
             "The selected workspace is Codex's starting folder, not a sandbox. With all-files access, " +
                 "ordinary Codex shell commands can navigate to other accessible shared-storage locations; " +
-                "built-in plugin file tools stay inside the selected workspace. Manage the permission in Android Settings.",
-        )
-        PrivacySection(
-            "On-device document processing",
-            "PDF, image, and Office work runs locally through strict Documents plugin tools backed by private " +
-                "bundled processors. Files or extracted content are sent to OpenAI only when Codex includes " +
-                "them in the session.",
+                "provider file tools stay inside the selected workspace. Manage the permission in Android Settings.",
         )
         PrivacySection(
             "Local storage and logs",
-            "ChatGPT credentials, conversation state, bounded document snapshots, mutation recovery state, " +
-                "settings, and integration data stay in app-private storage excluded from Android backup. Prompt and document contents are " +
+            "ChatGPT credentials, conversation state, mutation recovery state, settings, and integration data " +
+                "stay in app-private storage excluded from Android backup. Prompt and provider contents are " +
                 "not written to Codex Mobile logs.",
         )
         PrivacySection(

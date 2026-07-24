@@ -30,7 +30,7 @@ sealed interface CapabilityRemoval {
         override val displayName: String get() = skill.readableTitle()
     }
 
-    data class Plugin(val id: String, override val displayName: String) : CapabilityRemoval
+    data class Plugin(val plugin: AgentPluginReference, override val displayName: String) : CapabilityRemoval
 }
 
 data class CapabilityActionError(val operationId: String, val message: String)
@@ -63,8 +63,6 @@ sealed interface ChatUiEvent {
     data object SignOut : ChatUiEvent
     data object ShowPrivacy : ChatUiEvent
     data object ShowIntegrations : ChatUiEvent
-    data object DisconnectTelegram : ChatUiEvent
-    data object CancelTelegramAuthentication : ChatUiEvent
     data object ShowEraseConfirmation : ChatUiEvent
     data object SelectScope : ChatUiEvent
     data object ManageStorage : ChatUiEvent
@@ -88,22 +86,23 @@ sealed interface ChatUiEvent {
     data class OpenGitHubSkill(val url: String) : ChatUiEvent
     data class SelectGitHubSkill(val skill: AgentSkillPackage) : ChatUiEvent
     data object DismissGitHubSkillImport : ChatUiEvent
+    data class AddPluginSource(val url: String) : ChatUiEvent
+    data object DismissPluginSource : ChatUiEvent
     data class InstallSkill(val skill: AgentSkillPackage) : ChatUiEvent
     data class RequestUninstallSkill(val skill: AgentSkill) : ChatUiEvent
     data class OpenPlugin(val plugin: AgentPluginReference) : ChatUiEvent
     data class InstallPlugin(val plugin: AgentPluginReference) : ChatUiEvent
-    data class RequestUninstallPlugin(val pluginId: String, val displayName: String) : ChatUiEvent
+    data class RequestUninstallPlugin(val plugin: AgentPluginReference, val displayName: String) : ChatUiEvent
     data object ConfirmCapabilityRemoval : ChatUiEvent
     data object DismissCapabilityRemoval : ChatUiEvent
     data class TogglePlugin(val pluginId: String, val enabled: Boolean) : ChatUiEvent
+    data class OpenProviderSettings(val pluginId: String) : ChatUiEvent
     data class ConnectApp(val connectorId: String) : ChatUiEvent
     data class ConnectMcp(val serverName: String) : ChatUiEvent
     data class ResolveElicitation(
         val requestId: String,
         val response: AgentElicitationResponse,
     ) : ChatUiEvent
-    data class ConnectTelegram(val phoneNumber: String) : ChatUiEvent
-    data class SubmitTelegramAuthentication(val value: String) : ChatUiEvent
     data class ResolveCodexApproval(
         val requestId: String,
         val decision: AgentApprovalDecision,

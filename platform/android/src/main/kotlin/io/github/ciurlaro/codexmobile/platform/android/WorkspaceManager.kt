@@ -8,7 +8,7 @@ import android.os.Environment
 import android.os.storage.StorageManager
 import java.io.File
 
-internal class WorkspaceManager(context: Context) {
+class WorkspaceManager(context: Context) {
     private val appContext = context.applicationContext
     private val preferences = appContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 

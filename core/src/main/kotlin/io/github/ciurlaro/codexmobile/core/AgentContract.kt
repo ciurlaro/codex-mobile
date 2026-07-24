@@ -26,11 +26,15 @@ interface AgentClient : AutoCloseable {
         forceRefresh: Boolean = false,
     ): AgentPluginCatalog
 
+    suspend fun addPluginMarketplace(sourceUrl: String) {
+        error("Plugin marketplace sources are unavailable")
+    }
+
     suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail
 
     suspend fun installPlugin(plugin: AgentPluginReference): AgentPluginInstallResult
 
-    suspend fun uninstallPlugin(pluginId: String)
+    suspend fun uninstallPlugin(plugin: AgentPluginReference): AgentPluginRemovalResult
 
     suspend fun setPluginEnabled(pluginId: String, enabled: Boolean)
 
@@ -206,6 +210,8 @@ sealed interface AgentEvent {
     ) : AgentEvent
 
     data object SkillsChanged : AgentEvent
+
+    data object PluginsChanged : AgentEvent
 
     data object ConnectorsChanged : AgentEvent
 

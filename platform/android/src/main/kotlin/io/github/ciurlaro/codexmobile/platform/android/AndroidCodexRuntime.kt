@@ -28,7 +28,6 @@ import kotlinx.coroutines.withContext
 
 internal class AndroidCodexRuntime(
     context: Context,
-    private val pluginBundle: BuiltInPluginBundle,
     private val runtimeOverride: File? = null,
 ) : CodexRuntime {
     private val appContext = context.applicationContext
@@ -57,7 +56,6 @@ internal class AndroidCodexRuntime(
             }
             val codexHome = File(appContext.noBackupFilesDir, "codex").requireDirectory()
             val home = File(appContext.filesDir, "home").requireDirectory()
-            pluginBundle.prepare(home)
             val certificateBundle = prepareCertificateBundle(codexHome)
             val logsDatabase = File(codexHome, LOGS_DATABASE_FILE)
             sanitizeExistingRuntimeLogs(logsDatabase)

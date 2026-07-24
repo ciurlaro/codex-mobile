@@ -30,7 +30,7 @@ class BuiltInMutationJournalDeviceTest {
             journal.find(call.copy(argumentsHash = "hash-b"))
         }
         assertThrows(IllegalArgumentException::class.java) {
-            journal.find(call.copy(tool = "telegram_send_file"))
+            journal.find(call.copy(tool = "sample_upload"))
         }
     }
 
@@ -47,12 +47,48 @@ class BuiltInMutationJournalDeviceTest {
         }
     }
 
-    private fun call(callId: String, hash: String) = BuiltInToolCall(
+    @Test
+    fun providerRemovalLeavesOnlyMinimalTerminalTombstones() {
+        val pluginId = "compact-${UUID.randomUUID()}@catalog"
+        val terminal = call(UUID.randomUUID().toString(), "terminal", pluginId)
+        val dispatched = call(UUID.randomUUID().toString(), "dispatched", pluginId)
+        val prepared = call(UUID.randomUUID().toString(), "prepared", pluginId)
+        val other = call(UUID.randomUUID().toString(), "other", "other-${UUID.randomUUID()}@catalog")
+        val otherResult = BuiltInToolResult.text("retained", false)
+        BuiltInMutationJournal(context).use { journal ->
+            journal.prepare(terminal)
+            journal.dispatched(terminal, "before", "after")
+            journal.finish(terminal, MutationState.SUCCEEDED, BuiltInToolResult.text("sensitive"), "before", "after")
+            journal.prepare(dispatched)
+            journal.dispatched(dispatched, "before", "after")
+            journal.prepare(prepared)
+            journal.prepare(other)
+            journal.finish(other, MutationState.FAILED, otherResult)
+
+            journal.compact(pluginId)
+
+            val terminalEntry = journal.find(terminal)
+            assertEquals(MutationState.SUCCEEDED, terminalEntry?.state)
+            assertNull(terminalEntry?.result)
+            assertNull(terminalEntry?.beforeHash)
+            assertNull(terminalEntry?.afterHash)
+            assertEquals(MutationState.INDETERMINATE, journal.find(dispatched)?.state)
+            assertNull(journal.find(dispatched)?.result)
+            assertNull(journal.find(prepared))
+            assertEquals(otherResult, journal.find(other)?.result)
+        }
+    }
+
+    private fun call(
+        callId: String,
+        hash: String,
+        pluginId: String = "sample@catalog",
+    ) = BuiltInToolCall(
         threadId = "thread",
         turnId = "turn",
         callId = callId,
-        pluginId = "telegram@codex-mobile",
-        tool = "telegram_send_text",
+        pluginId = pluginId,
+        tool = "sample_submit",
         arguments = buildJsonObject { put("message", "hello") },
         workspace = "/storage/emulated/0/Documents",
         argumentsHash = hash,

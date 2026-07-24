@@ -1,6 +1,7 @@
 package io.github.ciurlaro.codexmobile.platform.android
 
 import android.content.Context
+import android.content.Intent
 import io.github.ciurlaro.codexmobile.agent.codex.CodexRuntime
 import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolDispatcher
 import java.io.File
@@ -13,15 +14,13 @@ class AndroidPlatform internal constructor(
 
     private val appContext = context.applicationContext
     private val workspace = WorkspaceManager(appContext)
-    private val privateBackends = PrivateBackendBundle(appContext)
-    private val builtInPlugins = BuiltInPluginBundle(appContext)
-    val builtInToolDispatcher: BuiltInToolDispatcher =
-        AndroidBuiltInToolDispatcher(appContext, privateBackends, workspace)
+    private val providers = AndroidProviderRegistry(appContext)
+    val builtInToolDispatcher: BuiltInToolDispatcher? = providers.dispatcher
+    val providerPackages = AndroidProviderPackageManager(appContext, providers)
     val skillPackages = AndroidSkillPackageManager(appContext)
-    private val telegram = TelegramIntegration(privateBackends)
 
     fun createCodexRuntime(): CodexRuntime =
-        AndroidCodexRuntime(appContext, builtInPlugins, runtimeOverride)
+        AndroidCodexRuntime(appContext, runtimeOverride)
 
     fun hasStoragePermission(): Boolean = workspace.hasStoragePermission()
 
@@ -40,12 +39,17 @@ class AndroidPlatform internal constructor(
 
     fun clearWorkspace() = workspace.clear()
 
-    fun telegramAvailable(): Boolean = telegram.available
+    fun providerSettings(): List<ProviderSettingsEntry> = providers.settings()
 
-    fun telegramStatus(): TelegramStatus = telegram.status()
+    fun openProviderSettings(pluginId: String) {
+        val entry = providers.settings().singleOrNull { it.pluginId == pluginId }
+            ?: error("Provider settings are unavailable")
+        val activityClassName = checkNotNull(entry.activityClassName) { "Provider settings are unavailable" }
+        appContext.startActivity(
+            Intent().setClassName(appContext, activityClassName)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
 
-    fun startTelegramAuthentication(phoneNumber: String): TelegramAuthSession =
-        telegram.startAuthentication(phoneNumber)
-
-    fun disconnectTelegram(): TelegramDisconnectResult = telegram.disconnect()
+    suspend fun finishProviderRemoval(pluginId: String) = providerPackages.remove(pluginId)
 }

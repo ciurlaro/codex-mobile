@@ -58,6 +58,7 @@ import io.github.ciurlaro.codexmobile.core.AgentSkillScope
 @Composable
 internal fun CapabilitiesScreen(state: MainUiState, onEvent: (ChatUiEvent) -> Unit) {
     var showGitHubDialog by remember { mutableStateOf(false) }
+    var showPluginSourceDialog by remember { mutableStateOf(false) }
     LaunchedEffect(state.selectedSkillPackage) {
         if (state.selectedSkillPackage != null) showGitHubDialog = false
     }
@@ -71,6 +72,10 @@ internal fun CapabilitiesScreen(state: MainUiState, onEvent: (ChatUiEvent) -> Un
             onInstallFromGitHub = {
                 onEvent(ChatUiEvent.DismissGitHubSkillImport)
                 showGitHubDialog = true
+            },
+            onAddPluginSource = {
+                onEvent(ChatUiEvent.DismissPluginSource)
+                showPluginSourceDialog = true
             },
         )
     }
@@ -99,7 +104,57 @@ internal fun CapabilitiesScreen(state: MainUiState, onEvent: (ChatUiEvent) -> Un
             },
         )
     }
+    if (showPluginSourceDialog) {
+        PluginSourceDialog(
+            state = state,
+            onAdd = { onEvent(ChatUiEvent.AddPluginSource(it)) },
+            onDismiss = {
+                showPluginSourceDialog = false
+                onEvent(ChatUiEvent.DismissPluginSource)
+            },
+        )
+        LaunchedEffect(state.isPluginSourceLoading, state.pluginSourceError) {
+            if (!state.isPluginSourceLoading && state.pluginSourceError == null) showPluginSourceDialog = false
+        }
+    }
 }
+
+@Composable
+private fun PluginSourceDialog(state: MainUiState, onAdd: (String) -> Unit, onDismiss: () -> Unit) {
+    var url by remember { mutableStateOf(DEFAULT_PLUGIN_SOURCE) }
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Add plugin source") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = url,
+                    onValueChange = { url = it },
+                    label = { Text("Public GitHub marketplace repository") },
+                    supportingText = { Text(state.pluginSourceError ?: "https://github.com/owner/repository") },
+                    isError = state.pluginSourceError != null,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (state.isPluginSourceLoading) CapabilityLoading("Adding source…")
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = url.isNotBlank() && !state.isPluginSourceLoading,
+                onClick = {
+                    focusManager.clearFocus()
+                    keyboard?.hide()
+                    onAdd(url)
+                },
+            ) { Text("Add") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private const val DEFAULT_PLUGIN_SOURCE = "https://github.com/ciurlaro/codex-mobile-plugins"
 
 @Composable
 private fun GitHubSkillDialog(
@@ -184,6 +239,7 @@ private fun CapabilityCatalog(
     state: MainUiState,
     onEvent: (ChatUiEvent) -> Unit,
     onInstallFromGitHub: () -> Unit,
+    onAddPluginSource: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().statusAndNavigationPadding()) {
         CapabilityTopBar("Extensions") { onEvent(ChatUiEvent.CloseCapabilities) }
@@ -220,7 +276,7 @@ private fun CapabilityCatalog(
                 Button(onClick = { onEvent(ChatUiEvent.StartNewChat) }) { Text("New chat") }
             }
         }
-        CapabilityList(state, onEvent, onInstallFromGitHub)
+        CapabilityList(state, onEvent, onInstallFromGitHub, onAddPluginSource)
     }
 }
 
@@ -279,6 +335,7 @@ private fun CapabilityList(
     state: MainUiState,
     onEvent: (ChatUiEvent) -> Unit,
     onInstallFromGitHub: () -> Unit,
+    onAddPluginSource: () -> Unit,
 ) {
     val query = state.capabilitySearch.trim()
     val installed = state.capabilitySection == CapabilitySection.INSTALLED
@@ -327,6 +384,15 @@ private fun CapabilityList(
                     AppIcon(IconGlyph.PLUS, Modifier.size(18.dp), ChatColors.Accent)
                     Spacer(Modifier.size(8.dp))
                     Text("Install a skill from GitHub")
+                }
+            }
+        }
+        if (!installed && showPlugins) {
+            item("plugin-source") {
+                TextButton(onClick = onAddPluginSource, modifier = Modifier.fillMaxWidth()) {
+                    AppIcon(IconGlyph.PLUS, Modifier.size(18.dp), ChatColors.Accent)
+                    Spacer(Modifier.size(8.dp))
+                    Text("Add a plugin source from GitHub")
                 }
             }
         }
@@ -622,17 +688,25 @@ private fun PluginDetailScreen(detail: AgentPluginDetail, state: MainUiState, on
                         onClick = { onEvent(ChatUiEvent.InstallPlugin(detail.summary.reference)) },
                     ) { Text("Install") }
                 } else {
-                    Button(
-                        enabled = !state.isCapabilityMutationLoading,
-                        onClick = {
-                            onEvent(
-                                ChatUiEvent.RequestUninstallPlugin(
-                                    detail.summary.reference.id,
-                                    detail.summary.displayName,
-                                ),
-                            )
-                        },
-                    ) { Text("Uninstall") }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (detail.providerManaged) {
+                            Button(
+                                enabled = !state.isCapabilityMutationLoading,
+                                onClick = { onEvent(ChatUiEvent.InstallPlugin(detail.summary.reference)) },
+                            ) { Text("Repair or update") }
+                        }
+                        TextButton(
+                            enabled = !state.isCapabilityMutationLoading,
+                            onClick = {
+                                onEvent(
+                                    ChatUiEvent.RequestUninstallPlugin(
+                                        detail.summary.reference,
+                                        detail.summary.displayName,
+                                    ),
+                                )
+                            },
+                        ) { Text("Uninstall") }
+                    }
                 }
                 if (!detail.summary.available) {
                     Text("Unavailable under the current installation policy", color = ChatColors.Secondary)

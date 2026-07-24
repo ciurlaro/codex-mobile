@@ -8,6 +8,8 @@ import io.github.ciurlaro.codexmobile.core.AgentPluginUnavailableException
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -15,6 +17,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -26,6 +29,189 @@ import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
 class SkillsPluginsProtocolTest {
+    @Test
+    fun `github marketplace source uses app server marketplace method without assuming a branch`(): Unit = runBlocking {
+        val requests = mutableListOf<JsonObject>()
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "marketplace/add" -> {
+                    requests += message.objectValue["params"]!!.jsonObject
+                    server.respond(message.id, buildJsonObject {
+                        put("alreadyAdded", false)
+                        put("installedRoot", "/marketplace")
+                        put("marketplaceName", "plugins")
+                    })
+                }
+            }
+        }
+
+        CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000).use { client ->
+            client.addPluginMarketplace("https://github.com/owner/plugins")
+            client.addPluginMarketplace("https://github.com/owner/plugins/tree/release/catalog/mobile")
+        }
+
+        assertEquals("https://github.com/owner/plugins.git", requests[0]["source"]!!.jsonPrimitive.content)
+        assertFalse("refName" in requests[0])
+        assertFalse("sparsePaths" in requests[0])
+        assertEquals("release", requests[1]["refName"]!!.jsonPrimitive.content)
+        assertEquals("catalog/mobile", requests[1]["sparsePaths"]!!.jsonArray.single().jsonPrimitive.content)
+    }
+
+    @Test
+    fun `provider code installs before its plugin and is removed after uninstall`(): Unit = runBlocking {
+        val events = mutableListOf<String>()
+        val provider = object : PluginProviderHost {
+            private var installed = false
+            private var pending: AgentPluginReference? = null
+            override suspend fun install(
+                plugin: AgentPluginReference,
+                mcpServerNames: Set<String>,
+            ): ProviderInstallDisposition {
+                events += "provider-install"
+                assertEquals(setOf("drive"), mcpServerNames)
+                installed = true
+                pending = plugin
+                return ProviderInstallDisposition.READY
+            }
+            override fun pendingInstalls() = listOfNotNull(pending)
+            override fun installCompleted(pluginId: String) { events += "provider-complete"; pending = null }
+            override fun manages(pluginId: String) = installed
+            override fun mcpServerNames(pluginId: String) = setOf("drive")
+            override suspend fun prepareRemoval(pluginId: String): ProviderRemovalResult {
+                events += "provider-prepare"
+                return ProviderRemovalResult.ready()
+            }
+            override suspend fun remove(pluginId: String) { events += "provider-remove"; installed = false }
+        }
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/read" -> server.respond(message.id, pluginDetail(installed = false))
+                "plugin/install" -> {
+                    events += "plugin-install"
+                    server.respond(message.id, buildJsonObject {
+                        put("authPolicy", "ON_USE")
+                        putJsonArray("appsNeedingAuth") {}
+                    })
+                }
+                "config/value/write" -> { events += "plugin-disable"; server.respond(message.id, buildJsonObject {}) }
+                "plugin/uninstall" -> { events += "plugin-uninstall"; server.respond(message.id, buildJsonObject {}) }
+            }
+        }
+        val reference = AgentPluginReference("sample@catalog", "sample", "catalog")
+
+        CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000, providerHost = provider).use { client ->
+            client.installPlugin(reference)
+            client.uninstallPlugin(reference)
+        }
+
+        assertEquals(
+            listOf(
+                "provider-install", "plugin-disable", "plugin-install", "provider-complete", "plugin-disable",
+                "provider-prepare", "plugin-uninstall", "provider-remove",
+            ),
+            events,
+        )
+    }
+
+    @Test
+    fun `repairing provider code does not reinstall an installed plugin`(): Unit = runBlocking {
+        val events = mutableListOf<String>()
+        val provider = object : PluginProviderHost {
+            override suspend fun install(plugin: AgentPluginReference, mcpServerNames: Set<String>) =
+                ProviderInstallDisposition.READY.also { events += "provider-install" }
+            override fun manages(pluginId: String) = true
+            override fun mcpServerNames(pluginId: String) = setOf("drive")
+            override fun installCompleted(pluginId: String) { events += "provider-complete" }
+            override suspend fun prepareRemoval(pluginId: String) = ProviderRemovalResult.ready()
+            override suspend fun remove(pluginId: String) = Unit
+        }
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/read" -> server.respond(message.id, pluginDetail(installed = true))
+                "config/value/write" -> { events += "mcp-disable"; server.respond(message.id, buildJsonObject {}) }
+                "plugin/install" -> error("Repair must not reinstall the standard plugin")
+            }
+        }
+
+        CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000, providerHost = provider).use { client ->
+            client.installPlugin(AgentPluginReference("sample@catalog", "sample", "catalog"))
+        }
+
+        assertEquals(listOf("provider-install", "mcp-disable", "provider-complete"), events)
+    }
+
+    @Test
+    fun `retryable provider cleanup keeps its plugin and code installed but disabled`(): Unit = runBlocking {
+        val events = mutableListOf<String>()
+        val provider = object : PluginProviderHost {
+            override suspend fun install(plugin: AgentPluginReference, mcpServerNames: Set<String>) =
+                ProviderInstallDisposition.READY
+            override fun manages(pluginId: String) = true
+            override suspend fun prepareRemoval(pluginId: String): ProviderRemovalResult {
+                events += "provider-prepare"
+                return ProviderRemovalResult.retry("Remote revocation could not be confirmed")
+            }
+            override suspend fun remove(pluginId: String) { events += "provider-remove" }
+        }
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "config/value/write" -> { events += "plugin-disable"; server.respond(message.id, buildJsonObject {}) }
+                "plugin/uninstall" -> { events += "plugin-uninstall"; server.respond(message.id, buildJsonObject {}) }
+            }
+        }
+
+        val result = CodexAgentClient(
+            { runtime },
+            requestTimeoutMillis = 1_000,
+            providerHost = provider,
+        ).use { client ->
+            client.uninstallPlugin(AgentPluginReference("sample@catalog", "sample", "catalog"))
+        }
+
+        assertFalse(result.completed)
+        assertEquals("Remote revocation could not be confirmed", result.message)
+        assertEquals(listOf("plugin-disable", "provider-prepare"), events)
+    }
+
+    @Test
+    fun `prepared provider removal resumes after restart without delaying installed plugins`(): Unit = runBlocking {
+        val events = mutableListOf<String>()
+        val removed = CountDownLatch(1)
+        val reference = AgentPluginReference("drive@openai-curated", "drive", "openai-curated")
+        val provider = object : PluginProviderHost {
+            override suspend fun install(plugin: AgentPluginReference, mcpServerNames: Set<String>) =
+                ProviderInstallDisposition.NOT_REQUIRED
+            override fun preparedRemovals() = listOf(reference)
+            override fun manages(pluginId: String) = true
+            override suspend fun prepareRemoval(pluginId: String) = ProviderRemovalResult.ready()
+            override suspend fun remove(pluginId: String) {
+                events += "provider-remove"
+                removed.countDown()
+            }
+        }
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/installed" -> server.respond(message.id, pluginList(installed = true))
+                "plugin/uninstall" -> {
+                    events += "plugin-uninstall"
+                    server.respond(message.id, buildJsonObject {})
+                }
+            }
+        }
+
+        CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000, providerHost = provider).use { client ->
+            assertTrue(client.listInstalledPlugins("/workspace").plugins.single().installed)
+            assertTrue(removed.await(1, TimeUnit.SECONDS))
+        }
+
+        assertEquals(listOf("plugin-uninstall", "provider-remove"), events)
+    }
+
     @Test
     fun `encodes ordered deduplicated skill and plugin invocations`() {
         val skill = AgentInvocation.Skill("review", "/skills/review/SKILL.md")
@@ -143,7 +329,7 @@ class SkillsPluginsProtocolTest {
             assertTrue(plugin.installed)
             assertEquals("drive", client.readPlugin(plugin.reference).connectors.single().id)
             assertEquals("drive", client.installPlugin(plugin.reference).connectorsNeedingAuthentication.single().id)
-            client.uninstallPlugin(plugin.reference.id)
+            client.uninstallPlugin(plugin.reference)
             client.setPluginEnabled(plugin.reference.id, true)
             assertTrue(client.listConnectors().single().isAccessible)
             assertEquals("drive", client.listMcpServers().single().name)
@@ -219,7 +405,7 @@ class SkillsPluginsProtocolTest {
     }
 
     @Test
-    fun `available plugin discovery retries an initially empty catalog`(): Unit = runBlocking {
+    fun `available plugin discovery does not retry an empty catalog`(): Unit = runBlocking {
         var requests = 0
         val process = FakeCodexRuntime { message, server ->
             when (message.method) {
@@ -235,8 +421,8 @@ class SkillsPluginsProtocolTest {
         }
 
         CodexAgentClient({ process }, requestTimeoutMillis = 1_000).use { client ->
-            assertEquals("drive", client.listAvailablePlugins("/workspace").plugins.single().reference.name)
-            assertEquals(2, requests)
+            assertTrue(client.listAvailablePlugins("/workspace").plugins.isEmpty())
+            assertEquals(1, requests)
         }
     }
 
@@ -325,10 +511,10 @@ class SkillsPluginsProtocolTest {
         }
     }
 
-    private fun pluginDetail() = buildJsonObject {
+    private fun pluginDetail(installed: Boolean = true) = buildJsonObject {
         putJsonObject("plugin") {
             put("marketplaceName", "openai-curated")
-            put("summary", pluginSummary(true))
+            put("summary", pluginSummary(installed))
             putJsonArray("skills") {}
             putJsonArray("apps") { add(connector()) }
             putJsonArray("appTemplates") {}

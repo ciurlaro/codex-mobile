@@ -27,16 +27,11 @@ import io.github.ciurlaro.codexmobile.core.AgentSkill
 import io.github.ciurlaro.codexmobile.core.AgentSkillPackage
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
-import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthEvent
-import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthSession
-import io.github.ciurlaro.codexmobile.platform.android.TelegramDisconnectResult
 import java.util.ArrayDeque
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -68,7 +63,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             approvalPreset = chatPreferences.getString(APPROVAL_POLICY, null)
                 ?.let { saved -> AgentApprovalPreset.entries.firstOrNull { it.name == saved } }
                 ?: AgentApprovalPreset.NEVER,
-            isTelegramAvailable = graph.platform.telegramAvailable(),
+            providerSettings = graph.platform.providerSettings(),
         ),
     )
     private var serviceController: ForegroundSessionController? = null
@@ -79,17 +74,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var bindingRequested = false
     private var chatDataRequested = false
     private var activeAssistantMessageId: String? = null
-    private var telegramAuthSession: TelegramAuthSession? = null
-    private var telegramJob: Job? = null
     private var pendingConversationId: SessionId? = null
     private var selectionRestoredSessionId: SessionId? = null
     private var skillsRevision = 0
+    private var pluginsRevision = 0
     private var connectorsRevision = 0
     private var skillsJob: Job? = null
     private var availableSkillsJob: Job? = null
     private var installedPluginsJob: Job? = null
     private var availablePluginsJob: Job? = null
     private var skillSourceJob: Job? = null
+    private var pluginSourceJob: Job? = null
     private var integrationsLoaded = false
     private val pendingConnectorAuthentications = ArrayDeque<AgentConnector>()
     internal var serviceInstanceId: String? = null
@@ -114,6 +109,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (session.skillsRevision != skillsRevision) {
                         skillsRevision = session.skillsRevision
                         if (mutableState.value.skillsLoaded) loadSkills(forceReload = true)
+                    }
+                    if (session.pluginsRevision != pluginsRevision) {
+                        pluginsRevision = session.pluginsRevision
+                        if (mutableState.value.installedPluginsLoaded) loadInstalledPlugins(forceReload = true)
+                        mutableState.update { it.copy(providerSettings = graph.platform.providerSettings()) }
                     }
                     if (session.connectorsRevision != connectorsRevision) {
                         connectorsRevision = session.connectorsRevision
@@ -169,7 +169,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             authenticate()
         }
-        refreshTelegram()
     }
 
     fun authenticate() {
@@ -416,7 +415,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openSettings() {
         mutableState.update {
-            it.copy(screen = AppScreen.SETTINGS, isHistoryOpen = false, activeSelector = null)
+            it.copy(
+                screen = AppScreen.SETTINGS,
+                isHistoryOpen = false,
+                activeSelector = null,
+                providerSettings = graph.platform.providerSettings(),
+            )
         }
     }
 
@@ -604,6 +608,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun addPluginSource(url: String) {
+        val controller = serviceController ?: return
+        if (url.isBlank() || pluginSourceJob?.isActive == true) return
+        mutableState.update { it.copy(pluginSourceError = null, isPluginSourceLoading = true) }
+        pluginSourceJob = viewModelScope.launch {
+            runCatching { controller.addPluginMarketplace(url) }
+                .onSuccess {
+                    pluginSourceJob = null
+                    mutableState.update { it.copy(isPluginSourceLoading = false) }
+                    loadAvailablePlugins(forceReload = true)
+                }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    pluginSourceJob = null
+                    mutableState.update {
+                        it.copy(
+                            isPluginSourceLoading = false,
+                            pluginSourceError = error.message?.take(300) ?: "Plugin source could not be added",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun dismissPluginSource() {
+        pluginSourceJob?.cancel()
+        pluginSourceJob = null
+        mutableState.update { it.copy(pluginSourceError = null, isPluginSourceLoading = false) }
+    }
+
     fun loadMoreSkillSource() {
         val controller = serviceController ?: return
         val current = mutableState.value
@@ -700,6 +734,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         "Plugin could not be installed",
     ) {
         val result = serviceController?.installPlugin(plugin) ?: return@capabilityMutation
+        if (result.restartRequired) {
+            mutableState.update {
+                it.copy(
+                    statusMessage = result.message ?: "Restart Codex Mobile to finish installing the provider",
+                    selectedPlugin = null,
+                    providerSettings = graph.platform.providerSettings(),
+                )
+            }
+            return@capabilityMutation
+        }
         mutableState.update {
             it.copy(
                 pluginChangesNeedNewChat = true,
@@ -716,25 +760,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun uninstallPlugin(pluginId: String) = capabilityMutation(
-        "plugin:$pluginId",
+    private fun uninstallPlugin(plugin: AgentPluginReference) = capabilityMutation(
+        "plugin:${plugin.id}",
         "Plugin could not be removed",
     ) {
-        serviceController?.uninstallPlugin(pluginId)
+        val result = serviceController?.uninstallPlugin(plugin) ?: return@capabilityMutation
         mutableState.update {
             it.copy(
                 pluginChangesNeedNewChat = true,
                 selectedPlugin = null,
-                installedPlugins = it.installedPlugins.filterNot { plugin -> plugin.reference.id == pluginId },
+                statusMessage = result.message ?: if (result.completed) "Plugin removed" else it.statusMessage,
+                installedPlugins = if (result.restartRequired || result.completed) {
+                    it.installedPlugins.filterNot { candidate -> candidate.reference.id == plugin.id }
+                } else {
+                    it.installedPlugins
+                },
                 availablePluginsLoaded = false,
+                providerSettings = graph.platform.providerSettings(),
             )
         }
         loadInstalledPlugins(forceReload = true)
     }
 
-    fun requestUninstallPlugin(pluginId: String, displayName: String) {
+    fun requestUninstallPlugin(plugin: AgentPluginReference, displayName: String) {
         mutableState.update {
-            it.copy(pendingCapabilityRemoval = CapabilityRemoval.Plugin(pluginId, displayName))
+            it.copy(pendingCapabilityRemoval = CapabilityRemoval.Plugin(plugin, displayName))
         }
     }
 
@@ -763,7 +813,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             is CapabilityRemoval.Plugin -> {
                 mutableState.update { it.copy(pendingCapabilityRemoval = null) }
-                uninstallPlugin(removal.id)
+                uninstallPlugin(removal.plugin)
             }
             null -> Unit
         }
@@ -824,6 +874,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun openProviderSettings(pluginId: String) {
+        val entry = mutableState.value.providerSettings.singleOrNull { it.pluginId == pluginId }
+        if (entry?.activityClassName == null && entry?.removalNeedsRetry == true) {
+            viewModelScope.launch {
+                runCatching { graph.platform.finishProviderRemoval(pluginId) }
+                    .onSuccess {
+                        mutableState.update { state ->
+                            state.copy(statusMessage = "Restart Codex Mobile to verify provider removal")
+                        }
+                    }
+                    .onFailure { error ->
+                        mutableState.update { state ->
+                            state.copy(
+                                providerSettings = graph.platform.providerSettings(),
+                                statusMessage = error.message ?: "Provider code removal still needs retry",
+                            )
+                        }
+                    }
+            }
+            return
+        }
+        runCatching { graph.platform.openProviderSettings(pluginId) }
+            .onFailure { error ->
+                mutableState.update {
+                    it.copy(statusMessage = error.message ?: "Provider settings are unavailable")
+                }
+            }
+    }
+
     fun resolveElicitation(requestId: String, response: AgentElicitationResponse) {
         serviceController?.resolveElicitation(requestId, response)
     }
@@ -877,87 +956,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resolveCodexApproval(requestId: String, decision: AgentApprovalDecision) {
         serviceController?.resolveApproval(requestId, decision)
-    }
-
-    fun connectTelegram(phoneNumber: String) {
-        if (telegramJob?.isActive == true) return
-        cancelTelegramAuthentication()
-        mutableState.update {
-            it.copy(isTelegramOperationInProgress = true, telegramAuthPrompt = null, telegramError = null)
-        }
-        telegramJob = viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val session = graph.platform.startTelegramAuthentication(phoneNumber)
-                if (!isActive) {
-                    session.close()
-                    return@launch
-                }
-                try {
-                    telegramAuthSession = session
-                    readTelegramEvent(session)
-                } catch (error: Exception) {
-                    session.close()
-                    telegramAuthSession = null
-                    throw error
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                mutableState.update {
-                    it.copy(isTelegramOperationInProgress = false, telegramError = error.message ?: "Telegram login failed")
-                }
-            }
-        }
-    }
-
-    fun disconnectTelegram() {
-        if (telegramJob?.isActive == true) return
-        cancelTelegramAuthentication()
-        mutableState.update { it.copy(isTelegramOperationInProgress = true, telegramError = null) }
-        telegramJob = viewModelScope.launch(Dispatchers.IO) {
-            val disconnected = runCatching { graph.platform.disconnectTelegram() }
-                .getOrDefault(TelegramDisconnectResult.INDETERMINATE)
-            mutableState.update {
-                if (disconnected == TelegramDisconnectResult.CONFIRMED) {
-                    it.copy(
-                        statusMessage = "Telegram integration disconnected",
-                        isTelegramConnected = false,
-                        telegramUsername = null,
-                        isTelegramOperationInProgress = false,
-                    )
-                } else {
-                    it.copy(
-                        isTelegramOperationInProgress = false,
-                        telegramError = "Telegram logout is indeterminate and was not retried. Check Telegram before trying again.",
-                    )
-                }
-            }
-        }
-    }
-
-    fun submitTelegramAuthentication(value: String) {
-        val session = telegramAuthSession ?: return
-        if (value.isBlank() || telegramJob?.isActive == true) return
-        mutableState.update { it.copy(isTelegramOperationInProgress = true, telegramError = null) }
-        telegramJob = viewModelScope.launch(Dispatchers.IO) {
-            runCatching { session.submitAnswer(value.trim()) }
-                .onSuccess { readTelegramEvent(session) }
-                .onFailure { error ->
-                    mutableState.update {
-                        it.copy(isTelegramOperationInProgress = false, telegramError = error.message ?: "Telegram login failed")
-                    }
-                }
-        }
-    }
-
-    fun cancelTelegramAuthentication() {
-        telegramJob?.cancel()
-        telegramJob = null
-        telegramAuthSession?.close()
-        telegramAuthSession = null
-        mutableState.update {
-            it.copy(isTelegramOperationInProgress = false, telegramAuthPrompt = null, telegramError = null)
-        }
     }
 
     fun addCapability(capability: AgentCapability) {
@@ -1103,10 +1101,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isBackgroundNotificationVisible = serviceController?.let {
                     notificationsEnabled?.invoke() ?: false
                 } ?: it.isBackgroundNotificationVisible,
-                isTelegramAvailable = graph.platform.telegramAvailable(),
+                providerSettings = graph.platform.providerSettings(),
             )
         }
-        refreshTelegram()
     }
 
     override fun onCleared() {
@@ -1116,8 +1113,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         installedPluginsJob?.cancel()
         availablePluginsJob?.cancel()
         skillSourceJob?.cancel()
-        telegramJob?.cancel()
-        telegramAuthSession?.close()
         if (bindingRequested) runCatching { appContext.unbindService(serviceConnection) }
         bindingRequested = false
         serviceController = null
@@ -1273,23 +1268,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun loadAvailablePlugins(forceReload: Boolean) {
         val controller = serviceController ?: return
         val current = mutableState.value
-        if (!forceReload && (current.availablePluginsLoaded || availablePluginsJob?.isActive == true)) return
-        if (forceReload) availablePluginsJob?.cancel()
+        if (availablePluginsJob?.isActive == true || (!forceReload && current.availablePluginsLoaded)) return
         val workingDirectory = graph.platform.activeWorkspacePath() ?: return
         mutableState.update { it.copy(isAvailablePluginsLoading = true, availablePluginsError = null) }
         availablePluginsJob = viewModelScope.launch {
             runCatching { controller.listAvailablePlugins(workingDirectory, forceReload) }
                 .onSuccess { catalog ->
+                    val refreshAfterCache = !forceReload && catalog.freshness != AgentCatalogFreshness.LIVE
                     mutableState.update {
                         val installedIds = it.installedPlugins.map { plugin -> plugin.reference.id }.toSet()
                         it.copy(
                             availablePlugins = catalog.plugins.filterNot { plugin -> plugin.reference.id in installedIds },
                             availablePluginsLoaded = true,
-                            isAvailablePluginsLoading = false,
+                            isAvailablePluginsLoading = refreshAfterCache,
                             availablePluginsError = catalog.errors.distinct().joinToString("\n").ifBlank { null },
                         )
                     }
-                    if (!forceReload && catalog.freshness == AgentCatalogFreshness.STALE_CACHE) {
+                    if (refreshAfterCache) {
                         availablePluginsJob = null
                         loadAvailablePlugins(forceReload = true)
                     }
@@ -1300,7 +1295,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         it.copy(
                             availablePluginsLoaded = true,
                             isAvailablePluginsLoading = false,
-                            availablePluginsError = "Available plugins could not be refreshed. Check your connection and retry.",
+                            availablePluginsError = error.message?.take(300)
+                                ?: "Available plugins could not be refreshed",
                         )
                     }
                 }
@@ -1419,55 +1415,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun persistPinnedConversations(ids: Set<String>) {
         chatPreferences.edit().putStringSet(PINNED_CONVERSATIONS, ids.toSet()).apply()
-    }
-
-    private fun refreshTelegram() {
-        if (!graph.platform.telegramAvailable() || telegramAuthSession != null || telegramJob?.isActive == true) {
-            return
-        }
-        telegramJob = viewModelScope.launch(Dispatchers.IO) {
-            val statusMessage = runCatching { graph.platform.telegramStatus() }.getOrNull()
-            mutableState.update {
-                it.copy(
-                    isTelegramAvailable = statusMessage?.available ?: graph.platform.telegramAvailable(),
-                    isTelegramConnected = statusMessage?.connected == true,
-                    telegramUsername = statusMessage?.username,
-                    isTelegramOperationInProgress = false,
-                )
-            }
-        }
-    }
-
-    private fun readTelegramEvent(session: TelegramAuthSession) {
-        when (val event = session.awaitEvent()) {
-            is TelegramAuthEvent.Prompt -> mutableState.update {
-                it.copy(isTelegramOperationInProgress = false, telegramAuthPrompt = event.prompt, telegramError = null)
-            }
-
-            is TelegramAuthEvent.Connected -> {
-                session.close()
-                telegramAuthSession = null
-                val statusMessage = runCatching { graph.platform.telegramStatus() }.getOrNull()
-                mutableState.update {
-                    it.copy(
-                        statusMessage = "Telegram integration connected",
-                        isTelegramConnected = true,
-                        telegramUsername = statusMessage?.username ?: event.username,
-                        telegramAuthPrompt = null,
-                        isTelegramOperationInProgress = false,
-                        telegramError = null,
-                    )
-                }
-            }
-
-            is TelegramAuthEvent.Failed -> {
-                session.close()
-                telegramAuthSession = null
-                mutableState.update {
-                    it.copy(telegramAuthPrompt = null, isTelegramOperationInProgress = false, telegramError = event.message)
-                }
-            }
-        }
     }
 
     private fun applySessionState(

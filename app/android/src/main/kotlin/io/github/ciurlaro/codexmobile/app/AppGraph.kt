@@ -20,7 +20,9 @@ internal class AppGraph(context: Context) {
         runtimeFactory = platform::createCodexRuntime,
         clientVersion = clientVersion,
         pluginCacheDirectory = java.io.File(appContext.cacheDir, "plugin-catalogs"),
+        threadProviderStateDirectory = java.io.File(appContext.noBackupFilesDir, "thread-providers"),
         builtInToolDispatcher = platform.builtInToolDispatcher,
+        providerHost = platform.providerPackages,
     )
 
     fun authorizeForegroundStart(): String = UUID.randomUUID().toString().also {

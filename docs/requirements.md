@@ -1,41 +1,27 @@
 # Requirements
 
-## Product hypothesis
-
-A stock ARM64 Android device can run a bundled Codex app-server with a desktop-like shell rooted initially in a user-selected shared-storage workspace, while Android supplies only the capabilities the shell cannot provide.
-
-## Required outcomes
+## Product outcomes
 
 | ID | Outcome |
 |---|---|
-| R1 | Package, authenticate, converse, stream, cancel, and restart the pinned Codex runtime. |
-| R2 | Let the user grant all-files access and choose the absolute `cwd` sent with every turn. |
-| R3 | Let Codex perform ordinary file CRUD and overwrite through its shell. |
-| R4 | Provide installed-by-default Documents and Telegram plugins through pinned app-server dynamic tools, with strict bounded schemas and immediate enablement checks. |
-| R5 | Let users choose Never, Auto review, Ask me, or Strict approval; default to Never. |
-| R6 | Let users choose model, reasoning level, and supported speed tier. |
-| R7 | Render standard Markdown safely, including code, headings, lists, tables, and HTTPS links. |
-| R8 | Keep the composer visible with the keyboard and visibly animate active thinking. |
-| R9 | Offer browserless Telegram login in Settings and one-shot typed Telegram reads, downloads, and sends backed privately by `tgcli`. |
-| R12 | Keep native document and Telegram binaries off Codex's shell `PATH`; invoke them only through fixed absolute-path Android handlers. |
-| R13 | Journal typed mutations so duplicate delivery returns the exact terminal result and no crash can resubmit a dispatched provider action. |
-| R10 | Show an operation-specific foreground notification only while work is active. |
-| R11 | Meet security, privacy, accessibility, compatibility, and release gates. |
+| R1 | Package, authenticate, converse, stream, cancel, and restart Codex App Server `0.144.6`. |
+| R2 | Let the user grant all-files access and select the absolute `cwd` sent with every turn. |
+| R3 | Preserve ordinary shell work through App Server. |
+| R4 | Add public GitHub Codex marketplace sources through App Server and render a cache-first catalog during one bounded refresh. |
+| R5 | Install standard plugins and optional signed Android provider splits from the same source. |
+| R6 | Keep App Server plugin configuration as the sole enablement truth; disabling retains provider code and state, while uninstall removes them. |
+| R7 | Preserve existing conversations and notify App Server when provider availability changes. |
+| R8 | Accept only closed typed provider schemas, never commands, argv, arbitrary property maps, or executable adapters. |
+| R9 | Preserve workspace containment, approvals, cancellation, deadlines, mutation journaling, exact replay, and indeterminate outcomes around every provider call. |
+| R10 | Keep App Server as the only standalone child process launched by the Android host. |
+| R11 | Preserve official plugins, ChatGPT authentication, foreground lifecycle, Markdown, model selection, and conversations. |
 
-## Hard constraints
+## Constraints
 
-- Never log credentials, authorization codes, prompts, responses, or document contents by default.
-- Keep Android SDK types out of `:core`.
-- Reject malformed app-server frames and approval requests.
-- Keep private backend versions and downloads pinned; bound document extraction, OCR, rendering, and Telegram output.
-- Restrict typed file paths to the selected shared-storage workspace and reject app-private, protected, and escaped paths.
-- Preserve app-server plugin configuration as the only persisted enablement authority.
-- Accept only HTTP(S) links from rendered model Markdown.
-- Explain clearly that all-files access is broad and the selected workspace is a starting directory, not a sandbox.
-
-## Not in scope
-
-- Accessibility-service automation.
-- General background scheduling or an idle persistent notification.
-- Additional messaging integrations before a concrete use case.
-- KMP, iOS, or runtime self-update.
+- Provider package URLs use HTTPS GitHub assets, bounded downloads, and pinned SHA-256 values.
+- Android validates provider package name, version code, and signing certificate through an inherited package session.
+- Provider presence, plugin enablement, and provider-specific health remain separate states.
+- New chats advertise only enabled installed provider tools and skills; every invocation rechecks current authority and fails closed.
+- Split installation and removal may restart the app and complete only after post-restart verification.
+- Base updates include exact-version replacements for installed splits in the same Android transaction or follow completed provider removal.
+- The base project adds no multiplatform target or speculative provider framework.

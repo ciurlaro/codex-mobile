@@ -19,6 +19,7 @@ import io.github.ciurlaro.codexmobile.core.AgentPluginCatalog
 import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
 import io.github.ciurlaro.codexmobile.core.AgentPluginInstallResult
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentPluginRemovalResult
 import io.github.ciurlaro.codexmobile.core.AgentPluginUnavailableException
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentServiceTier
@@ -28,8 +29,11 @@ import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
 import io.github.ciurlaro.codexmobile.core.SessionId
 import java.io.File
+import java.net.URI
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -37,7 +41,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -66,7 +69,9 @@ class CodexAgentClient(
     requestTimeoutMillis: Long = 20_000,
     private val clientVersion: String = "test",
     private val pluginCacheDirectory: File? = null,
+    threadProviderStateDirectory: File? = null,
     private val builtInToolDispatcher: BuiltInToolDispatcher? = null,
+    private val providerHost: PluginProviderHost? = null,
 ) : AgentClient {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val eventsChannel = Channel<AgentEvent>(capacity = EVENT_BUFFER_SIZE)
@@ -81,12 +86,17 @@ class CodexAgentClient(
     private val knownSkillPaths = ConcurrentHashMap.newKeySet<String>()
     private val openedSessions = ConcurrentHashMap.newKeySet<SessionId>()
     private val sessionRuntimeSettings = ConcurrentHashMap<SessionId, SessionRuntimeSettings>()
+    private val pendingAvailabilityNotices = ConcurrentHashMap<SessionId, PendingAvailabilityNotice>()
+    private val threadProviderStateStore = ThreadProviderStateStore(threadProviderStateDirectory)
+    private val threadProviderStates = ConcurrentHashMap<SessionId, ThreadProviderState>()
+    private val builtInToolDefinitions = builtInToolDispatcher?.definitions().orEmpty()
+    private val builtInToolsByName = builtInToolDefinitions.associateBy(BuiltInToolDefinition::name)
     private val builtInPluginEnabled = ConcurrentHashMap<String, Boolean>().apply {
-        put(DOCUMENTS_PLUGIN_ID, true)
-        put(TELEGRAM_PLUGIN_ID, true)
+        builtInToolDefinitions.map(BuiltInToolDefinition::pluginId).distinct().forEach { put(it, true) }
     }
     private val builtInToolGate = Mutex()
     private val builtInEnablementLoaded = AtomicBoolean(false)
+    private val pendingProviderCompletionRunning = AtomicBoolean(false)
     private val turnStateLock = Any()
     private val activeTurns = mutableMapOf<SessionId, String>()
     private val startingTurns = mutableSetOf<SessionId>()
@@ -299,8 +309,11 @@ class CodexAgentClient(
         )
     }
 
-    override suspend fun listInstalledPlugins(workingDirectory: String): AgentPluginCatalog =
-        listPlugins(workingDirectory, "plugin/installed")
+    override suspend fun listInstalledPlugins(workingDirectory: String): AgentPluginCatalog {
+        val catalog = listPlugins(workingDirectory, "plugin/installed")
+        reconcileProvidersInBackground(catalog)
+        return catalog
+    }
 
     override suspend fun listAvailablePlugins(
         workingDirectory: String,
@@ -308,23 +321,14 @@ class CodexAgentClient(
     ): AgentPluginCatalog {
         require(workingDirectory.startsWith('/')) { "Working directory must be absolute" }
         val cache = pluginCacheFile(workingDirectory)
-        if (!forceRefresh) readPluginCache(cache)?.takeIf { it.plugins.isNotEmpty() }?.let { return it }
+        if (!forceRefresh) readPluginCache(cache)?.let { return it }
         return runCatching {
-            var catalog = listPlugins(workingDirectory, "plugin/list", PLUGIN_CATALOG_TIMEOUT_MILLIS) {
+            val catalog = listPlugins(workingDirectory, "plugin/list", PLUGIN_CATALOG_TIMEOUT_MILLIS) {
                 writePluginCache(cache, it)
             }
-            for (retryDelay in EMPTY_PLUGIN_CATALOG_RETRY_DELAYS_MILLIS) {
-                if (catalog.plugins.isNotEmpty() || catalog.errors.isNotEmpty()) break
-                delay(retryDelay)
-                catalog = listPlugins(workingDirectory, "plugin/list", PLUGIN_CATALOG_TIMEOUT_MILLIS) {
-                    writePluginCache(cache, it)
-                }
-            }
-            if (catalog.plugins.isEmpty() && catalog.errors.isEmpty()) catalog.copy(
-                errors = listOf("The plugin marketplace is not ready yet. Retry in a moment."),
-            ) else catalog
+            catalog
         }.getOrElse { error ->
-            readPluginCache(cache, stale = true)?.takeIf { it.plugins.isNotEmpty() }?.copy(
+            readPluginCache(cache, stale = true)?.copy(
                 errors = listOfNotNull(error.message ?: "Available plugins could not be refreshed"),
             ) ?: throw error
         }
@@ -351,7 +355,7 @@ class CodexAgentClient(
                 builtInEnablementLoaded.set(true)
             }
         }
-        if (catalog.plugins.isNotEmpty()) runCatching { onResponse(result) }
+        runCatching { onResponse(result) }
         return catalog
     }
 
@@ -389,25 +393,65 @@ class CodexAgentClient(
         }
         val next = File(file.parentFile, ".${file.name}.next")
         next.writeText(response.toString())
-        check((!file.exists() || file.delete()) && next.renameTo(file)) {
-            "Unable to update plugin catalog cache"
-        }
+        Files.move(
+            next.toPath(),
+            file.toPath(),
+            StandardCopyOption.ATOMIC_MOVE,
+            StandardCopyOption.REPLACE_EXISTING,
+        )
     }
 
     override suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail {
         return try {
-            parsePluginDetail(request("plugin/read", pluginParams(plugin)).jsonObject)
+            parsePluginDetail(request("plugin/read", pluginParams(plugin)).jsonObject).let { detail ->
+                detail.copy(providerManaged = providerHost?.manages(plugin.id) == true)
+            }
         } catch (error: RpcException) {
             throw error.forPlugin(plugin)
         }
     }
 
+    override suspend fun addPluginMarketplace(sourceUrl: String) {
+        val source = parseGitHubMarketplaceSource(sourceUrl)
+        request(
+            "marketplace/add",
+            buildJsonObject {
+                put("source", source.repository)
+                source.refName?.let { put("refName", it) }
+                source.sparsePaths?.let { paths ->
+                    put("sparsePaths", buildJsonArray { paths.forEach { add(JsonPrimitive(it)) } })
+                }
+            },
+        )
+        eventsChannel.send(AgentEvent.PluginsChanged)
+    }
+
     override suspend fun installPlugin(plugin: AgentPluginReference): AgentPluginInstallResult {
+        val host = providerHost
+        val detail = host?.let { readPlugin(plugin) }
+        val disposition = host?.install(plugin, detail?.mcpServers.orEmpty().toSet())
+            ?: ProviderInstallDisposition.NOT_REQUIRED
+        if (disposition == ProviderInstallDisposition.RESTART_REQUIRED) {
+            return AgentPluginInstallResult(
+                authPolicy = AgentPluginAuthPolicy.ON_USE,
+                connectorsNeedingAuthentication = emptyList(),
+                restartRequired = true,
+                message = "Restart Codex Mobile to verify and finish installing this provider.",
+            )
+        }
+        if (disposition == ProviderInstallDisposition.READY) disableManagedProviderMcp(plugin.id)
+        if (disposition == ProviderInstallDisposition.READY && detail?.summary?.installed == true) {
+            checkNotNull(host).installCompleted(plugin.id)
+            eventsChannel.send(AgentEvent.PluginsChanged)
+            return AgentPluginInstallResult(detail.summary.authPolicy, emptyList())
+        }
         val result = try {
             request("plugin/install", pluginParams(plugin)).jsonObject
-        } catch (error: RpcException) {
-            throw error.forPlugin(plugin)
+        } catch (error: Throwable) {
+            throw if (error is RpcException) error.forPlugin(plugin) else error
         }
+        if (disposition == ProviderInstallDisposition.READY) host?.installCompleted(plugin.id)
+        eventsChannel.send(AgentEvent.PluginsChanged)
         return AgentPluginInstallResult(
             authPolicy = enumValueOf(result.requiredString("authPolicy")),
             connectorsNeedingAuthentication = result.requiredArray("appsNeedingAuth").map {
@@ -416,10 +460,36 @@ class CodexAgentClient(
         )
     }
 
-    override suspend fun uninstallPlugin(pluginId: String) {
-        require(pluginId.isNotBlank()) { "Plugin ID must not be blank" }
-        require(!builtInPluginEnabled.containsKey(pluginId)) { "Built-in plugins cannot be uninstalled" }
-        request("plugin/uninstall", buildJsonObject { put("pluginId", pluginId) })
+    override suspend fun uninstallPlugin(plugin: AgentPluginReference): AgentPluginRemovalResult {
+        require(plugin.id.isNotBlank()) { "Plugin ID must not be blank" }
+        val host = providerHost?.takeIf { it.manages(plugin.id) }
+        var removalWarning: String? = null
+        if (host != null) {
+            setPluginEnabled(plugin.id, false)
+            val preparation = host.prepareRemoval(plugin.id)
+            if (preparation.state == ProviderRemovalState.RETRY_REQUIRED) {
+                return AgentPluginRemovalResult(
+                    completed = false,
+                    message = preparation.message ?: "Provider cleanup needs retry before uninstall can continue.",
+                )
+            }
+            removalWarning = preparation.message
+        }
+        request("plugin/uninstall", buildJsonObject { put("pluginId", plugin.id) })
+        if (host != null) {
+            host.remove(plugin.id)
+            eventsChannel.send(AgentEvent.PluginsChanged)
+            return AgentPluginRemovalResult(
+                completed = false,
+                restartRequired = true,
+                message = listOfNotNull(
+                    removalWarning,
+                    "Restart Codex Mobile to verify that the provider code was removed.",
+                ).joinToString(" "),
+            )
+        }
+        eventsChannel.send(AgentEvent.PluginsChanged)
+        return AgentPluginRemovalResult(completed = true)
     }
 
     override suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) {
@@ -432,6 +502,7 @@ class CodexAgentClient(
                 )
                 builtInPluginEnabled[pluginId] = enabled
             }
+            notifyOpenSessionsOfPluginAvailability()
         } else {
             request("config/value/write", pluginEnablementParams(pluginId, enabled))
         }
@@ -506,6 +577,9 @@ class CodexAgentClient(
         )
         openedSessions -= sessionId
         sessionRuntimeSettings -= sessionId
+        pendingAvailabilityNotices -= sessionId
+        threadProviderStates -= sessionId
+        threadProviderStateStore.delete(sessionId.value)
         synchronized(turnStateLock) {
             activeTurns -= sessionId
             startingTurns -= sessionId
@@ -516,6 +590,7 @@ class CodexAgentClient(
     }
 
     override suspend fun openSession(previous: SessionId?, settings: AgentRuntimeSettings): SessionId {
+        completePendingProviderInstalls()
         if (builtInToolDispatcher != null) {
             connection.ensureStarted()
             refreshBuiltInPluginEnablement(settings.workingDirectory ?: "/")
@@ -532,7 +607,7 @@ class CodexAgentClient(
                 "developerInstructions",
                 "Answer conversationally using Markdown. The shell starts in the user's selected Android " +
                     "workspace and may use ordinary shell commands to inspect and modify files. Use enabled " +
-                    "built-in plugin tools for Documents and Telegram; their private backends are not shell commands. Use the " +
+                    "plugin tools through their advertised typed contracts. Use the " +
                     "built-in web search tool only when the user input contains the structured " +
                     "'${AgentCapability.WEB_SEARCH.promptLabel}' prompt tag.",
             )
@@ -541,6 +616,7 @@ class CodexAgentClient(
                     "dynamicTools",
                     builtInDynamicTools(
                         builtInPluginEnabled.filterValues { it }.keys,
+                        builtInToolDefinitions,
                     ),
                 )
             }
@@ -592,10 +668,22 @@ class CodexAgentClient(
                 serviceTier = result.optionalString("serviceTier"),
             ),
         )
+        if (previous == null) {
+            val original = builtInPluginEnabled.filterValues { it }.keys.toSet()
+            val state = ThreadProviderState(original, original.associateWith { true })
+            threadProviderStates[sessionId] = state
+            runCatching { threadProviderStateStore.write(sessionId.value, state) }
+        } else {
+            val state = threadProviderStateStore.read(sessionId.value)
+                ?: ThreadProviderState(emptySet(), emptyMap())
+            threadProviderStates[sessionId] = state
+            notifySessionOfPluginAvailability(sessionId)
+        }
         return sessionId
     }
 
     override suspend fun sendTurn(sessionId: SessionId, request: AgentTurnRequest) {
+        flushPluginAvailabilityNotice(sessionId)
         val snapshot = request.copy(
             capabilities = request.capabilities.toSet(),
             invocations = request.invocations.distinctBy(AgentInvocation::key),
@@ -757,6 +845,8 @@ class CodexAgentClient(
         knownSkillPaths.clear()
         openedSessions.clear()
         sessionRuntimeSettings.clear()
+        pendingAvailabilityNotices.clear()
+        threadProviderStates.clear()
         connection.close()
         scope.cancel()
         eventsChannel.close()
@@ -773,6 +863,100 @@ class CodexAgentClient(
         } else {
             connection.request(method, params, timeoutMillis)
         }
+    }
+
+    private suspend fun notifyOpenSessionsOfPluginAvailability() {
+        openedSessions.forEach { notifySessionOfPluginAvailability(it) }
+    }
+
+    private suspend fun notifySessionOfPluginAvailability(sessionId: SessionId) {
+        val state = threadProviderStates[sessionId] ?: return
+        val availability = state.originalPluginIds.associateWith { builtInPluginEnabled[it] == true }
+        if (availability == state.lastAvailability) return
+        sendPluginAvailabilityNotice(
+            sessionId,
+            PendingAvailabilityNotice(pluginAvailabilityNotice(availability), availability),
+        )
+    }
+
+    private fun pluginAvailabilityNotice(availability: Map<String, Boolean>): String = buildString {
+        append("Codex Mobile plugin availability changed. Current state: ")
+        append(
+            availability.entries.joinToString { (pluginId, enabled) ->
+                "$pluginId=${if (enabled) "enabled" else "unavailable"}"
+            },
+        )
+        append(". Use only enabled plugin tools that are registered in this thread. ")
+        append("Do not rely on unavailable plugin skill instructions; continue the session normally.")
+    }
+
+    private suspend fun sendPluginAvailabilityNotice(sessionId: SessionId, pending: PendingAvailabilityNotice) {
+        val notice = pending.text
+        pendingAvailabilityNotices[sessionId] = pending
+        val activeTurn = synchronized(turnStateLock) { activeTurns[sessionId] }
+        val delivered = runCatching {
+            if (activeTurn == null) {
+                request(
+                    "thread/inject_items",
+                    buildJsonObject {
+                        put("threadId", sessionId.value)
+                        put(
+                            "items",
+                            buildJsonArray {
+                                add(
+                                    buildJsonObject {
+                                        put("type", "message")
+                                        put("role", "developer")
+                                        put(
+                                            "content",
+                                            buildJsonArray {
+                                                add(
+                                                    buildJsonObject {
+                                                        put("type", "input_text")
+                                                        put("text", notice)
+                                                    },
+                                                )
+                                            },
+                                        )
+                                    },
+                                )
+                            },
+                        )
+                    },
+                )
+            } else {
+                request(
+                    "turn/steer",
+                    buildJsonObject {
+                        put("threadId", sessionId.value)
+                        put("expectedTurnId", activeTurn)
+                        put("clientUserMessageId", "$AVAILABILITY_MESSAGE_PREFIX:${System.nanoTime()}")
+                        put(
+                            "input",
+                            buildJsonArray {
+                                add(buildJsonObject { put("type", "text"); put("text", notice) })
+                            },
+                        )
+                        putJsonObject("additionalContext") {
+                            putJsonObject("codex-mobile.plugin-availability") {
+                                put("value", notice)
+                                put("kind", "application")
+                            }
+                        }
+                    },
+                )
+            }
+        }.isSuccess
+        if (delivered && pendingAvailabilityNotices.remove(sessionId, pending)) {
+            val state = threadProviderStates[sessionId] ?: return
+            val updated = state.copy(lastAvailability = pending.availability)
+            threadProviderStates[sessionId] = updated
+            runCatching { threadProviderStateStore.write(sessionId.value, updated) }
+        }
+    }
+
+    private suspend fun flushPluginAvailabilityNotice(sessionId: SessionId) {
+        pendingAvailabilityNotices[sessionId]?.let { sendPluginAvailabilityNotice(sessionId, it) }
     }
 
     private suspend fun refreshBuiltInPluginEnablement(workingDirectory: String) {
@@ -831,7 +1015,8 @@ class CodexAgentClient(
                 "Built-in tools do not use namespaces"
             }
             val tool = params.requiredString("tool")
-            val pluginId = BUILT_IN_TOOL_PLUGINS[tool] ?: error("Unknown built-in tool")
+            val definition = builtInToolsByName[tool] ?: error("Unknown built-in tool")
+            val pluginId = definition.pluginId
             val sessionId = SessionId(params.requiredString("threadId"))
             check(sessionId in openedSessions) { "Tool call session is not open" }
             val runtimeSettings = sessionRuntimeSettings[sessionId]
@@ -857,7 +1042,7 @@ class CodexAgentClient(
                 wireId = id,
                 call = call,
                 deadlineEpochMillis = startedAt + BUILT_IN_TOOL_DEADLINE_MILLIS,
-                requiresPermit = tool in BUILT_IN_MUTATION_TOOLS &&
+                requiresPermit = definition.mutation &&
                     typedMutationAuthority(runtimeSettings.approvalPreset) ==
                     TypedMutationAuthority.USER_APPROVAL,
             )
@@ -891,7 +1076,7 @@ class CodexAgentClient(
                 pending.wireId,
                 BuiltInToolResult.text("Tool call session settings are unavailable", false),
             )
-        if (pending.call.tool in BUILT_IN_MUTATION_TOOLS) {
+        if (builtInToolsByName[pending.call.tool]?.mutation == true) {
             when (typedMutationAuthority(runtimeSettings.approvalPreset)) {
                 TypedMutationAuthority.UNAVAILABLE -> {
                     respondBuiltInResult(
@@ -934,12 +1119,17 @@ class CodexAgentClient(
         val result = runCatching {
             builtInToolGate.withLock {
                 validateBuiltInCall(pending)
-                if (pending.requiresPermit) {
-                    check(pending.permit.compareAndSet(true, false)) {
-                        "Built-in mutation approval is missing or was already used"
+                checkNotNull(builtInToolDispatcher).execute(pending.call) {
+                    validateBuiltInCall(pending)
+                    check(pending.dispatch.compareAndSet(false, true)) {
+                        "Built-in mutation dispatch was already used"
+                    }
+                    if (pending.requiresPermit) {
+                        check(pending.permit.compareAndSet(true, false)) {
+                            "Built-in mutation approval is missing or was already used"
+                        }
                     }
                 }
-                checkNotNull(builtInToolDispatcher).execute(pending.call)
             }
         }.getOrElse { error -> BuiltInToolResult.text(error.visibleMessage(), false) }
         runCatching { respondBuiltInResult(pending.wireId, result) }
@@ -1215,6 +1405,9 @@ class CodexAgentClient(
         cancelPendingBuiltInTools(sessionId, turnId, "Built-in tool call is no longer active")
         val removedWork = workItems.entries.removeIf { it.value.first == sessionId }
         if (removedWork) emitBlocking(AgentEvent.WorkActivityChanged(sessionId, null))
+        if (pendingAvailabilityNotices.containsKey(sessionId)) {
+            scope.launch { flushPluginAvailabilityNotice(sessionId) }
+        }
     }
 
     private fun updateItemActivity(params: JsonObject, started: Boolean) {
@@ -1282,6 +1475,8 @@ class CodexAgentClient(
         userShellItems.clear()
         openedSessions.clear()
         sessionRuntimeSettings.clear()
+        pendingAvailabilityNotices.clear()
+        threadProviderStates.clear()
         emitBlocking(AgentEvent.Failure(null, code, message, recoverable = true))
     }
 
@@ -1318,6 +1513,82 @@ class CodexAgentClient(
         put("keyPath", "plugins.$pluginId.enabled")
         put("value", enabled)
         put("mergeStrategy", "upsert")
+    }
+
+    private suspend fun disableManagedProviderMcp(pluginId: String) {
+        providerHost?.mcpServerNames(pluginId).orEmpty().forEach { serverName ->
+            request(
+                "config/value/write",
+                buildJsonObject {
+                    put("keyPath", "mcp_servers.$serverName.enabled")
+                    put("value", false)
+                    put("mergeStrategy", "upsert")
+                },
+            )
+        }
+    }
+
+    private suspend fun completePendingProviderInstalls() {
+        val host = providerHost ?: return
+        host.pendingInstalls().forEach { plugin ->
+            val detail = readPlugin(plugin)
+            check(detail.mcpServers.toSet() == host.mcpServerNames(plugin.id)) {
+                "Provider MCP configuration changed before activation"
+            }
+            disableManagedProviderMcp(plugin.id)
+            if (!detail.summary.installed) request("plugin/install", pluginParams(plugin))
+            host.installCompleted(plugin.id)
+        }
+    }
+
+    private suspend fun completePreparedProviderRemovals(catalog: AgentPluginCatalog) {
+        val host = providerHost ?: return
+        val installed = catalog.plugins.filter { it.installed }.map { it.reference.id }.toSet()
+        host.preparedRemovals().forEach { plugin ->
+            if (plugin.id in installed) request("plugin/uninstall", buildJsonObject { put("pluginId", plugin.id) })
+            host.remove(plugin.id)
+        }
+    }
+
+    private fun reconcileProvidersInBackground(catalog: AgentPluginCatalog) {
+        val host = providerHost ?: return
+        if (host.pendingInstalls().isEmpty() && host.preparedRemovals().isEmpty()) return
+        if (!pendingProviderCompletionRunning.compareAndSet(false, true)) return
+        scope.launch {
+            try {
+                completePendingProviderInstalls()
+                completePreparedProviderRemovals(catalog)
+                eventsChannel.send(AgentEvent.PluginsChanged)
+            } finally {
+                pendingProviderCompletionRunning.set(false)
+            }
+        }
+    }
+
+    private fun parseGitHubMarketplaceSource(value: String): GitHubMarketplaceSource {
+        val uri = URI(value.trim())
+        require(uri.scheme == "https" && uri.host.equals("github.com", ignoreCase = true)) {
+            "Use a public https://github.com repository URL"
+        }
+        require(uri.query == null && uri.fragment == null && uri.userInfo == null) { "Invalid GitHub repository URL" }
+        val segments = uri.path.trim('/').split('/').filter(String::isNotBlank)
+        require(segments.size >= 2 && segments.take(2).all { it.matches(Regex("[A-Za-z0-9_.-]+")) }) {
+            "Use a GitHub repository or tree URL"
+        }
+        val repository = segments[1].removeSuffix(".git")
+        require(repository.matches(Regex("[A-Za-z0-9][A-Za-z0-9_.-]{0,99}"))) { "Invalid repository name" }
+        val repositoryUrl = "https://github.com/${segments[0]}/$repository.git"
+        if (segments.size == 2) return GitHubMarketplaceSource(repositoryUrl)
+        require(segments.size >= 4 && segments[2] == "tree") {
+            "Use a GitHub repository or tree URL"
+        }
+        val refName = segments[3]
+        require(refName.matches(Regex("[A-Za-z0-9._-]+"))) { "Invalid Git reference" }
+        val sparsePaths = segments.drop(4).takeIf { it.isNotEmpty() }?.let { path ->
+            require(path.all { it.matches(Regex("[A-Za-z0-9._-]+")) }) { "Invalid repository path" }
+            listOf(path.joinToString("/"))
+        }
+        return GitHubMarketplaceSource(repositoryUrl, refName, sparsePaths)
     }
 
     private fun RpcException.forPlugin(plugin: AgentPluginReference): Throwable =
@@ -1367,6 +1638,18 @@ class CodexAgentClient(
         val deadlineEpochMillis: Long,
         val requiresPermit: Boolean,
         val permit: AtomicBoolean = AtomicBoolean(),
+        val dispatch: AtomicBoolean = AtomicBoolean(),
+    )
+
+    private data class PendingAvailabilityNotice(
+        val text: String,
+        val availability: Map<String, Boolean>,
+    )
+
+    private data class GitHubMarketplaceSource(
+        val repository: String,
+        val refName: String? = null,
+        val sparsePaths: List<String>? = null,
     )
 
     private companion object {
@@ -1375,9 +1658,9 @@ class CodexAgentClient(
         const val MAX_BUILT_IN_RESULT_CHARS = 250_000
         const val BUILT_IN_TOOL_DEADLINE_MILLIS = 120_000L
         const val SKILL_CHUNK_BYTES = 32 * 1024
-        const val PLUGIN_CATALOG_TIMEOUT_MILLIS = 60_000L
+        const val PLUGIN_CATALOG_TIMEOUT_MILLIS = 20_000L
         const val CATALOG_CACHE_TTL_MILLIS = 6 * 60 * 60 * 1000L
-        val EMPTY_PLUGIN_CATALOG_RETRY_DELAYS_MILLIS = longArrayOf(500L, 1_000L, 2_000L)
+        const val AVAILABILITY_MESSAGE_PREFIX = "codex-mobile:plugin-availability"
 
         fun completeUtf8Length(bytes: ByteArray, count: Int): Int {
             if (count == 0) return 0

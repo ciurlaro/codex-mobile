@@ -17,7 +17,7 @@ import io.github.ciurlaro.codexmobile.core.AgentSkillPackage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
-import io.github.ciurlaro.codexmobile.platform.android.TelegramAuthPrompt
+import io.github.ciurlaro.codexmobile.platform.android.ProviderSettingsEntry
 
 data class MainUiState(
     val statusMessage: String = "Ready to sign in",
@@ -38,11 +38,14 @@ data class MainUiState(
     val availablePlugins: List<AgentPluginSummary> = emptyList(),
     val connectors: List<AgentConnector> = emptyList(),
     val mcpServers: List<AgentMcpServer> = emptyList(),
+    val providerSettings: List<ProviderSettingsEntry> = emptyList(),
     val selectedSkill: AgentSkill? = null,
     val selectedSkillPackage: AgentSkillPackage? = null,
     val githubSkillCandidates: List<AgentSkillPackage> = emptyList(),
     val githubSkillError: String? = null,
     val isGitHubSkillLoading: Boolean = false,
+    val pluginSourceError: String? = null,
+    val isPluginSourceLoading: Boolean = false,
     val skillSourceChunks: List<String> = emptyList(),
     val skillSourceNextOffset: Long? = null,
     val skillSourceTotalBytes: Long = 0,
@@ -92,12 +95,6 @@ data class MainUiState(
     val codexApproval: AgentEvent.ApprovalRequested? = null,
     val isBackgroundActive: Boolean = false,
     val isBackgroundNotificationVisible: Boolean = true,
-    val isTelegramAvailable: Boolean = false,
-    val isTelegramConnected: Boolean = false,
-    val telegramUsername: String? = null,
-    val telegramAuthPrompt: TelegramAuthPrompt? = null,
-    val isTelegramOperationInProgress: Boolean = false,
-    val telegramError: String? = null,
 ) {
     val plugins: List<AgentPluginSummary>
         get() = (availablePlugins + installedPlugins)
