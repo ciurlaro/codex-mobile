@@ -46,3 +46,17 @@ jobs:
           ./gradlew test assembleDebug assembleDebugAndroidTest lint assembleRelease --stacktrace
           scripts/verify-release.sh
           scripts/verify-reproducible-release.sh
+      - name: Upload verified host candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codex-mobile-host-candidate
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            app/android/build/outputs/apk/release/android-release.apk
+            app/android/build/outputs/mapping/release/mapping.txt
+            docs/sbom.cdx.json
+            LICENSE
+            LICENSES/MLKIT-EXCEPTION.txt
+            THIRD_PARTY_NOTICES.md
+            release-signing-certificate.sha256

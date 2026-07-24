@@ -1,0 +1,7 @@
+* @ciurlaro
+/.github/ @ciurlaro
+/LICENSE @ciurlaro
+/LICENSES/ @ciurlaro
+/agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexMobileProvider.kt @ciurlaro
+/platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt @ciurlaro
+/platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt @ciurlaro

@@ -25,3 +25,5 @@ The base app has no first-party analytics, advertising, remote crash reporter, o
 - **Erase Codex Mobile data** uses Android's reset-data facility, removing app-private state, permissions, notifications, and preferences while leaving shared files untouched.
 
 Backup is disabled and both Android backup-rule formats exclude every app domain. Account-side OpenAI data remains governed by ChatGPT account controls and OpenAI policy. Each optional provider must declare its own recipients, retention, remote-revocation semantics, libraries, models, and licences in its distribution repository.
+
+The optional Documents provider uses bundled Google ML Kit text recognition. Recognition is available offline, but Google's terms state that ML Kit may contact Google for metrics, fixes, model updates, or hardware-compatibility information. The base APK does not contain ML Kit.

@@ -1,0 +1,140 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag matching codexMobile.versionName
+        required: true
+        default: v0.2.0-preview.2
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-mobile-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'ciurlaro/codex-mobile'
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - id: version
+        run: |
+          version=$(sed -n 's/^codexMobile.versionName=//p' gradle.properties)
+          test -n "$version"
+          test "${{ inputs.tag }}" = "v$version"
+          echo "value=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libarchive-tools ninja-build patchelf zip
+          sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865"
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+      - name: Create ephemeral build key
+        run: >-
+          keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/release.jks"
+          -storepass android -keypass android -alias ci-release -keyalg RSA
+          -keysize 3072 -validity 1 -dname "CN=Codex Mobile CI"
+      - name: Verify release candidate
+        env:
+          CODEX_MOBILE_RELEASE_STORE_FILE: ${{ runner.temp }}/release.jks
+          CODEX_MOBILE_RELEASE_STORE_PASSWORD: android
+          CODEX_MOBILE_RELEASE_KEY_ALIAS: ci-release
+          CODEX_MOBILE_RELEASE_KEY_PASSWORD: android
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
+          bash scripts/verify-structure.sh
+          ./gradlew test assembleDebug assembleDebugAndroidTest lint assembleRelease --stacktrace
+          scripts/verify-release.sh
+          scripts/verify-reproducible-release.sh
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unsigned-host-release
+          if-no-files-found: error
+          path: |
+            app/android/build/outputs/apk/release/android-release.apk
+            app/android/build/outputs/mapping/release/mapping.txt
+            docs/sbom.cdx.json
+            LICENSE
+            LICENSES/MLKIT-EXCEPTION.txt
+            THIRD_PARTY_NOTICES.md
+            release-signing-certificate.sha256
+
+  sign:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+      - run: sdkmanager "build-tools;36.0.0"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: unsigned-host-release
+          path: candidate
+      - name: Sign with the production identity
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          tools="$ANDROID_HOME/build-tools/36.0.0"
+          input=candidate/app/android/build/outputs/apk/release/android-release.apk
+          output=Codex-Mobile-${{ needs.build.outputs.version }}.apk
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          "$tools/zipalign" -f -p 4 "$input" "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" sign \
+            --ks "$RUNNER_TEMP/release.jks" \
+            --ks-pass env:STORE_PASSWORD \
+            --ks-key-alias "$KEY_ALIAS" \
+            --key-pass env:KEY_PASSWORD \
+            --out "$output" \
+            "$RUNNER_TEMP/aligned.apk"
+          "$tools/apksigner" verify --verbose --print-certs "$output"
+          actual=$("$tools/apksigner" verify --print-certs "$output" | awk -F': ' '/certificate SHA-256 digest/ {print tolower($2); exit}')
+          expected=$(cat candidate/release-signing-certificate.sha256)
+          test "$actual" = "$expected"
+          sha256sum "$output" > "$output.sha256"
+          rm -f "$RUNNER_TEMP/release.jks" "$RUNNER_TEMP/aligned.apk"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: signed-host-release
+          if-no-files-found: error
+          path: |
+            Codex-Mobile-*.apk
+            Codex-Mobile-*.apk.sha256
+            candidate/docs/sbom.cdx.json
+            candidate/LICENSE
+            candidate/LICENSES/MLKIT-EXCEPTION.txt
+            candidate/THIRD_PARTY_NOTICES.md
+            candidate/app/android/build/outputs/mapping/release/mapping.txt
+
+  publish:
+    needs: [build, sign]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: signed-host-release
+          path: release
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=(release create "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --generate-notes --title "Codex Mobile ${{ needs.build.outputs.version }}")
+          if [[ "${{ needs.build.outputs.version }}" == *-* ]]; then args+=(--prerelease); fi
+          args+=(release/Codex-Mobile-*.apk release/Codex-Mobile-*.apk.sha256 release/candidate/docs/sbom.cdx.json release/candidate/LICENSE release/candidate/LICENSES/MLKIT-EXCEPTION.txt release/candidate/THIRD_PARTY_NOTICES.md release/candidate/app/android/build/outputs/mapping/release/mapping.txt)
+          gh "${args[@]}"

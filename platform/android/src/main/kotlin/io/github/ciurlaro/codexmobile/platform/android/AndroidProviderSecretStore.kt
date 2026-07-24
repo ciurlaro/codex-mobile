@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import android.util.Base64
+import io.github.ciurlaro.codexmobile.agent.codex.ProviderSecretStore
 import io.github.ciurlaro.codexmobile.agent.codex.ProviderSecrets
 import java.io.File
 import java.security.KeyStore
@@ -18,7 +19,7 @@ import org.json.JSONObject
 class AndroidProviderSecretStore(
     context: Context,
     private val pluginId: String,
-) {
+) : ProviderSecretStore {
     private val file: AtomicFile
     private val keyAlias: String
 
@@ -30,7 +31,7 @@ class AndroidProviderSecretStore(
     }
 
     @Synchronized
-    fun snapshot(): ProviderSecrets {
+    override fun snapshot(): ProviderSecrets {
         val values = read()
         return ProviderSecrets(values::get)
     }
@@ -39,7 +40,7 @@ class AndroidProviderSecretStore(
     fun configured(name: String): Boolean = read()[name] != null
 
     @Synchronized
-    fun replace(values: Map<String, String>) {
+    override fun replace(values: Map<String, String>) {
         require(values.size <= MAX_VALUES && values.keys.all { it.matches(NAME) }) {
             "Provider secret names are invalid"
         }
@@ -72,7 +73,7 @@ class AndroidProviderSecretStore(
     }
 
     @Synchronized
-    fun clear() {
+    override fun clear() {
         file.delete()
         keyStore().let { store -> if (store.containsAlias(keyAlias)) store.deleteEntry(keyAlias) }
     }

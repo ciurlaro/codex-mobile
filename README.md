@@ -2,7 +2,7 @@
 
 Codex Mobile is a lean Android host for the pinned Codex App Server `0.144.6`. It provides ChatGPT authentication, conversations, ordinary App Server shell support, workspace selection, approvals, plugin management, typed provider dispatch, and mutation recovery.
 
-Plugins come from standard Codex GitHub marketplaces. A plugin may also publish a signed, host-compatible Android feature split that implements its dynamic tools through the project-owned provider contract. Android asks the user to approve installation, restarts the app, and the host verifies the split before activating the standard plugin. The base APK contains no optional provider implementation, model, JNI library, or provider-specific definition.
+Plugins come from standard Codex GitHub marketplaces. Ordinary plugins remain installable from any public GitHub source. Android-executable providers for the official app come only from [`ciurlaro/codex-mobile-plugins`](https://github.com/ciurlaro/codex-mobile-plugins); the host verifies that App Server cloned that repository before accepting its signed, host-compatible feature split. Android asks the user to approve installation, restarts the app, and the host verifies the split before activating the standard plugin. The base APK contains no optional provider implementation, model, JNI library, or provider-specific definition.
 
 Providers declare any user-supplied secrets they require. Codex Mobile stores each plugin's values in its own Android Keystore-backed namespace and supplies them only at runtime, so public add-on artifacts contain no configured credentials.
 
@@ -27,3 +27,7 @@ bash scripts/verify-structure.sh
 ```
 
 The checked-in wrapper pins Gradle 9.4.1. See [architecture](docs/architecture.md), [security](docs/security.md), [privacy](docs/privacy.md), and [release operations](docs/release.md).
+
+## Licence
+
+Codex Mobile is distributed under `GPL-3.0-or-later`. The narrow additional permission in [`LICENSES/MLKIT-EXCEPTION.txt`](LICENSES/MLKIT-EXCEPTION.txt) applies only when the optional Documents provider links the declared Google ML Kit OCR runtime. Third-party components retain their own licences.

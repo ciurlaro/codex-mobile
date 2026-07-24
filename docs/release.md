@@ -13,7 +13,7 @@ The host release is independent of any provider checkout. The base APK contains 
 
 An Android package update cannot mix a new base version with old-version feature splits. Release tooling includes matching signed replacements for every installed provider in the same update session, or requires the user to finish provider removal before a base-only update. A later in-app repair cannot make an otherwise invalid package transaction safe.
 
-## Build and verify
+## CI build and verification
 
 Java 17, the checked-in Gradle 9.4.1 wrapper, Android platform 37, build-tools 36.0.0, and NDK 29.0.14206865 are required.
 
@@ -28,7 +28,9 @@ scripts/verify-release.sh
 scripts/verify-reproducible-release.sh
 ```
 
-On the configured developer Mac, `scripts/release-local.sh` obtains the password from Keychain and runs the release checks. `--reproducible` adds two clean byte-for-byte comparison builds. Signing secrets are inherited by the build process and are never printed or stored in the repository.
+GitHub pull-request CI runs these commands with an ephemeral key. Official releases reuse the verified artifacts and re-sign them in the manually approved `release` environment; no Gradle or repository script runs while the production key is available. Fork and pull-request jobs receive no production secret.
+
+`scripts/release-local.sh` is an explicit fallback when GitHub Actions is unavailable. It obtains the password from Keychain and runs the same release checks; `--reproducible` adds two clean byte-for-byte comparison builds.
 
 `assembleRelease` refuses an unsigned APK. The verifier checks signature, manifest, pinned App Server, locks, dependency verification, SBOM, and that the base packages no provider definitions, models, feature code, or native payloads beyond App Server and AndroidX's declared graphics-path library. Provider-specific ABI, JNI/model size, licence, network, retry, and runtime-download audits belong to each provider release.
 

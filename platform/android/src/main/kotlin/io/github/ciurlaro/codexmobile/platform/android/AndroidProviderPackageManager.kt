@@ -42,7 +42,8 @@ class AndroidProviderPackageManager(
         plugin: AgentPluginReference,
         mcpServerNames: Set<String>,
     ): ProviderInstallDisposition {
-        val descriptor = readDescriptor(plugin) ?: return ProviderInstallDisposition.NOT_REQUIRED
+        val packageInfo = readDescriptor(plugin) ?: return ProviderInstallDisposition.NOT_REQUIRED
+        val descriptor = packageInfo.descriptor
         check(descriptor.pluginId == plugin.id) { "Provider plugin ID does not match its plugin" }
         check(descriptor.mcpServerNames.toSet() == mcpServerNames) {
             "Provider MCP configuration does not match its add-on metadata"
@@ -53,7 +54,7 @@ class AndroidProviderPackageManager(
         val hostVersion = appContext.packageManager.getPackageInfo(appContext.packageName, 0).compatVersionCode()
         check(descriptor.hostVersionCode == hostVersion) { "This provider was built for another Codex Mobile version" }
         check(Build.SUPPORTED_ABIS.any(descriptor.abis::contains)) { "This provider does not support this device ABI" }
-        val candidate = descriptor.toInstalledProvider(plugin, PROVIDER_API)
+        val candidate = descriptor.toInstalledProvider(plugin, PROVIDER_API, packageInfo.marketplaceRepository)
         val previous = registry.installedRecord(plugin.id)
         if (installedSplits().containsAll(descriptor.splitNames)) {
             registry.recordInstalling(candidate)
@@ -113,12 +114,17 @@ class AndroidProviderPackageManager(
         }
     }
 
-    private fun readDescriptor(plugin: AgentPluginReference): ProviderPackageDescriptor? {
+    private fun readDescriptor(plugin: AgentPluginReference): ProviderPackageInfo? {
+        val codexRoot = File(appContext.noBackupFilesDir, "codex").canonicalFile
         val marketplace = plugin.marketplacePath?.let(::File)
         val roots = buildList {
             marketplace?.let { add(if (it.isFile) it.parentFile else it) }
             val installed = File(appContext.noBackupFilesDir, "codex/plugins/cache/${plugin.marketplaceName}/${plugin.name}")
             installed.listFiles()?.filter(File::isDirectory)?.sortedByDescending(File::lastModified)?.let(::addAll)
+        }.map { root ->
+            root.canonicalFile.also {
+                require(it.toPath().startsWith(codexRoot.toPath())) { "Provider marketplace path is outside app storage" }
+            }
         }
         val manifest = roots.asSequence().mapNotNull { root ->
             sequenceOf(
@@ -128,7 +134,9 @@ class AndroidProviderPackageManager(
             ).firstOrNull(File::isFile)
         }.firstOrNull() ?: return null
         require(manifest.length() in 1..MAX_DESCRIPTOR_BYTES) { "Provider add-on metadata has an invalid size" }
-        return ProviderPackageDescriptor.parse(manifest.readText())
+        val repository = ProviderSourcePolicy.marketplaceRepository(manifest, codexRoot)
+        ProviderSourcePolicy.requireCanonicalRepository(repository)
+        return ProviderPackageInfo(ProviderPackageDescriptor.parse(manifest.readText()), repository)
     }
 
     private fun requireInstallerPermission() {
@@ -145,7 +153,7 @@ class AndroidProviderPackageManager(
         val destination = File(appContext.cacheDir, "provider-${UUID.randomUUID()}.apk")
         var uri = descriptor.apkUri
         repeat(MAX_REDIRECTS + 1) { redirect ->
-            requireProviderUri(uri)
+            ProviderSourcePolicy.requireProviderUri(uri, redirect > 0)
             val connection = uri.toURL().openConnection() as HttpURLConnection
             connection.instanceFollowRedirects = false
             connection.connectTimeout = NETWORK_TIMEOUT_MILLIS
@@ -298,16 +306,6 @@ class AndroidProviderPackageManager(
     private fun installedSplits(): Set<String> = appContext.packageManager
         .getApplicationInfo(appContext.packageName, 0).splitNames.orEmpty().toSet()
 
-    private fun requireProviderUri(uri: URI) {
-        require(uri.scheme == "https" && uri.userInfo == null && uri.fragment == null) {
-            "Provider APK URL must be HTTPS"
-        }
-        val host = uri.host?.lowercase().orEmpty()
-        require(host == "github.com" || host.endsWith(".githubusercontent.com")) {
-            "Provider APK must be hosted by GitHub"
-        }
-    }
-
     private inline fun <T> HttpURLConnection.use(block: (HttpURLConnection) -> T): T = try {
         block(this)
     } finally {
@@ -323,6 +321,11 @@ class AndroidProviderPackageManager(
         const val PACKAGE_TIMEOUT_MILLIS = 120_000L
     }
 }
+
+internal data class ProviderPackageInfo(
+    val descriptor: ProviderPackageDescriptor,
+    val marketplaceRepository: String,
+)
 
 internal data class ProviderPackageDescriptor(
     val minProviderApi: Int,
@@ -340,7 +343,11 @@ internal data class ProviderPackageDescriptor(
     val apkUri: URI,
     val sha256: String,
 ) {
-    fun toInstalledProvider(plugin: AgentPluginReference, providerApi: Int) = InstalledProvider(
+    fun toInstalledProvider(
+        plugin: AgentPluginReference,
+        providerApi: Int,
+        marketplaceRepository: String,
+    ) = InstalledProvider(
         pluginId = pluginId,
         providerApi = providerApi,
         hostVersionCode = hostVersionCode,
@@ -354,6 +361,7 @@ internal data class ProviderPackageDescriptor(
         pluginName = plugin.name,
         marketplaceName = plugin.marketplaceName,
         marketplacePath = plugin.marketplacePath,
+        marketplaceRepository = marketplaceRepository,
         state = ProviderPackageState.INSTALLING,
     )
 
@@ -409,9 +417,92 @@ internal data class ProviderPackageDescriptor(
                     "Invalid provider settings entry point"
                 }
                 require(it.abis.isNotEmpty() && it.abis.all { abi -> abi in SUPPORTED_ABIS }) { "Invalid provider ABIs" }
+                ProviderSourcePolicy.requireProviderUri(it.apkUri, redirected = false)
             }
         }
     }
+}
+
+internal object ProviderSourcePolicy {
+    fun requireCanonicalRepository(repository: String) {
+        require(repository == CANONICAL_PROVIDER_REPOSITORY) {
+            "Android providers must come from $CANONICAL_PROVIDER_REPOSITORY"
+        }
+    }
+
+    fun marketplaceRepository(manifest: File, codexRoot: File): String {
+        val boundary = codexRoot.canonicalFile
+        val source = manifest.canonicalFile
+        require(source.toPath().startsWith(boundary.toPath())) { "Provider manifest is outside app storage" }
+        var directory: File? = source.parentFile
+        while (directory != null && directory.toPath().startsWith(boundary.toPath())) {
+            val config = File(directory, ".git/config")
+            if (config.isFile) {
+                require(config.length() in 1..MAX_GIT_CONFIG_BYTES) { "Provider marketplace Git metadata is invalid" }
+                return normalizeGitHubRepository(originUrl(config.readLines()))
+            }
+            if (directory == boundary) break
+            directory = directory.parentFile
+        }
+        error("Provider marketplace origin is unavailable")
+    }
+
+    fun requireProviderUri(uri: URI, redirected: Boolean) {
+        require(uri.scheme.equals("https", ignoreCase = true) && uri.userInfo == null && uri.fragment == null) {
+            "Provider APK URL must be HTTPS"
+        }
+        val host = uri.host?.lowercase().orEmpty()
+        if (!redirected || host == "github.com") {
+            require(host == "github.com" && uri.query == null &&
+                uri.rawPath.startsWith("/$CANONICAL_PROVIDER_REPOSITORY/releases/download/") &&
+                !uri.rawPath.contains("%2f", ignoreCase = true)) {
+                "Provider APK must be a release from $CANONICAL_PROVIDER_REPOSITORY"
+            }
+        } else {
+            require(host in GITHUB_RELEASE_ASSET_HOSTS) { "Provider APK redirect is not a GitHub release asset" }
+        }
+    }
+
+    internal fun normalizeGitHubRepository(value: String): String {
+        val trimmed = value.trim()
+        val path = when {
+            SCP_GITHUB.matches(trimmed) -> SCP_GITHUB.matchEntire(trimmed)!!.groupValues[1]
+            else -> {
+                val uri = URI(trimmed)
+                require(uri.host.equals("github.com", ignoreCase = true) && uri.query == null && uri.fragment == null) {
+                    "Provider marketplace origin must be GitHub"
+                }
+                require(uri.scheme.equals("https", ignoreCase = true) ||
+                    uri.scheme.equals("ssh", ignoreCase = true) && uri.userInfo == "git") {
+                    "Provider marketplace origin has an unsupported protocol"
+                }
+                uri.path.trim('/')
+            }
+        }.removeSuffix(".git")
+        val segments = path.split('/')
+        require(segments.size == 2 && segments.all { it.matches(GITHUB_NAME) }) {
+            "Provider marketplace origin is not a repository"
+        }
+        return segments.joinToString("/") { it.lowercase() }
+    }
+
+    private fun originUrl(lines: List<String>): String {
+        var origin = false
+        lines.forEach { line ->
+            val value = line.trim()
+            if (value.startsWith('[')) {
+                origin = value.equals("[remote \"origin\"]", ignoreCase = true)
+            } else if (origin && value.substringBefore('=', "").trim().equals("url", ignoreCase = true)) {
+                return value.substringAfter('=').trim().removeSurrounding("\"")
+            }
+        }
+        error("Provider marketplace origin is unavailable")
+    }
+
+    private const val MAX_GIT_CONFIG_BYTES = 64L * 1024
+    private val SCP_GITHUB = Regex("git@github\\.com:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:\\.git)?)")
+    private val GITHUB_NAME = Regex("[A-Za-z0-9_.-]+")
+    private val GITHUB_RELEASE_ASSET_HOSTS = setOf("release-assets.githubusercontent.com", "objects.githubusercontent.com")
 }
 
 private fun kotlinx.serialization.json.JsonObject.requireOnly(vararg names: String) {
@@ -425,3 +516,4 @@ internal fun android.content.pm.PackageInfo.compatVersionCode(): Int =
     if (Build.VERSION.SDK_INT >= 28) longVersionCode.toInt() else versionCode
 
 private val SUPPORTED_ABIS = setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+internal const val CANONICAL_PROVIDER_REPOSITORY = "ciurlaro/codex-mobile-plugins"

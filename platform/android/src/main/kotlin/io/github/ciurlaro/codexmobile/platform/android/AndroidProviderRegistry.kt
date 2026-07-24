@@ -26,6 +26,7 @@ data class InstalledProvider(
     val pluginName: String,
     val marketplaceName: String,
     val marketplacePath: String?,
+    val marketplaceRepository: String?,
     val state: ProviderPackageState,
     val message: String? = null,
 )
@@ -136,6 +137,7 @@ class AndroidProviderRegistry(context: Context) {
         .mapNotNull(::verifiedProvider)
 
     private fun verifiedProvider(record: InstalledProvider): CodexMobileProvider? = runCatching {
+        check(record.marketplaceRepository == CANONICAL_PROVIDER_REPOSITORY) { "Provider source is not authoritative" }
         check(splitsInstalled(record)) { "Provider split is missing" }
         val provider = Class.forName(record.entryPoint)
             .getConstructor(Context::class.java)
@@ -225,6 +227,7 @@ private fun JSONObject.installedProvider() = InstalledProvider(
     pluginName = getString("pluginName"),
     marketplaceName = getString("marketplaceName"),
     marketplacePath = optString("marketplacePath").takeIf(String::isNotEmpty),
+    marketplaceRepository = optString("marketplaceRepository").takeIf(String::isNotEmpty),
     state = ProviderPackageState.valueOf(getString("state")),
     message = optString("message").takeIf(String::isNotEmpty),
 )
@@ -243,5 +246,6 @@ private fun InstalledProvider.json() = JSONObject()
     .put("pluginName", pluginName)
     .put("marketplaceName", marketplaceName)
     .put("marketplacePath", marketplacePath)
+    .put("marketplaceRepository", marketplaceRepository)
     .put("state", state.name)
     .put("message", message)

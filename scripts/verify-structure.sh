@@ -12,7 +12,8 @@ reject_matches() {
 }
 
 required=(
-  README.md settings.gradle.kts gradle.properties gradle.lockfile gradle/verification-metadata.xml
+  README.md LICENSE LICENSES/MLKIT-EXCEPTION.txt THIRD_PARTY_NOTICES.md CONTRIBUTING.md SECURITY.md
+  release-signing-certificate.sha256 settings.gradle.kts gradle.properties gradle.lockfile gradle/verification-metadata.xml
   core/build.gradle.kts agent/codex/build.gradle.kts platform/android/build.gradle.kts app/android/build.gradle.kts
   docs/requirements.md docs/architecture.md docs/objects.md docs/decisions.md docs/security.md docs/privacy.md docs/release.md docs/sbom.cdx.json
   agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexRuntime.kt
@@ -28,6 +29,9 @@ required=(
 for path in "${required[@]}"; do test -f "$path" || { echo "missing required file: $path" >&2; exit 1; }; done
 
 grep -qx 'codexMobile.codexVersion=0.144.6' gradle.properties
+grep -q 'GNU GENERAL PUBLIC LICENSE' LICENSE
+grep -q 'GNU GPL version 3 section 7' LICENSES/MLKIT-EXCEPTION.txt
+grep -qx '30934b849c0aec49f66b77c37ab95f021dba5c841e2caf005b513806f7b20765' release-signing-certificate.sha256
 
 process_owners=$(rg -l 'ProcessBuilder|java\.lang\.Process|Runtime\.getRuntime\(\)\.exec' \
   agent/codex/src/main platform/android/src/main app/android/src/main --glob '!**/build/**' || true)
@@ -58,6 +62,9 @@ grep -q 'removeSplit' platform/android/src/main/kotlin/io/github/ciurlaro/codexm
 grep -q 'const val PROVIDER_API = 2' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
 grep -q 'AndroidKeyStore' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
 grep -q 'AES/GCM/NoPadding' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
+grep -q 'interface ProviderSecretStore' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexMobileProvider.kt
+grep -q 'CANONICAL_PROVIDER_REPOSITORY = "ciurlaro/codex-mobile-plugins"' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
+grep -q 'record.marketplaceRepository == CANONICAL_PROVIDER_REPOSITORY' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderRegistry.kt
 grep -q 'marketplace/add' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
 grep -q 'thread/inject_items' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
 grep -q 'turn/steer' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt

@@ -2,28 +2,49 @@
   "bomFormat": "CycloneDX",
   "components": [
     {
-      "bom-ref": "pkg:generic/codex-mobile-core@0.2.0-preview.1",
+      "bom-ref": "pkg:generic/codex-mobile-core@0.2.0-preview.2",
       "description": "Provider-neutral application contracts.",
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-3.0-or-later"
+          }
+        }
+      ],
       "name": "codex-mobile-core",
-      "purl": "pkg:generic/codex-mobile-core@0.2.0-preview.1",
+      "purl": "pkg:generic/codex-mobile-core@0.2.0-preview.2",
       "type": "library",
-      "version": "0.2.0-preview.1"
+      "version": "0.2.0-preview.2"
     },
     {
-      "bom-ref": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.1",
+      "bom-ref": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.2",
       "description": "Pinned App Server protocol, plugin lifecycle, and dynamic-tool authority.",
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-3.0-or-later"
+          }
+        }
+      ],
       "name": "codex-mobile-agent-codex",
-      "purl": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.1",
+      "purl": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.2",
       "type": "library",
-      "version": "0.2.0-preview.1"
+      "version": "0.2.0-preview.2"
     },
     {
-      "bom-ref": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.1",
+      "bom-ref": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.2",
       "description": "Android runtime, signed provider host, workspace authority, and mutation journal.",
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-3.0-or-later"
+          }
+        }
+      ],
       "name": "codex-mobile-platform-android",
-      "purl": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.1",
+      "purl": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.2",
       "type": "library",
-      "version": "0.2.0-preview.1"
+      "version": "0.2.0-preview.2"
     },
     {
       "bom-ref": "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64",
@@ -997,9 +1018,9 @@
   "dependencies": [
     {
       "dependsOn": [
-        "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.1",
-        "pkg:generic/codex-mobile-core@0.2.0-preview.1",
-        "pkg:generic/codex-mobile-platform-android@0.2.0-preview.1",
+        "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.2",
+        "pkg:generic/codex-mobile-core@0.2.0-preview.2",
+        "pkg:generic/codex-mobile-platform-android@0.2.0-preview.2",
         "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64",
         "pkg:maven/androidx.activity/activity-compose@1.13.0",
         "pkg:maven/androidx.activity/activity-ktx@1.13.0",
@@ -1119,19 +1140,19 @@
         "pkg:maven/org.jetbrains/markdown@0.7.3",
         "pkg:maven/org.jspecify/jspecify@1.0.0"
       ],
-      "ref": "pkg:generic/codex-mobile@0.2.0-preview.1?platform=android"
+      "ref": "pkg:generic/codex-mobile@0.2.0-preview.2?platform=android"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.1"
+      "ref": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.2"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-core@0.2.0-preview.1"
+      "ref": "pkg:generic/codex-mobile-core@0.2.0-preview.2"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.1"
+      "ref": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.2"
     },
     {
       "dependsOn": [],
@@ -1608,15 +1629,28 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "pkg:generic/codex-mobile@0.2.0-preview.1?platform=android",
+      "bom-ref": "pkg:generic/codex-mobile@0.2.0-preview.2?platform=android",
       "description": "Provider-neutral Android Codex host.",
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-3.0-or-later"
+          }
+        }
+      ],
       "name": "Codex Mobile",
-      "purl": "pkg:generic/codex-mobile@0.2.0-preview.1?platform=android",
+      "properties": [
+        {
+          "name": "codex-mobile:additional-permission",
+          "value": "LICENSES/MLKIT-EXCEPTION.txt"
+        }
+      ],
+      "purl": "pkg:generic/codex-mobile@0.2.0-preview.2?platform=android",
       "type": "application",
-      "version": "0.2.0-preview.1"
+      "version": "0.2.0-preview.2"
     }
   },
-  "serialNumber": "urn:uuid:009830e3-558f-5ada-9f4f-71f61c0a72a4",
+  "serialNumber": "urn:uuid:16326be4-2468-5e3f-b569-9a37a51db239",
   "specVersion": "1.6",
   "version": 1
 }

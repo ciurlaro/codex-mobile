@@ -49,6 +49,7 @@ def generate() -> str:
             "version": version,
             "purl": f"pkg:generic/{name}@{version}",
             "description": description,
+            "licenses": [{"license": {"id": "GPL-3.0-or-later"}}],
         }
         for name, description in [
             ("codex-mobile-core", "Provider-neutral application contracts."),
@@ -90,6 +91,11 @@ def generate() -> str:
             "type": "application", "bom-ref": app_ref, "name": "Codex Mobile",
             "version": version, "purl": app_ref,
             "description": "Provider-neutral Android Codex host.",
+            "licenses": [{"license": {"id": "GPL-3.0-or-later"}}],
+            "properties": [{
+                "name": "codex-mobile:additional-permission",
+                "value": "LICENSES/MLKIT-EXCEPTION.txt",
+            }],
         }},
         "components": direct,
         "dependencies": [{"ref": app_ref, "dependsOn": refs}] + [

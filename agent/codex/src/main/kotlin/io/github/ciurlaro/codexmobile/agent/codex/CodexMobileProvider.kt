@@ -55,6 +55,12 @@ fun interface ProviderSecrets {
     }
 }
 
+interface ProviderSecretStore {
+    fun snapshot(): ProviderSecrets
+    fun replace(values: Map<String, String>)
+    fun clear()
+}
+
 interface CodexMobileProvider {
     val descriptor: ProviderDescriptor
 
