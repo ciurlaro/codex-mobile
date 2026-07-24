@@ -75,6 +75,9 @@ internal enum class IconGlyph {
     PIN,
     EDIT,
     TRASH,
+    GLOBE,
+    SPARKLES,
+    PUZZLE,
 }
 
 @Composable
@@ -352,6 +355,48 @@ internal fun AppIcon(
                 )
                 line(Offset(size.width * .18f, size.height * .25f), Offset(size.width * .82f, size.height * .25f))
                 line(Offset(size.width * .40f, size.height * .14f), Offset(size.width * .60f, size.height * .14f))
+            }
+
+            IconGlyph.GLOBE -> {
+                drawCircle(tint, size.minDimension * .36f, center, style = Stroke(stroke))
+                drawOval(
+                    tint,
+                    Offset(size.width * .34f, size.height * .14f),
+                    Size(size.width * .32f, size.height * .72f),
+                    style = Stroke(stroke),
+                )
+                line(Offset(size.width * .15f, center.y), Offset(size.width * .85f, center.y))
+            }
+
+            IconGlyph.SPARKLES -> {
+                val large = Path().apply {
+                    moveTo(size.width * .42f, size.height * .10f)
+                    lineTo(size.width * .50f, size.height * .36f)
+                    lineTo(size.width * .72f, size.height * .45f)
+                    lineTo(size.width * .50f, size.height * .54f)
+                    lineTo(size.width * .42f, size.height * .80f)
+                    lineTo(size.width * .34f, size.height * .54f)
+                    lineTo(size.width * .12f, size.height * .45f)
+                    lineTo(size.width * .34f, size.height * .36f)
+                    close()
+                }
+                drawPath(large, tint, style = Stroke(stroke, cap = StrokeCap.Round))
+                line(Offset(size.width * .78f, size.height * .16f), Offset(size.width * .78f, size.height * .34f))
+                line(Offset(size.width * .69f, size.height * .25f), Offset(size.width * .87f, size.height * .25f))
+            }
+
+            IconGlyph.PUZZLE -> {
+                drawRoundRect(
+                    tint,
+                    Offset(size.width * .18f, size.height * .18f),
+                    Size(size.width * .64f, size.height * .64f),
+                    CornerRadius(size.width * .08f),
+                    style = Stroke(stroke),
+                )
+                drawCircle(tint, size.minDimension * .10f, Offset(center.x, size.height * .18f))
+                drawCircle(ChatColors.ElevatedStrong, size.minDimension * .06f, Offset(center.x, size.height * .18f))
+                drawCircle(tint, size.minDimension * .10f, Offset(size.width * .82f, center.y))
+                drawCircle(ChatColors.ElevatedStrong, size.minDimension * .06f, Offset(size.width * .82f, center.y))
             }
 
         }

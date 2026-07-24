@@ -1,30 +1,23 @@
 # Codex Mobile
 
-An Android app for running Codex locally with a desktop-like shell in shared storage.
+Codex Mobile is a lean Android host for the pinned Codex App Server `0.144.6`. It provides ChatGPT authentication, conversations, ordinary App Server shell support, workspace selection, approvals, plugin management, typed provider dispatch, and mutation recovery.
 
-After the user grants Android **All files access**, a selected shared-storage directory becomes the `cwd` for every Codex turn. Codex uses its normal shell for file work and finds `mutool`, `tesseract`, `officecli`, and `tgcli` on `PATH`; there is no parallel Android document-tool protocol.
+Plugins come from standard Codex GitHub marketplaces. Ordinary plugins remain installable from any public GitHub source. Android-executable providers for the official app come only from [`ciurlaro/codex-mobile-plugins`](https://github.com/ciurlaro/codex-mobile-plugins); the host verifies that App Server cloned that repository before accepting its signed, host-compatible feature split. Android asks the user to approve installation, restarts the app, and the host verifies the split before activating the standard plugin. The base APK contains no optional provider implementation, model, JNI library, or provider-specific definition.
 
-**Status:** the original bounded MVP completed [Roadmap Steps 01–06](docs/roadmap/README.md). The all-files/native-tool replacement is distributed as a GitHub preview until its stock-device, licensing, and distribution-policy gates pass.
+Providers declare any user-supplied secrets they require. Codex Mobile stores each plugin's values in its own Android Keystore-backed namespace and supplies them only at runtime, so public add-on artifacts contain no configured credentials.
 
-## Ownership
-
-| Owner | Responsibility |
-|---|---|
-| Codex | Provider conversation semantics; never the truth about Android operations |
-| Android | Storage permission, process mechanics, and native integrations |
-| Core | Provider-neutral agent contracts |
-| UI | Presentation and user-selected runtime policy |
+Disabling a plugin immediately revokes its tools while retaining its installed split and private state. Uninstall first completes provider cleanup, removes the App Server plugin, removes the split, and verifies absence after restart. Existing conversations remain usable and receive an internal availability update.
 
 ## Modules
 
-| Module | Contains |
+| Module | Responsibility |
 |---|---|
-| `:app:android` | Compose UI, ViewModels, composition root, visible lifecycle |
-| `:core` | Provider-neutral agent contracts |
-| `:agent:codex` | `CodexAgentClient`, app-server protocol and authentication |
-| `:platform:android` | Shared-storage workspace, bundled CLI runtime, Telegram login, process launch |
+| `:app:android` | Compose UI, ViewModels, composition root, and foreground lifecycle |
+| `:core` | Provider-neutral application contracts |
+| `:agent:codex` | App Server protocol, plugin lifecycle, dynamic-tool authority, and authentication |
+| `:platform:android` | App Server runtime, storage checks, signed provider lifecycle, and mutation journal |
 
-Start with [requirements](docs/requirements.md), then read [architecture](docs/architecture.md), [objects](docs/objects.md), [decisions](docs/decisions.md), and the [roadmap](docs/roadmap/README.md).
+Optional provider feature projects are supplied explicitly at build time with `-PcodexMobile.providerProjects=/absolute/project|...`. A normal host build includes none.
 
 ## Verification
 
@@ -33,11 +26,8 @@ bash scripts/verify-structure.sh
 ./gradlew test assembleDebug assembleDebugAndroidTest lint
 ```
 
-The checked-in wrapper pins Gradle 9.4.1. The build downloads checksum-pinned ARM64 runtime inputs and builds/packages the Codex app-server plus the native CLI bundle. Signed release construction, inspection, reproducibility, provenance, and operator drills are documented in [Android MVP release and operations](docs/release.md); the trust and data contracts are in [security](docs/security.md) and [privacy](docs/privacy.md).
+The checked-in wrapper pins Gradle 9.4.1. See [architecture](docs/architecture.md), [security](docs/security.md), [privacy](docs/privacy.md), and [release operations](docs/release.md).
 
-Browserless Telegram login needs one application API ID/hash supplied by the builder. Put them in the gitignored `local.properties` (or the matching environment variables); end users then enter only their phone number, Telegram code, and optional 2FA password:
+## Licence
 
-```properties
-codexMobile.telegram.apiId=123456
-codexMobile.telegram.apiHash=replace-with-the-app-api-hash
-```
+Codex Mobile is distributed under `GPL-3.0-or-later`. The narrow additional permission in [`LICENSES/MLKIT-EXCEPTION.txt`](LICENSES/MLKIT-EXCEPTION.txt) applies only when the optional Documents provider links the declared Google ML Kit OCR runtime. Third-party components retain their own licences.

@@ -39,6 +39,7 @@ class MainActivity : ComponentActivity() {
             var workspaceBrowserPath by rememberSaveable { mutableStateOf<String?>(null) }
             var pendingWorkspaceSelection by rememberSaveable { mutableStateOf(false) }
             var openedSignInUrl by rememberSaveable { mutableStateOf<String?>(null) }
+            var openedConnectorUrl by rememberSaveable { mutableStateOf<String?>(null) }
             fun openSignIn(rawUrl: String?) {
                 val signInUri = rawUrl?.toOfficialSignInUri()
                 if (signInUri == null) {
@@ -57,10 +58,53 @@ class MainActivity : ComponentActivity() {
             ) {
                 viewModel.authenticate()
             }
+            val connectorAuthentication = rememberLauncherForActivityResult(
+                ActivityResultContracts.StartActivityForResult(),
+            ) { result ->
+                openedConnectorUrl = null
+                viewModel.connectorAuthenticationFinished(result.resultCode == RESULT_OK)
+            }
+            val elicitationAuthentication = rememberLauncherForActivityResult(
+                ActivityResultContracts.StartActivityForResult(),
+            ) { result ->
+                state.pendingElicitation?.let { elicitation ->
+                    viewModel.resolveElicitation(
+                        elicitation.requestId,
+                        io.github.ciurlaro.codexmobile.core.AgentElicitationResponse(
+                            if (result.resultCode == RESULT_OK) {
+                                io.github.ciurlaro.codexmobile.core.AgentElicitationAction.ACCEPT
+                            } else {
+                                io.github.ciurlaro.codexmobile.core.AgentElicitationAction.CANCEL
+                            },
+                        ),
+                    )
+                }
+            }
             LaunchedEffect(state.signInUrl) {
                 state.signInUrl?.takeIf { it != openedSignInUrl }?.let {
                     openedSignInUrl = it
                     openSignIn(it)
+                }
+            }
+            LaunchedEffect(state.connectorAuthUrl) {
+                val url = state.connectorAuthUrl
+                if (url != null && url != openedConnectorUrl) {
+                    openedConnectorUrl = url
+                    connectorAuthentication.launch(
+                        ConnectorAuthActivity.intent(
+                            this@MainActivity,
+                            url,
+                            checkNotNull(state.connectorAuthName),
+                            state.mcpServers.any { it.name == state.connectorAuthName },
+                        ),
+                    )
+                }
+            }
+            LaunchedEffect(state.pendingElicitation?.requestId) {
+                state.pendingElicitation?.url?.let { url ->
+                    elicitationAuthentication.launch(
+                        ConnectorAuthActivity.elicitationIntent(this@MainActivity, url),
+                    )
                 }
             }
             LaunchedEffect(state.hasStorageAccess, pendingWorkspaceSelection) {
@@ -95,6 +139,13 @@ class MainActivity : ComponentActivity() {
                         ChatUiEvent.StartNewChat -> viewModel.startNewChat()
                         ChatUiEvent.OpenSettings -> viewModel.openSettings()
                         ChatUiEvent.CloseSettings -> viewModel.closeSettings()
+                        is ChatUiEvent.OpenCapabilities ->
+                            viewModel.openCapabilities(event.filter, event.returnScreen)
+                        ChatUiEvent.CloseCapabilities -> viewModel.closeCapabilities()
+                        ChatUiEvent.RefreshCapabilities -> viewModel.refreshCapabilities()
+                        ChatUiEvent.CloseSkillDetails -> viewModel.closeSkillDetails()
+                        ChatUiEvent.LoadMoreSkillSource -> viewModel.loadMoreSkillSource()
+                        ChatUiEvent.ClosePluginDetails -> viewModel.closePluginDetails()
                         is ChatUiEvent.OpenSelector -> viewModel.openSelector(event.selector)
                         ChatUiEvent.DismissSelector -> viewModel.dismissSelector()
                         ChatUiEvent.Send -> viewModel.sendMessage()
@@ -115,9 +166,10 @@ class MainActivity : ComponentActivity() {
                         ChatUiEvent.StopBackground -> viewModel.stopBackgroundWork()
                         ChatUiEvent.SignOut -> viewModel.signOut()
                         ChatUiEvent.ShowPrivacy -> showPrivacyDisclosure = true
-                        ChatUiEvent.ShowIntegrations -> showIntegrations = true
-                        ChatUiEvent.DisconnectTelegram -> viewModel.disconnectTelegram()
-                        ChatUiEvent.CancelTelegramAuthentication -> viewModel.cancelTelegramAuthentication()
+                        ChatUiEvent.ShowIntegrations -> {
+                            showIntegrations = true
+                            viewModel.refreshIntegrations()
+                        }
                         ChatUiEvent.ShowEraseConfirmation -> showEraseConfirmation = true
                         ChatUiEvent.SelectScope -> if (state.hasStorageAccess) {
                             workspaceBrowserPath = state.workspacePath ?: viewModel.workspaceRoots().firstOrNull()
@@ -137,18 +189,43 @@ class MainActivity : ComponentActivity() {
                         is ChatUiEvent.SelectEffort -> viewModel.selectEffort(event.effort)
                         is ChatUiEvent.SelectSpeed -> viewModel.selectSpeed(event.tier)
                         is ChatUiEvent.SelectApproval -> viewModel.selectApproval(event.preset)
-                        is ChatUiEvent.ConnectTelegram -> viewModel.connectTelegram(event.phoneNumber)
-                        is ChatUiEvent.SubmitTelegramAuthentication ->
-                            viewModel.submitTelegramAuthentication(event.value)
+                        is ChatUiEvent.SelectCapabilityFilter -> viewModel.selectCapabilityFilter(event.filter)
+                        is ChatUiEvent.SelectCapabilitySection -> viewModel.selectCapabilitySection(event.section)
+                        is ChatUiEvent.SearchCapabilities -> viewModel.searchCapabilities(event.query)
+                        is ChatUiEvent.ToggleSkill -> viewModel.toggleSkill(event.path, event.enabled)
+                        is ChatUiEvent.OpenSkill -> viewModel.openSkill(event.skill)
+                        is ChatUiEvent.OpenSkillPackage -> viewModel.openSkillPackage(event.skill)
+                        is ChatUiEvent.OpenGitHubSkill -> viewModel.openGitHubSkill(event.url)
+                        is ChatUiEvent.SelectGitHubSkill -> viewModel.selectGitHubSkill(event.skill)
+                        ChatUiEvent.DismissGitHubSkillImport -> viewModel.dismissGitHubSkillImport()
+                        is ChatUiEvent.AddPluginSource -> viewModel.addPluginSource(event.url)
+                        ChatUiEvent.DismissPluginSource -> viewModel.dismissPluginSource()
+                        is ChatUiEvent.InstallSkill -> viewModel.installSkill(event.skill)
+                        is ChatUiEvent.RequestUninstallSkill -> viewModel.requestUninstallSkill(event.skill)
+                        is ChatUiEvent.OpenPlugin -> viewModel.openPlugin(event.plugin)
+                        is ChatUiEvent.InstallPlugin -> viewModel.installPlugin(event.plugin)
+                        is ChatUiEvent.RequestUninstallPlugin ->
+                            viewModel.requestUninstallPlugin(event.plugin, event.displayName)
+                        ChatUiEvent.ConfirmCapabilityRemoval -> viewModel.confirmCapabilityRemoval()
+                        ChatUiEvent.DismissCapabilityRemoval -> viewModel.dismissCapabilityRemoval()
+                        is ChatUiEvent.TogglePlugin -> viewModel.togglePlugin(event.pluginId, event.enabled)
+                        is ChatUiEvent.OpenProviderSettings -> viewModel.openProviderSettings(event.pluginId)
+                        is ChatUiEvent.ConnectApp -> viewModel.connectApp(event.connectorId)
+                        is ChatUiEvent.ConnectMcp -> viewModel.connectMcp(event.serverName)
+                        is ChatUiEvent.ResolveElicitation ->
+                            viewModel.resolveElicitation(event.requestId, event.response)
                         is ChatUiEvent.ResolveCodexApproval -> viewModel.resolveCodexApproval(
                             event.requestId,
                             event.decision,
                         )
                         is ChatUiEvent.AddCapability -> viewModel.addCapability(event.capability)
                         is ChatUiEvent.RemoveCapability -> viewModel.removeCapability(event.capability)
+                        is ChatUiEvent.AddInvocation -> viewModel.addInvocation(event.invocation)
+                        is ChatUiEvent.RemoveInvocation -> viewModel.removeInvocation(event.key)
                     }
                 }
                 val codexApproval = state.codexApproval
+                val elicitation = state.pendingElicitation
                 when {
                     codexApproval != null -> CodexApprovalDialog(codexApproval) { decision ->
                         viewModel.resolveCodexApproval(codexApproval.requestId, decision)
@@ -167,10 +244,8 @@ class MainActivity : ComponentActivity() {
                     showIntegrations -> IntegrationsDialog(
                         state = state,
                         onDismiss = { showIntegrations = false },
-                        onConnect = viewModel::connectTelegram,
-                        onSubmitAuthentication = viewModel::submitTelegramAuthentication,
-                        onDisconnect = viewModel::disconnectTelegram,
-                        onCancelAuthentication = viewModel::cancelTelegramAuthentication,
+                        onConnectApp = viewModel::connectApp,
+                        onConnectMcp = viewModel::connectMcp,
                     )
                     showEraseConfirmation -> EraseDataDialog(
                         onConfirm = {
@@ -181,6 +256,12 @@ class MainActivity : ComponentActivity() {
                     )
                     showPrivacyDisclosure -> PrivacyDialog(
                         onDismiss = { showPrivacyDisclosure = false },
+                    )
+                    elicitation != null -> ElicitationDialog(
+                        elicitation = elicitation,
+                        onResponse = { response ->
+                            viewModel.resolveElicitation(elicitation.requestId, response)
+                        },
                     )
                 }
             }

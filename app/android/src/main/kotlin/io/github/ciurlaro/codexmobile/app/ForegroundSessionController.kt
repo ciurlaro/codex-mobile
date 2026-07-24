@@ -4,12 +4,27 @@ import io.github.ciurlaro.codexmobile.core.AgentClient
 import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
 import io.github.ciurlaro.codexmobile.core.AgentConversation
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
+import io.github.ciurlaro.codexmobile.core.AgentConnector
+import io.github.ciurlaro.codexmobile.core.AgentElicitation
+import io.github.ciurlaro.codexmobile.core.AgentElicitationAction
+import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentMcpServer
 import io.github.ciurlaro.codexmobile.core.AgentModel
+import io.github.ciurlaro.codexmobile.core.AgentPluginCatalog
+import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
+import io.github.ciurlaro.codexmobile.core.AgentPluginInstallResult
+import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentPluginRemovalResult
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
+import io.github.ciurlaro.codexmobile.core.AgentSkillCatalog
+import io.github.ciurlaro.codexmobile.core.AgentSkill
+import io.github.ciurlaro.codexmobile.core.AgentSkillPackage
+import io.github.ciurlaro.codexmobile.core.AgentSkillPackageCatalog
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
 import io.github.ciurlaro.codexmobile.core.SessionId
+import io.github.ciurlaro.codexmobile.platform.android.AndroidSkillPackageManager
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -20,6 +35,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 internal data class ForegroundSessionState(
@@ -34,6 +51,12 @@ internal data class ForegroundSessionState(
     val signInUrl: String? = null,
     val isTurnActive: Boolean = false,
     val pendingApproval: AgentEvent.ApprovalRequested? = null,
+    val pendingElicitation: AgentElicitation? = null,
+    val skillsRevision: Int = 0,
+    val pluginsRevision: Int = 0,
+    val connectorsRevision: Int = 0,
+    val oauthCompletion: AgentEvent.McpOauthCompleted? = null,
+    val externalOperation: String? = null,
     val workActivity: AgentWorkActivity? = null,
     val attentionRequired: Boolean = false,
     val diagnosticCode: String? = null,
@@ -43,6 +66,7 @@ internal data class ForegroundSessionState(
 internal class ForegroundSessionController(
     private val agentClient: AgentClient,
     private val scope: CoroutineScope,
+    private val skillPackages: AndroidSkillPackageManager? = null,
 ) : AutoCloseable {
     private val mutableState = MutableStateFlow(ForegroundSessionState())
     private val turnClaimed = AtomicBoolean(false)
@@ -51,6 +75,7 @@ internal class ForegroundSessionController(
     private val cancellationDispatched = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
     private val lock = Any()
+    private val externalOperationMutex = Mutex()
     private var authenticationStarted = false
     private var eventJob: Job = scope.launch { agentClient.events.collect(::reduce) }
 
@@ -85,7 +110,7 @@ internal class ForegroundSessionController(
     }
 
     fun submit(request: AgentTurnRequest): Boolean {
-        if (request.prompt.isBlank() && request.capabilities.isEmpty()) {
+        if (request.prompt.isBlank() && request.capabilities.isEmpty() && request.invocations.isEmpty()) {
             mutableState.update { it.copy(statusMessage = "Enter a prompt first") }
             return false
         }
@@ -155,6 +180,13 @@ internal class ForegroundSessionController(
         launchVisibleFailure { agentClient.resolveApproval(requestId, decision) }
     }
 
+    fun resolveElicitation(requestId: String, response: AgentElicitationResponse) {
+        val pending = state.value.pendingElicitation ?: return
+        if (pending.requestId != requestId || closed.get()) return
+        mutableState.update { it.copy(pendingElicitation = null, attentionRequired = false) }
+        launchVisibleFailure { agentClient.resolveElicitation(requestId, response) }
+    }
+
     fun startNewChat(): Boolean {
         if (!state.value.isAuthenticated || state.value.isTurnActive || closed.get()) return false
         mutableState.update {
@@ -182,6 +214,76 @@ internal class ForegroundSessionController(
     }
 
     suspend fun listModels(): List<AgentModel> = agentClient.listModels()
+
+    suspend fun listSkills(workingDirectory: String, forceReload: Boolean = false): AgentSkillCatalog =
+        agentClient.listSkills(workingDirectory, forceReload).let { catalog ->
+            catalog.copy(skills = catalog.skills.map { skill ->
+                skill.copy(canUninstall = skillPackages?.canUninstall(skill) == true)
+            })
+        }
+
+    suspend fun readSkill(path: String, offset: Long = 0) = agentClient.readSkill(path, offset)
+
+    suspend fun setSkillEnabled(path: String, enabled: Boolean) =
+        runExternalOperation("Updating skill") { agentClient.setSkillEnabled(path, enabled) }
+
+    suspend fun listAvailableSkills(
+        installedNames: Set<String>,
+        forceRefresh: Boolean = false,
+    ): AgentSkillPackageCatalog = requireNotNull(skillPackages) {
+        "Skill packages are unavailable"
+    }.listAvailable(installedNames, forceRefresh)
+
+    suspend fun discoverGitHubSkills(url: String): List<AgentSkillPackage> = requireNotNull(skillPackages) {
+        "Skill packages are unavailable"
+    }.discoverGitHubSkills(url)
+
+    suspend fun readSkillPackage(packageInfo: AgentSkillPackage, offset: Long = 0) =
+        requireNotNull(skillPackages) { "Skill packages are unavailable" }
+            .readPackageSource(packageInfo, offset)
+
+    suspend fun installSkill(packageInfo: AgentSkillPackage) =
+        runExternalOperation("Installing ${packageInfo.displayName}") {
+            requireNotNull(skillPackages) { "Skill packages are unavailable" }.install(packageInfo)
+        }
+
+    suspend fun uninstallSkill(skill: AgentSkill) =
+        runExternalOperation("Removing ${skill.displayName}") {
+            requireNotNull(skillPackages) { "Skill packages are unavailable" }.uninstall(skill)
+        }
+
+    suspend fun listInstalledPlugins(workingDirectory: String): AgentPluginCatalog =
+        agentClient.listInstalledPlugins(workingDirectory)
+
+    suspend fun listAvailablePlugins(
+        workingDirectory: String,
+        forceRefresh: Boolean = false,
+    ): AgentPluginCatalog = agentClient.listAvailablePlugins(workingDirectory, forceRefresh)
+
+    suspend fun addPluginMarketplace(sourceUrl: String) =
+        runExternalOperation("Adding plugin source") { agentClient.addPluginMarketplace(sourceUrl) }
+
+    suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail =
+        agentClient.readPlugin(plugin)
+
+    suspend fun installPlugin(plugin: AgentPluginReference): AgentPluginInstallResult =
+        runExternalOperation("Installing ${plugin.name}") { agentClient.installPlugin(plugin) }
+
+    suspend fun uninstallPlugin(plugin: AgentPluginReference): AgentPluginRemovalResult =
+        runExternalOperation("Removing plugin") { agentClient.uninstallPlugin(plugin) }
+
+    suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) =
+        runExternalOperation("Updating plugin") { agentClient.setPluginEnabled(pluginId, enabled) }
+
+    suspend fun listConnectors(forceReload: Boolean = false): List<AgentConnector> =
+        agentClient.listConnectors(state.value.sessionId, forceReload)
+
+    suspend fun listMcpServers(): List<AgentMcpServer> = agentClient.listMcpServers()
+
+    suspend fun startMcpOauth(serverName: String): String =
+        runExternalOperation("Connecting to $serverName") {
+            agentClient.startMcpOauth(serverName, state.value.sessionId)
+        }
 
     suspend fun listConversations(): List<AgentConversationSummary> = agentClient.listSessions()
 
@@ -218,6 +320,7 @@ internal class ForegroundSessionController(
                 signInUrl = null,
                 isTurnActive = false,
                 pendingApproval = null,
+                pendingElicitation = null,
                 workActivity = null,
                 diagnosticCode = null,
             )
@@ -253,6 +356,7 @@ internal class ForegroundSessionController(
                 signInUrl = null,
                 isTurnActive = false,
                 pendingApproval = null,
+                pendingElicitation = null,
                 workActivity = null,
                 diagnosticCode = null,
                 terminal = true,
@@ -325,6 +429,7 @@ internal class ForegroundSessionController(
                         signInUrl = null,
                         isTurnActive = false,
                         pendingApproval = null,
+                        pendingElicitation = null,
                         workActivity = null,
                         attentionRequired = true,
                         diagnosticCode = event.code,
@@ -351,6 +456,40 @@ internal class ForegroundSessionController(
             is AgentEvent.WorkActivityChanged -> mutableState.update {
                 if (it.sessionId == event.sessionId) it.copy(workActivity = event.activity) else it
             }
+
+            AgentEvent.SkillsChanged -> mutableState.update {
+                it.copy(skillsRevision = it.skillsRevision + 1)
+            }
+
+            AgentEvent.PluginsChanged -> mutableState.update {
+                it.copy(pluginsRevision = it.pluginsRevision + 1)
+            }
+
+            AgentEvent.ConnectorsChanged -> mutableState.update {
+                it.copy(connectorsRevision = it.connectorsRevision + 1)
+            }
+
+            is AgentEvent.McpOauthCompleted -> mutableState.update {
+                it.copy(oauthCompletion = event, externalOperation = null)
+            }
+
+            is AgentEvent.ElicitationRequested -> mutableState.update {
+                if (it.pendingElicitation == null) {
+                    it.copy(
+                        statusMessage = "Information needed",
+                        pendingElicitation = event.elicitation,
+                        attentionRequired = true,
+                    )
+                } else {
+                    launchVisibleFailure {
+                        agentClient.resolveElicitation(
+                            event.elicitation.requestId,
+                            AgentElicitationResponse(AgentElicitationAction.DECLINE),
+                        )
+                    }
+                    it
+                }
+            }
         }
     }
 
@@ -365,6 +504,17 @@ internal class ForegroundSessionController(
                 } else {
                     it.copy(streamedText = it.streamedText + text.take(remaining) + TRUNCATION_MARKER)
                 }
+            }
+        }
+    }
+
+    private suspend fun <T> runExternalOperation(label: String, block: suspend () -> T): T {
+        return externalOperationMutex.withLock {
+            mutableState.update { it.copy(externalOperation = label) }
+            try {
+                block()
+            } finally {
+                mutableState.update { it.copy(externalOperation = null) }
             }
         }
     }

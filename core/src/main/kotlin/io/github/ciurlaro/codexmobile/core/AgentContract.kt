@@ -13,6 +13,37 @@ interface AgentClient : AutoCloseable {
 
     suspend fun listModels(): List<AgentModel>
 
+    suspend fun listSkills(workingDirectory: String, forceReload: Boolean = false): AgentSkillCatalog
+
+    suspend fun readSkill(path: String, offset: Long = 0): AgentSkillChunk
+
+    suspend fun setSkillEnabled(path: String, enabled: Boolean)
+
+    suspend fun listInstalledPlugins(workingDirectory: String): AgentPluginCatalog
+
+    suspend fun listAvailablePlugins(
+        workingDirectory: String,
+        forceRefresh: Boolean = false,
+    ): AgentPluginCatalog
+
+    suspend fun addPluginMarketplace(sourceUrl: String) {
+        error("Plugin marketplace sources are unavailable")
+    }
+
+    suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail
+
+    suspend fun installPlugin(plugin: AgentPluginReference): AgentPluginInstallResult
+
+    suspend fun uninstallPlugin(plugin: AgentPluginReference): AgentPluginRemovalResult
+
+    suspend fun setPluginEnabled(pluginId: String, enabled: Boolean)
+
+    suspend fun listConnectors(sessionId: SessionId? = null, forceReload: Boolean = false): List<AgentConnector>
+
+    suspend fun listMcpServers(): List<AgentMcpServer>
+
+    suspend fun startMcpOauth(serverName: String, sessionId: SessionId? = null): String
+
     suspend fun listSessions(): List<AgentConversationSummary>
 
     suspend fun readSession(sessionId: SessionId): AgentConversation
@@ -33,6 +64,8 @@ interface AgentClient : AutoCloseable {
     suspend fun cancelTurn(sessionId: SessionId)
 
     suspend fun resolveApproval(requestId: String, decision: AgentApprovalDecision)
+
+    suspend fun resolveElicitation(requestId: String, response: AgentElicitationResponse)
 }
 
 @JvmInline
@@ -96,6 +129,7 @@ data class AgentMessage(
     val role: AgentMessageRole,
     val text: String,
     val capabilities: Set<AgentCapability> = emptySet(),
+    val invocations: List<AgentInvocation> = emptyList(),
 )
 
 enum class AgentCapability(
@@ -115,6 +149,7 @@ data class AgentTurnRequest(
     val serviceTier: String? = null,
     val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.NEVER,
     val capabilities: Set<AgentCapability> = emptySet(),
+    val invocations: List<AgentInvocation> = emptyList(),
     val workingDirectory: String? = null,
 )
 
@@ -173,6 +208,20 @@ sealed interface AgentEvent {
         val sessionId: SessionId,
         val activity: AgentWorkActivity?,
     ) : AgentEvent
+
+    data object SkillsChanged : AgentEvent
+
+    data object PluginsChanged : AgentEvent
+
+    data object ConnectorsChanged : AgentEvent
+
+    data class McpOauthCompleted(
+        val serverName: String,
+        val success: Boolean,
+        val error: String? = null,
+    ) : AgentEvent
+
+    data class ElicitationRequested(val elicitation: AgentElicitation) : AgentEvent
 
     data class TurnCompleted(val sessionId: SessionId) : AgentEvent
 

@@ -44,7 +44,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import io.github.ciurlaro.codexmobile.core.AgentCapability
-import kotlinx.coroutines.flow.drop
+import io.github.ciurlaro.codexmobile.core.AgentInvocation
 
 @Composable
 internal fun Composer(
@@ -53,10 +53,12 @@ internal fun Composer(
 ) {
     var focused by remember { mutableStateOf(false) }
     val shellMode = state.draft.startsWith('!')
-    val expanded = focused || state.draft.contains('\n') || state.selectedCapabilities.isNotEmpty()
+    val expanded = focused || state.draft.contains('\n') || state.selectedCapabilities.isNotEmpty() ||
+        state.selectedInvocations.isNotEmpty()
     val canSend = state.isAuthenticated &&
         if (shellMode) state.draft.drop(1).isNotBlank()
-        else state.draft.isNotBlank() || state.selectedCapabilities.isNotEmpty()
+        else state.draft.isNotBlank() || state.selectedCapabilities.isNotEmpty() ||
+            state.selectedInvocations.isNotEmpty()
     val composerColor by animateColorAsState(
         if (shellMode) Color(0xFF182433) else ChatColors.Elevated,
         label = "composer-mode",
@@ -85,6 +87,12 @@ internal fun Composer(
         }
         state.selectedCapabilities.forEach { capability ->
             CapabilityChip(capability) { onEvent(ChatUiEvent.RemoveCapability(capability)) }
+            Spacer(Modifier.height(4.dp))
+        }
+        state.selectedInvocations.forEach { invocation ->
+            InvocationChip(state.promptInvocation(invocation)) {
+                onEvent(ChatUiEvent.RemoveInvocation(invocation.key))
+            }
             Spacer(Modifier.height(4.dp))
         }
         BasicTextField(
@@ -127,6 +135,7 @@ internal fun Composer(
                 }
             },
         )
+        InvocationSuggestions(state, onEvent)
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -155,6 +164,63 @@ internal fun Composer(
                 onEvent(if (state.isTurnActive) ChatUiEvent.Stop else ChatUiEvent.Send)
             }
         }
+    }
+}
+
+@Composable
+private fun InvocationSuggestions(state: MainUiState, onEvent: (ChatUiEvent) -> Unit) {
+    val suggestions = state.suggestedInvocationItems()
+    if (suggestions.isEmpty()) return
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .background(ChatColors.ElevatedStrong, RoundedCornerShape(ChatDimensions.ControlCorner))
+            .padding(vertical = 4.dp),
+    ) {
+        suggestions.forEach { item ->
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable {
+                    onEvent(ChatUiEvent.AddInvocation(item.invocation))
+                }.padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                AppIcon(item.glyph(), Modifier.size(21.dp), item.accent())
+                Spacer(Modifier.size(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(item.title, color = ChatColors.Primary, style = MaterialTheme.typography.bodyMedium)
+                    item.subtitle?.let {
+                        Text(
+                            it,
+                            color = ChatColors.Secondary,
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InvocationChip(item: PromptInvocation, onRemove: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .heightIn(min = ChatDimensions.TouchTarget)
+            .background(ChatColors.ElevatedStrong, RoundedCornerShape(ChatDimensions.ControlCorner))
+            .padding(start = 14.dp, end = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AppIcon(item.glyph(), Modifier.size(18.dp), item.accent())
+        Spacer(Modifier.size(8.dp))
+        Text(item.title, color = ChatColors.Accent, style = MaterialTheme.typography.labelLarge)
+        IconButton(
+            onClick = onRemove,
+            modifier = Modifier.size(ChatDimensions.TouchTarget).semantics {
+                contentDescription = "Remove ${item.title}"
+            },
+        ) { AppIcon(IconGlyph.CLOSE, Modifier.size(18.dp), ChatColors.Secondary) }
     }
 }
 

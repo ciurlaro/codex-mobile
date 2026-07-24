@@ -2,26 +2,33 @@
 
 ## Trust model
 
-Codex, shell commands, documents, Telegram content, and protocol payloads are untrusted. Protected assets are ChatGPT and Telegram credentials, prompts and responses, shared-storage files, app-private state, and the signing chain. The application deliberately grants its Codex process broad shared-storage access after the user enables Android's **All files access** setting.
+Codex output, shell commands, provider content, marketplace data, downloaded artifacts, and protocol payloads are untrusted. Protected assets are credentials, prompts and responses, shared-storage files, provider-private state, mutation evidence, and the application signing chain. The user explicitly grants broad shared-storage access.
 
-## Boundary review
+## Boundaries
 
 | Boundary | Main control |
 |---|---|
-| Shell and shared storage | The user selects the initial workspace and chooses Never, Auto review, Ask me, or Strict Codex approval policy. Never is the default. Android still blocks other apps' private data and protected `Android/data`/`Android/obb` locations. |
-| JSON-RPC | Strict UTF-8/JSONL framing, size limits, request correlation, active-session/turn checks, and fail-closed unknown methods. |
-| Authentication | Login is serialized; codes are bounded and redacted; browser handoff accepts only validated HTTPS OpenAI/ChatGPT hosts; sign-out uses `account/logout`. |
-| Native CLI bundle | Every archive is version/checksum pinned. `mutool`, `tesseract`, and `officecli` run as child processes under the app UID; they can read the same shared storage and app environment as Codex, so hostile-file parsing and resource exhaustion remain release risks. Runtime self-update is disabled. |
-| Android IPC | Only the launcher Activity is exported. The foreground service is non-exported and its starts require a one-use private authorization. Notification intents are immutable. |
-| Telegram | `tgcli` authenticates directly with Telegram using build-supplied API credentials. Its account database and generated config are backup-excluded and private; code/password prompts are never logged. Sending is a shell side effect governed by the selected Codex approval policy. |
-| Network | Framework cleartext is denied. The Codex app-server uses an authenticated loopback CONNECT proxy restricted to OpenAI/ChatGPT TLS hosts. Direct Telegram CLI traffic reaches Telegram separately. |
-| Logs and backup | Production code has no content logging or crash SDK. Runtime diagnostic rows are rejected. Backup is disabled and every app domain is excluded. |
-| Supply chain | Runtime, wrapper, dependencies, checksums, locks, verification metadata, license/notice, and SBOM are pinned or checked. Release signing is external. |
+| Shell and shared storage | The selected workspace is the initial shell directory and the user chooses the App Server approval policy. Android still blocks protected app-private storage. |
+| JSON-RPC and dynamic tools | Strict UTF-8/JSONL framing, size limits, correlation, closed schemas, verified tool-to-provider mapping, current enablement, active-call/deadline checks, and fail-closed unknown methods. |
+| Authentication | Login is serialized; codes are bounded and redacted; browser handoff accepts only validated official HTTPS hosts; sign-out uses `account/logout`. |
+| Provider supply chain | Ordinary plugins may use any App Server marketplace. Android add-ons must originate from App Server's Git checkout of `ciurlaro/codex-mobile-plugins`; missing, escaped, or different Git origins fail closed. Package URLs stay on that repository's GitHub releases, metadata is bounded and schema-checked, and MCP names must equal the standard plugin declaration. Android inherited-package installation enforces application ID, exact version, split identity, and signing certificate. Entry points and schema digests are reverified after restart. |
+| Plugin lifecycle | App Server owns source discovery, installation, enablement, and skills. Provider records contain package continuation only. Disablement keeps code but revokes dispatch; uninstall removes code only after provider cleanup. Existing threads receive hidden availability updates. |
+| Provider execution | Providers exchange project-owned typed values in-process. No provider executable, shell, argv, environment protocol, HTTP server, Binder transport, or runtime code loader exists. Provider MCP definitions are disabled on Android. |
+| Provider secrets | Each provider declares stable secret names. Values are encrypted at rest with a plugin-specific Android Keystore key, excluded from backup, injected read-only into that provider, retained on disable, and erased after successful uninstall cleanup. Missing or unreadable values fail closed. |
+| Mutation recovery | A unique thread/turn/call key is bound to a canonical arguments hash. Approval permits are one-use. Terminal results replay exactly; dispatched work reconciles or becomes indeterminate without resubmission. |
+| Network | Framework cleartext is denied. App Server uses an authenticated loopback CONNECT proxy restricted to validated TLS hosts. A signed provider receives only its runtime secret namespace and owns its declared network behavior and service session. |
+| Logs and backup | Production code has no content logging or crash SDK. Backup is disabled and app domains are excluded. |
 
 ## Explicit trade-off
 
-`MANAGE_EXTERNAL_STORAGE` replaces the previous narrow SAF boundary. This makes Codex behave like its desktop harness and removes duplicated file tools, approval previews, mutation journaling, and provider recovery, but it also means the selected folder is not a hard containment boundary. A shell command can use an absolute path or `..` to reach other shared-storage files allowed to the app. The Settings disclosure must remain explicit, and distribution must satisfy the target store's policy for this restricted permission.
+`MANAGE_EXTERNAL_STORAGE` makes the ordinary App Server shell broad: the selected directory is a starting point, and absolute or parent paths may reach other shared storage allowed to the app. Provider calls receive the selected workspace as a hard authorization boundary. The UI disclosure distinguishes these authorities, and distribution must satisfy restricted-permission policy.
 
-## Residual risk
+Optional signed provider code shares the application UID and can use permissions granted to the host. Exact-version compatibility, a matching signing certificate, explicit Android installation confirmation, bounded artifacts, declared schemas, and provider-specific release review are therefore mandatory. A plugin manifest alone grants no Android execution authority.
 
-The app sends prompts and requested results to OpenAI, sends requested Telegram operations to Telegram, trusts Android's CA and storage implementations, and executes a large native runtime. The CLI parsers are not sandboxed from the app UID, OCR currently ships English data only, and `MANAGE_EXTERNAL_STORAGE` requires store-policy review. MuPDF's AGPL-3.0 distribution obligations require explicit release review. Accessibility automation and runtime self-update remain excluded.
+Secret namespaces prevent accidental cross-plugin configuration and lifecycle coupling; they are not isolation from malicious feature code because every installed split shares the host UID and signing trust. Independent untrusted-code isolation would require a separately signed package and process boundary.
+
+GitHub-installed splits require Android's user-confirmed package-installer permission. Distribution channels that prohibit general package installation cannot offer this source flow; they need channel-managed feature delivery instead of weakening the installer or signature checks.
+
+Typed mutations under Auto review remain unavailable because pinned dynamic tools expose no equivalent automatic-review bridge.
+
+The optional Documents provider links the exact Google ML Kit OCR closure recorded in its release SBOM under Google's terms. Distribution uses the narrow GPLv3 section-7 permission in `LICENSES/MLKIT-EXCEPTION.txt`; it grants no permission for another proprietary provider or dependency.

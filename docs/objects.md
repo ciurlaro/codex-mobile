@@ -1,13 +1,19 @@
 # Objects and responsibilities
 
-| Object | Responsibility | Lifetime / truth |
+| Object | Responsibility | Truth / lifetime |
 |---|---|---|
-| `AgentClient` | Authenticate, create sessions, send/cancel turns, expose provider-neutral events | Process-local; provider owns conversation semantics |
-| `AppServerConnection` | Own app-server process lifecycle, JSONL framing, request correlation, writes, timeouts, and restart cleanup | One per Codex client |
-| `CodexAgentClient` | Map authentication, conversations, turns, approvals, and shell activity between Codex protocol values and core events | Process-local |
-| `AgentEvent` | Represent authentication, session, text, approvals, shell work, completion, and failure events | Transient stream |
-| `ForegroundSessionController` | Own one client/session while UI visibility changes | One active service lifetime |
-| `AgentApprovalPreset` | Map Never, Auto review, Ask me, and Strict to app-server policy/reviewer fields | Persisted setting; Never is default |
-| `WorkspaceManager` | Check all-files access and persist/select a shared-storage starting directory | Path preference plus current Android permission |
-| `RuntimeToolBundle` | Install private CLI assets and skills, expose executable aliases, and construct the app-server environment | Rebuilt atomically when the bundle version changes |
-| `TelegramCliIntegration` | Drive `tgcli` status, phone-code/2FA login, and logout without a browser | One active login process; session data in no-backup storage |
+| `AgentClient` | Authenticate, manage plugins, create sessions, and send or cancel turns | Process-local facade |
+| `CodexRuntime` | Carry JSON lines and typed runtime failures | One instance per App Server start |
+| `AndroidCodexRuntime` | Own App Server launch, environment, streams, exit, and shutdown | Sole Android child-process owner |
+| `AppServerConnection` | Own initialization, request IDs, framing, correlation, and timeouts | One per client; no Android/process imports |
+| `CodexAgentClient` | Map App Server authentication, plugins, turns, approvals, dynamic tools, and availability updates | Process-local |
+| `PluginProviderHost` | Coordinate optional provider installation/removal with the standard plugin lifecycle | Project-owned host contract |
+| `AndroidProviderPackageManager` | Validate, download, checksum, install, resume, and remove signed feature splits | Android package authority |
+| `AndroidProviderRegistry` | Load only recorded verified providers and persist interrupted package operations | Backup-excluded package lifecycle state; never enablement |
+| `AndroidProviderSecretStore` | Encrypt and scope user-supplied configuration secrets for one installed plugin | Plugin-specific Android Keystore key; retained on disable and cleared after prepared removal |
+| `CodexMobileProvider` | Declare stable tools, execute typed calls, expose settings, and prepare removal | One instance per verified split per process |
+| `ProviderToolDispatcher` | Map closed tool identifiers to verified providers | Process-local derived state |
+| `ThreadProviderStateStore` | Preserve each thread's original provider schemas and last announced availability | Backup-excluded per-thread state |
+| `WorkspaceManager` | Validate all-files access and persist/select the shell `cwd` | Android permission plus selected path |
+| `BuiltInMutationJournal` | Bind mutation IDs to argument hashes, state, pre/post evidence, and exact results; compact removed providers to replay-prevention tombstones | Backup-excluded SQLite |
+| `ForegroundSessionController` | Keep one active client/session across UI visibility changes | Active foreground-service lifetime |

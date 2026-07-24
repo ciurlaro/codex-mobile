@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - run: sudo apt-get update && sudo apt-get install --yes ripgrep
       - run: bash scripts/verify-structure.sh
 
   build:
@@ -27,7 +28,7 @@ jobs:
       - name: Install native build prerequisites
         run: |
           sudo apt-get update
-          sudo apt-get install --yes libarchive-tools ninja-build patchelf zip
+          sudo apt-get install --yes libarchive-tools ninja-build patchelf ripgrep zip
           sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865"
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
       - name: Create ephemeral release key
@@ -43,6 +44,20 @@ jobs:
           CODEX_MOBILE_RELEASE_KEY_PASSWORD: android
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
-          ./gradlew test assembleDebug assembleDebugAndroidTest lint assembleRelease --stacktrace
+          ./gradlew test assembleDebug assembleDebugAndroidTest lint assembleRelease bundleRelease --stacktrace
           scripts/verify-release.sh
           scripts/verify-reproducible-release.sh
+      - name: Upload verified host candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codex-mobile-host-candidate
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            app/android/build/outputs/apk/release/android-release.apk
+            app/android/build/outputs/mapping/release/mapping.txt
+            docs/sbom.cdx.json
+            LICENSE
+            LICENSES/MLKIT-EXCEPTION.txt
+            THIRD_PARTY_NOTICES.md
+            release-signing-certificate.sha256

@@ -74,6 +74,8 @@ internal object ChatColors {
     val Primary = Color(0xFFF5F5F5)
     val Secondary = Color(0xFFA5A5A5)
     val Accent = Color(0xFF3F83F8)
+    val SkillAccent = Color(0xFFA78BFA)
+    val PluginAccent = Color(0xFF58C77B)
     val CodeAccent = Color(0xFF58C77B)
     val Danger = Color(0xFFFF7A83)
     val Scrim = Color(0x99000000)
@@ -151,6 +153,7 @@ internal fun CodexMobileApp(
                 when (state.screen) {
                     AppScreen.CHAT -> ChatDrawer(state, onEvent)
                     AppScreen.SETTINGS -> SettingsScreen(state, onEvent)
+                    AppScreen.CAPABILITIES -> CapabilitiesScreen(state, onEvent)
                 }
                 if (state.activeSelector != null) {
                     SelectorOverlay(
@@ -163,12 +166,18 @@ internal fun CodexMobileApp(
         }
         BackHandler(
             enabled = state.activeSelector != null || state.isHistoryOpen ||
-                state.screen == AppScreen.SETTINGS,
+                state.screen != AppScreen.CHAT,
         ) {
             when {
+                state.activeSelector == ChatSelector.SKILLS || state.activeSelector == ChatSelector.PLUGINS ->
+                    onEvent(ChatUiEvent.OpenSelector(ChatSelector.TAGS))
                 state.activeSelector != null -> onEvent(ChatUiEvent.DismissSelector)
                 state.isHistoryOpen -> onEvent(ChatUiEvent.CloseHistory)
                 state.screen == AppScreen.SETTINGS -> onEvent(ChatUiEvent.CloseSettings)
+                state.selectedSkill != null || state.selectedSkillPackage != null ->
+                    onEvent(ChatUiEvent.CloseSkillDetails)
+                state.selectedPlugin != null -> onEvent(ChatUiEvent.ClosePluginDetails)
+                state.screen == AppScreen.CAPABILITIES -> onEvent(ChatUiEvent.CloseCapabilities)
             }
         }
     }
@@ -331,7 +340,7 @@ private fun ConversationList(
                 ) {
                     items(state.messages, key = ChatMessage::id) { message ->
                         when (message.role) {
-                            AgentMessageRole.USER -> UserMessage(message)
+                            AgentMessageRole.USER -> UserMessage(message, state)
                             AgentMessageRole.CODEX -> CodexMessage(message)
                         }
                     }

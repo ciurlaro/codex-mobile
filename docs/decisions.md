@@ -2,18 +2,19 @@
 
 | Decision | Why | Revisit when |
 |---|---|---|
-| Use one concrete `AppServerConnection` | Process, JSONL, request correlation, and restart mechanics are one transport concern; an interface or factory adds no value | A second transport is actually implemented |
-| Keep process mechanics outside core | Process launch is infrastructure, not domain policy | Another runtime needs the same contract |
-| Use Codex's native approval policy | Android diff approval and journals duplicated the harness and blocked normal work | A platform side effect cannot be represented safely by Codex |
-| Default approval to Never; expose four Settings choices | Desktop-like autonomy is the product default while the user retains control | Upstream policy semantics change |
-| Use `MANAGE_EXTERNAL_STORAGE` and turn `cwd` | Codex already provides shell CRUD, overwrite behavior, and command approval | Store policy or product scope requires a narrow grant again |
-| Bundle familiar CLI tools on `PATH` | Codex already understands command-line tools; a custom dynamic-tool bridge duplicates discovery, transport, and execution | A required capability has no viable CLI surface |
-| Use a small local directory picker | The permission grants storage access; the picker only chooses the starting `cwd` | Platform offers a better absolute-directory chooser |
-| Use an active-only foreground service | Authentication and active work may outlive the Activity; idle work does not justify a notification | Android offers a narrower continuation primitive |
-| Use `kfastov/tgcli` for Telegram | One direct command surface supports login, reading, search, downloads, and sending without an installed-app intent | Its API or maintenance posture becomes unsuitable |
-| Render Markdown with a maintained Compose renderer | Hand-parsing fenced code cannot correctly support the model's full Markdown | The renderer becomes unmaintained or unsafe |
-| Keep KMP disabled | Portability is not a current requirement | iOS work is funded |
-| Package a pinned ARM64 app-server | It is the proven local runtime path | Codex ships an Android-native runtime |
-| Use native app-data reset for full erasure | Android authoritatively clears all private locations and permissions | Android changes that contract |
-
-The former SAF workspace, generic file tools, exact-diff approval, mutation journal/recovery, export authority, and conflict machinery were intentionally removed as duplicate infrastructure.
+| Put App Server mechanics behind `CodexRuntime` | Protocol code must not import processes, streams, or Android | A second real runtime appears |
+| Pin App Server `0.144.6` and use dynamic tools | It preserves the Codex harness while typed providers enforce local authority | The pinned protocol gains a better native extension API |
+| Use the standard Codex Git marketplace | One catalog, lifecycle, skill UX, and enablement truth work across hosts | App Server replaces this surface |
+| Restrict Android code to the canonical provider Git origin | Ordinary Codex plugins stay portable while executable same-UID add-ons remain owner-reviewed and officially signed | A stronger platform-native trust mechanism replaces repository provenance |
+| Install Android providers as signed feature splits | Android enforces package identity and signer, uninstall removes code, and the base stays lean | Android offers an equally strict first-party add-on mechanism |
+| Persist only provider package lifecycle | Package updates must survive process replacement without becoming enablement state | PackageInstaller offers an atomic continuation into App Server installation |
+| Keep schemas and semantic DTOs portable | Shared contracts help other targets without converting the host to multiplatform or inventing abstractions | A second host needs additional proven common logic |
+| Use direct in-process Kotlin entry points | They need no transport, provider process, Binder API, or generic backend framework | Isolation is required by measured security evidence |
+| Show cached catalog data during one bounded refresh | `plugin/list` returns one response; cache-first UI improves latency without fake streaming or retry storms | App Server provides an incremental catalog protocol |
+| Prohibit provider helper processes | A single typed authority path keeps execution, retry, environment, and packaging auditable | Never; standalone work belongs to App Server |
+| Use one global provider-tool mutex | It closes disablement and pre-dispatch races with the smallest policy | Measured contention requires narrower locks |
+| Journal provider mutations only | Provider side effects need exact replay and no-resubmit recovery; shell work already has App Server semantics | App Server supplies equivalent recovery |
+| Encrypt user-supplied secrets per plugin with Android Keystore | Add-ons install independently, disablement retains configuration, and confirmed uninstall removes only that provider's namespace | Providers require isolation across independently signed Android UIDs |
+| Release through protected GitHub CI | Expensive builds run remotely and production signing secrets never enter pull-request jobs or local build processes | An external signer provides a smaller or stronger trust boundary |
+| Keep Auto-review mutations unavailable | App Server `0.144.6` dynamic tools have no equivalent Guardian bridge | The pinned protocol exposes equivalent authority |
+| Use Android package/data facilities as authority | Android owns split installation, removal, signing, and full app-data erasure | Platform contracts change |

@@ -1,37 +1,28 @@
 # Requirements
 
-## Product hypothesis
-
-A stock ARM64 Android device can run a bundled Codex app-server with a desktop-like shell rooted initially in a user-selected shared-storage workspace, while Android supplies only the capabilities the shell cannot provide.
-
-## Required outcomes
+## Product outcomes
 
 | ID | Outcome |
 |---|---|
-| R1 | Package, authenticate, converse, stream, cancel, and restart the pinned Codex runtime. |
-| R2 | Let the user grant all-files access and choose the absolute `cwd` sent with every turn. |
-| R3 | Let Codex perform ordinary file CRUD and overwrite through its shell. |
-| R4 | Put `mutool`, `tesseract`, and `officecli` on Codex's `PATH` for PDF, OCR, and Office work. |
-| R5 | Let users choose Never, Auto review, Ask me, or Strict approval; default to Never. |
-| R6 | Let users choose model, reasoning level, and supported speed tier. |
-| R7 | Render standard Markdown safely, including code, headings, lists, tables, and HTTPS links. |
-| R8 | Keep the composer visible with the keyboard and visibly animate active thinking. |
-| R9 | Offer a browserless Telegram login in Settings and put `tgcli` on Codex's `PATH`. |
-| R10 | Show an operation-specific foreground notification only while work is active. |
-| R11 | Meet security, privacy, accessibility, compatibility, and release gates. |
+| R1 | Package, authenticate, converse, stream, cancel, and restart Codex App Server `0.144.6`. |
+| R2 | Let the user grant all-files access and select the absolute `cwd` sent with every turn. |
+| R3 | Preserve ordinary shell work through App Server. |
+| R4 | Add public GitHub Codex marketplace sources through App Server and render a cache-first catalog during one bounded refresh. |
+| R5 | Install standard plugins from any App Server marketplace, but accept Android provider splits only from the canonical `ciurlaro/codex-mobile-plugins` Git origin. |
+| R6 | Keep App Server plugin configuration as the sole enablement truth; disabling retains provider code and state, while uninstall removes them. |
+| R7 | Preserve existing conversations and notify App Server when provider availability changes. |
+| R8 | Accept only closed typed provider schemas, never commands, argv, arbitrary property maps, or executable adapters. |
+| R9 | Preserve workspace containment, approvals, cancellation, deadlines, mutation journaling, exact replay, and indeterminate outcomes around every provider call. |
+| R10 | Keep App Server as the only standalone child process launched by the Android host. |
+| R11 | Preserve official plugins, ChatGPT authentication, foreground lifecycle, Markdown, model selection, and conversations. |
+| R12 | Keep user-supplied provider secrets out of add-on artifacts and scope encrypted runtime values independently to each plugin. |
 
-## Hard constraints
+## Constraints
 
-- Never log credentials, authorization codes, prompts, responses, or document contents by default.
-- Keep Android SDK types out of `:core`.
-- Reject malformed app-server frames and approval requests.
-- Keep native tool versions and downloads pinned; teach Codex to scope expensive document extraction.
-- Accept only HTTP(S) links from rendered model Markdown.
-- Explain clearly that all-files access is broad and the selected workspace is a starting directory, not a sandbox.
-
-## Not in scope
-
-- Accessibility-service automation.
-- General background scheduling or an idle persistent notification.
-- Additional messaging integrations before a concrete use case.
-- KMP, iOS, or runtime self-update.
+- Provider package URLs use the canonical repository's HTTPS GitHub releases, bounded redirects/downloads, and pinned SHA-256 values.
+- Android validates provider package name, version code, and signing certificate through an inherited package session.
+- Provider presence, plugin enablement, and provider-specific health remain separate states.
+- New chats advertise only enabled installed provider tools and skills; every invocation rechecks current authority and fails closed.
+- Split installation and removal may restart the app and complete only after post-restart verification.
+- Base updates include exact-version replacements for installed splits in the same Android transaction or follow completed provider removal.
+- The base project adds no multiplatform target or speculative provider framework.

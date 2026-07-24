@@ -40,6 +40,11 @@ fi
 model=$("$adb" -s "$serial" shell getprop ro.product.model | tr -d '\r')
 echo "target phone: ${model:-unknown} ($serial)"
 
+installed_paths=$("$adb" -s "$serial" shell pm path "$package" 2>/dev/null | tr -d '\r' || true)
+if grep -q '/split_.*\.apk$' <<<"$installed_paths"; then
+    die "the installed app has feature splits; update them atomically or finish provider removal first"
+fi
+
 "$root/scripts/release-local.sh"
 "$adb" -s "$serial" install -r "$apk"
 "$adb" -s "$serial" shell pm path "$package" >/dev/null ||

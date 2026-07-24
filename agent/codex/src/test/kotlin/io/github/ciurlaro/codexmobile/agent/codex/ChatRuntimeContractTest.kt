@@ -36,7 +36,7 @@ class ChatRuntimeContractTest {
     fun `renames and deletes conversations through stable thread methods`(): Unit = runBlocking {
         var renameParams: JsonObject? = null
         var deleteParams: JsonObject? = null
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "thread/name/set" -> {
@@ -68,7 +68,7 @@ class ChatRuntimeContractTest {
     fun `runs a leading bang through the native user shell stream`(): Unit = runBlocking {
         var startParams: JsonObject? = null
         var shellParams: JsonObject? = null
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "thread/start" -> {
@@ -161,10 +161,10 @@ class ChatRuntimeContractTest {
     }
 
     @Test
-    fun `discovers paged models and conversation history from protocol v2`(): Unit = runBlocking {
+    fun `discovers paged models and conversation history from app-server protocol`(): Unit = runBlocking {
         val modelCursors = mutableListOf<String?>()
         val threadCursors = mutableListOf<String?>()
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "model/list" -> {
@@ -283,7 +283,7 @@ class ChatRuntimeContractTest {
     fun `resumes settings and snapshots a structured Web Search turn`(): Unit = runBlocking {
         var resumeParams: JsonObject? = null
         var turnParams: JsonObject? = null
-        val process = ScriptedProcess { message, server ->
+        val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "thread/resume" -> {

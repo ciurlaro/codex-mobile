@@ -25,19 +25,15 @@ val appVersionName = providers.gradleProperty("codexMobile.versionName")
 val codexVersion = providers.gradleProperty("codexMobile.codexVersion")
 val codexArchiveSha256 = providers.gradleProperty("codexMobile.codexArchiveSha256")
 val codexBinarySha256 = providers.gradleProperty("codexMobile.codexBinarySha256")
-val nativeBundleVersion = providers.gradleProperty("codexMobile.nativeBundleVersion")
-val nativeToolsNdk = providers.gradleProperty("codexMobile.androidNdkPath")
-    .orElse(providers.environmentVariable("ANDROID_NDK_HOME"))
-    .orElse(providers.environmentVariable("ANDROID_NDK_ROOT"))
-    .orElse(
-        providers.provider {
-            val sdk = System.getenv("ANDROID_HOME") ?: System.getenv("ANDROID_SDK_ROOT")
-            sdk?.let { "$it/ndk/29.0.14206865" } ?: "/opt/homebrew/share/android-ndk"
-        },
-    )
+val providerProjectPaths = providers.gradleProperty("codexMobile.providerProjects").orNull
+    ?.split('|')
+    ?.filter(String::isNotBlank)
+    .orEmpty()
+    .map { ":provider_${file(it).canonicalFile.name.replace('-', '_')}" }
 
 android {
     namespace = "io.github.ciurlaro.codexmobile.app"
+    dynamicFeatures += providerProjectPaths
     compileSdk = 37
 
     defaultConfig {
@@ -100,6 +96,12 @@ android {
             useLegacyPackaging = true
         }
     }
+
+    bundle {
+        abi { enableSplit = false }
+        density { enableSplit = false }
+        language { enableSplit = false }
+    }
 }
 
 val codexRuntime = layout.projectDirectory.file(
@@ -119,49 +121,8 @@ val prepareCodexRuntime = tasks.register<Exec>("prepareCodexRuntime") {
     )
 }
 
-val nativeTools = listOf(
-    "libcodex_mutool.so",
-    "libcodex_tesseract.so",
-    "libcodex_officecli.so",
-    "libcodex_officecli_musl.so",
-    "libcodex_officecli_gcc.so",
-    "libcodex_officecli_cxx.so",
-    "libcodex_tgcli.so",
-    "libcodex_node.so",
-    "libcodex_z.so",
-    "libcodex_cares.so",
-    "libcodex_sqlite3.so",
-    "libcodex_crypto.so",
-    "libcodex_ssl.so",
-    "libcodex_icudata.so",
-    "libcodex_icui18n.so",
-    "libcodex_icuuc.so",
-    "libcodex_cxx.so",
-).map { layout.projectDirectory.file("src/main/jniLibs/arm64-v8a/$it") }
-val nativeToolAssets = layout.projectDirectory.dir("src/main/assets/runtime")
-val prepareNativeTools = tasks.register<Exec>("prepareNativeTools") {
-    inputs.property("bundleVersion", nativeBundleVersion)
-    inputs.files(
-        rootProject.file("scripts/prepare-native-tools.sh"),
-        rootProject.file("scripts/native/tgcli-launcher.c"),
-        rootProject.file("scripts/native/officecli-launcher.c"),
-        rootProject.file("scripts/native/tgcli-package-lock.json"),
-        rootProject.file("scripts/patches/tgcli-android.patch"),
-        rootProject.file("scripts/patches/tesseract-android.patch"),
-    )
-    outputs.files(nativeTools)
-    outputs.dir(nativeToolAssets)
-    commandLine(
-        rootProject.file("scripts/prepare-native-tools.sh"),
-        nativeToolsNdk.get(),
-        layout.projectDirectory.dir("src/main/jniLibs/arm64-v8a").asFile.absolutePath,
-        nativeToolAssets.asFile.absolutePath,
-    )
-}
-
 tasks.named("preBuild").configure {
     dependsOn(prepareCodexRuntime)
-    dependsOn(prepareNativeTools)
 }
 
 val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
