@@ -10,6 +10,7 @@
 | `PluginProviderHost` | Coordinate optional provider installation/removal with the standard plugin lifecycle | Project-owned host contract |
 | `AndroidProviderPackageManager` | Validate, download, checksum, install, resume, and remove signed feature splits | Android package authority |
 | `AndroidProviderRegistry` | Load only recorded verified providers and persist interrupted package operations | Backup-excluded package lifecycle state; never enablement |
+| `AndroidProviderSecretStore` | Encrypt and scope user-supplied configuration secrets for one installed plugin | Plugin-specific Android Keystore key; retained on disable and cleared after prepared removal |
 | `CodexMobileProvider` | Declare stable tools, execute typed calls, expose settings, and prepare removal | One instance per verified split per process |
 | `ProviderToolDispatcher` | Map closed tool identifiers to verified providers | Process-local derived state |
 | `ThreadProviderStateStore` | Preserve each thread's original provider schemas and last announced availability | Backup-excluded per-thread state |

@@ -15,6 +15,7 @@
 | R9 | Preserve workspace containment, approvals, cancellation, deadlines, mutation journaling, exact replay, and indeterminate outcomes around every provider call. |
 | R10 | Keep App Server as the only standalone child process launched by the Android host. |
 | R11 | Preserve official plugins, ChatGPT authentication, foreground lifecycle, Markdown, model selection, and conversations. |
+| R12 | Keep user-supplied provider secrets out of add-on artifacts and scope encrypted runtime values independently to each plugin. |
 
 ## Constraints
 

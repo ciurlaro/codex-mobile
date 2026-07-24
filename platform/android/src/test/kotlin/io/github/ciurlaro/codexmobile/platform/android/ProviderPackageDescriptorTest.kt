@@ -29,7 +29,7 @@ class ProviderPackageDescriptorTest {
     private fun manifest(checksum: String) = """
         {
           "formatVersion": 1,
-          "providerApi": { "min": 1, "max": 1 },
+          "providerApi": { "min": 2, "max": 2 },
           "host": { "versionCode": 3 },
           "pluginId": "sample@catalog",
           "implementationVersion": "1.0.0",

@@ -47,7 +47,9 @@ class AndroidProviderRegistry(context: Context) {
     }
 
     val dispatcher: BuiltInToolDispatcher
-        get() = ProviderToolDispatcher(verifiedProviders())
+        get() = ProviderToolDispatcher(verifiedProviders()) { pluginId -> secretStore(pluginId).snapshot() }
+
+    fun secretStore(pluginId: String) = AndroidProviderSecretStore(appContext, pluginId)
 
     fun provider(pluginId: String): CodexMobileProvider? = verifiedProviders().singleOrNull {
         it.descriptor.pluginId == pluginId
@@ -65,15 +67,17 @@ class AndroidProviderRegistry(context: Context) {
             )
         }
         val entryPoint = record.settingsEntryPoint ?: return@mapNotNull null
-        if (verifiedProvider(record) == null) {
-            return@mapNotNull null
-        }
+        val provider = verifiedProvider(record) ?: return@mapNotNull null
+        val secretMessage = runCatching {
+            val secrets = secretStore(record.pluginId).snapshot()
+            if (provider.descriptor.secrets.any { secrets.get(it.name) == null }) "Configuration required" else null
+        }.getOrElse { "Provider secrets are unreadable" }
         ProviderSettingsEntry(
             pluginId = record.pluginId,
             displayName = record.displayName,
             activityClassName = entryPoint,
             removalNeedsRetry = record.state == ProviderPackageState.REMOVAL_PENDING,
-            message = record.message,
+            message = record.message ?: secretMessage,
         )
     }
 

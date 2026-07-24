@@ -21,6 +21,7 @@ required=(
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidCodexRuntime.kt
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderRegistry.kt
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
+  platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/BuiltInMutationJournal.kt
   scripts/generate-sbom.py scripts/verify-release.sh scripts/release-local.sh
 )
@@ -54,6 +55,9 @@ reject_matches -n -i \
 grep -q 'REQUEST_INSTALL_PACKAGES' app/android/src/main/AndroidManifest.xml
 grep -q 'MODE_INHERIT_EXISTING' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
 grep -q 'removeSplit' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
+grep -q 'const val PROVIDER_API = 2' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
+grep -q 'AndroidKeyStore' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
+grep -q 'AES/GCM/NoPadding' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
 grep -q 'marketplace/add' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
 grep -q 'thread/inject_items' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
 grep -q 'turn/steer' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt

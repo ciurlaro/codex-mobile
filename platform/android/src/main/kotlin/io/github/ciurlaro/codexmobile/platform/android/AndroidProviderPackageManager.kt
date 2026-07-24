@@ -12,6 +12,7 @@ import android.os.Build
 import android.provider.Settings
 import io.github.ciurlaro.codexmobile.agent.codex.PluginProviderHost
 import io.github.ciurlaro.codexmobile.agent.codex.ProviderInstallDisposition
+import io.github.ciurlaro.codexmobile.agent.codex.ProviderContext
 import io.github.ciurlaro.codexmobile.agent.codex.ProviderRemovalResult
 import io.github.ciurlaro.codexmobile.agent.codex.ProviderRemovalState
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
@@ -52,7 +53,7 @@ class AndroidProviderPackageManager(
         val hostVersion = appContext.packageManager.getPackageInfo(appContext.packageName, 0).compatVersionCode()
         check(descriptor.hostVersionCode == hostVersion) { "This provider was built for another Codex Mobile version" }
         check(Build.SUPPORTED_ABIS.any(descriptor.abis::contains)) { "This provider does not support this device ABI" }
-        val candidate = descriptor.toInstalledProvider(plugin)
+        val candidate = descriptor.toInstalledProvider(plugin, PROVIDER_API)
         val previous = registry.installedRecord(plugin.id)
         if (installedSplits().containsAll(descriptor.splitNames)) {
             registry.recordInstalling(candidate)
@@ -90,9 +91,10 @@ class AndroidProviderPackageManager(
         registry.markRemovalPending(pluginId, "Provider cleanup was interrupted; retry removal")
         val provider = registry.provider(pluginId)
             ?: return ProviderRemovalResult.retry("Provider verification failed; removal was not started")
-        val result = provider.prepareUninstall()
+        val result = provider.prepareUninstall(ProviderContext({}, registry.secretStore(pluginId).snapshot()))
         if (result.state == ProviderRemovalState.READY) {
             BuiltInMutationJournal(appContext).use { it.compact(pluginId) }
+            registry.secretStore(pluginId).clear()
             registry.markRemovalPrepared(pluginId, result.message)
         } else {
             registry.markRemovalPending(pluginId, result.message)
@@ -313,7 +315,7 @@ class AndroidProviderPackageManager(
     }
 
     private companion object {
-        const val PROVIDER_API = 1
+        const val PROVIDER_API = 2
         const val MAX_REDIRECTS = 5
         const val MAX_DESCRIPTOR_BYTES = 64L * 1024
         const val MAX_APK_BYTES = 512L * 1024 * 1024
@@ -338,9 +340,9 @@ internal data class ProviderPackageDescriptor(
     val apkUri: URI,
     val sha256: String,
 ) {
-    fun toInstalledProvider(plugin: AgentPluginReference) = InstalledProvider(
+    fun toInstalledProvider(plugin: AgentPluginReference, providerApi: Int) = InstalledProvider(
         pluginId = pluginId,
-        providerApi = 1,
+        providerApi = providerApi,
         hostVersionCode = hostVersionCode,
         implementationVersion = implementationVersion,
         displayName = displayName,

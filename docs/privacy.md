@@ -10,7 +10,8 @@
 | Shared-storage files | Android shared storage | Read or changed by ordinary shell work or an enabled provider; never removed by app-data erasure |
 | Provider mutation journal | Backup-excluded app-private storage | Exact results and reconciliation evidence remain while the provider is installed; confirmed uninstall deletes undispatched rows and retains only identifier/hash/state tombstones until app-data erasure |
 | Provider split and packaged assets | Signed optional application feature | Downloaded only after explicit confirmation and removed after successful plugin uninstall |
-| Provider-private credentials and data | Backup-excluded provider-owned storage and any declared remote service | Governed by the provider's settings and uninstall contract |
+| User-supplied provider secrets | Plugin-specific Android Keystore-backed, backup-excluded host storage | Retained on disable; erased only after successful uninstall preparation or app-data erasure |
+| Provider sessions and data | Backup-excluded provider-owned storage and any declared remote service | Governed by the provider's settings and uninstall contract |
 
 The base app has no first-party analytics, advertising, remote crash reporter, or camera, microphone, contacts, or location permission. It requests Android **All files access**, which permits broad shared-storage access and may require distribution-store review.
 

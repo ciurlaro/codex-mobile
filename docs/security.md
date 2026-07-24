@@ -14,8 +14,9 @@ Codex output, shell commands, provider content, marketplace data, downloaded art
 | Provider supply chain | Add-on metadata is bounded and schema-checked. Its MCP names must equal the standard plugin declaration. Downloads use GitHub HTTPS plus a pinned hash. Android inherited-package installation enforces application ID, exact version, split identity, and signing certificate. Entry points and schema digests are reverified after restart. |
 | Plugin lifecycle | App Server owns source discovery, installation, enablement, and skills. Provider records contain package continuation only. Disablement keeps code but revokes dispatch; uninstall removes code only after provider cleanup. Existing threads receive hidden availability updates. |
 | Provider execution | Providers exchange project-owned typed values in-process. No provider executable, shell, argv, environment protocol, HTTP server, Binder transport, or runtime code loader exists. Provider MCP definitions are disabled on Android. |
+| Provider secrets | Each provider declares stable secret names. Values are encrypted at rest with a plugin-specific Android Keystore key, excluded from backup, injected read-only into that provider, retained on disable, and erased after successful uninstall cleanup. Missing or unreadable values fail closed. |
 | Mutation recovery | A unique thread/turn/call key is bound to a canonical arguments hash. Approval permits are one-use. Terminal results replay exactly; dispatched work reconciles or becomes indeterminate without resubmission. |
-| Network | Framework cleartext is denied. App Server uses an authenticated loopback CONNECT proxy restricted to validated TLS hosts. Provider network behavior and credentials remain inside the signed provider and its declared notices. |
+| Network | Framework cleartext is denied. App Server uses an authenticated loopback CONNECT proxy restricted to validated TLS hosts. A signed provider receives only its runtime secret namespace and owns its declared network behavior and service session. |
 | Logs and backup | Production code has no content logging or crash SDK. Backup is disabled and app domains are excluded. |
 
 ## Explicit trade-off
@@ -23,6 +24,8 @@ Codex output, shell commands, provider content, marketplace data, downloaded art
 `MANAGE_EXTERNAL_STORAGE` makes the ordinary App Server shell broad: the selected directory is a starting point, and absolute or parent paths may reach other shared storage allowed to the app. Provider calls receive the selected workspace as a hard authorization boundary. The UI disclosure distinguishes these authorities, and distribution must satisfy restricted-permission policy.
 
 Optional signed provider code shares the application UID and can use permissions granted to the host. Exact-version compatibility, a matching signing certificate, explicit Android installation confirmation, bounded artifacts, declared schemas, and provider-specific release review are therefore mandatory. A plugin manifest alone grants no Android execution authority.
+
+Secret namespaces prevent accidental cross-plugin configuration and lifecycle coupling; they are not isolation from malicious feature code because every installed split shares the host UID and signing trust. Independent untrusted-code isolation would require a separately signed package and process boundary.
 
 GitHub-installed splits require Android's user-confirmed package-installer permission. Distribution channels that prohibit general package installation cannot offer this source flow; they need channel-managed feature delivery instead of weakening the installer or signature checks.
 

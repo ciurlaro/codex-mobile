@@ -13,5 +13,6 @@
 | Prohibit provider helper processes | A single typed authority path keeps execution, retry, environment, and packaging auditable | Never; standalone work belongs to App Server |
 | Use one global provider-tool mutex | It closes disablement and pre-dispatch races with the smallest policy | Measured contention requires narrower locks |
 | Journal provider mutations only | Provider side effects need exact replay and no-resubmit recovery; shell work already has App Server semantics | App Server supplies equivalent recovery |
+| Encrypt user-supplied secrets per plugin with Android Keystore | Add-ons install independently, disablement retains configuration, and confirmed uninstall removes only that provider's namespace | Providers require isolation across independently signed Android UIDs |
 | Keep Auto-review mutations unavailable | App Server `0.144.6` dynamic tools have no equivalent Guardian bridge | The pinned protocol exposes equivalent authority |
 | Use Android package/data facilities as authority | Android owns split installation, removal, signing, and full app-data erasure | Platform contracts change |

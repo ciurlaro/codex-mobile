@@ -7,11 +7,12 @@ data class ProviderDescriptor(
     val pluginId: String,
     val implementationVersion: String,
     val tools: List<BuiltInToolDefinition>,
-    val providerApi: Int = 1,
+    val providerApi: Int = 2,
     val minHostVersionCode: Int = 1,
     val maxHostVersionCode: Int = Int.MAX_VALUE,
     val displayName: String = pluginId.substringBefore('@'),
     val settingsEntryPoint: String? = null,
+    val secrets: List<ProviderSecretDefinition> = emptyList(),
     val schemaDigest: String = providerSchemaDigest(tools),
 ) {
     init {
@@ -28,6 +29,29 @@ data class ProviderDescriptor(
         require(tools.map(BuiltInToolDefinition::name).distinct().size == tools.size) {
             "Provider tool names must be unique"
         }
+        require(secrets.map(ProviderSecretDefinition::name).distinct().size == secrets.size) {
+            "Provider secret names must be unique"
+        }
+    }
+}
+
+data class ProviderSecretDefinition(
+    val name: String,
+    val displayName: String,
+    val description: String? = null,
+) {
+    init {
+        require(name.matches(Regex("[a-z][a-z0-9_]{0,63}"))) { "Provider secret name is invalid" }
+        require(displayName.isNotBlank() && displayName.length <= 80) { "Provider secret display name is invalid" }
+        require(description == null || description.length <= 300) { "Provider secret description is too long" }
+    }
+}
+
+fun interface ProviderSecrets {
+    fun get(name: String): String?
+
+    companion object {
+        val EMPTY = ProviderSecrets { null }
     }
 }
 
@@ -39,9 +63,9 @@ interface CodexMobileProvider {
         context: ProviderContext,
     ): ProviderResult
 
-    suspend fun replay(call: ProviderCall): ProviderResult? = null
+    suspend fun replay(call: ProviderCall, context: ProviderContext): ProviderResult? = null
 
-    suspend fun prepareUninstall(): ProviderRemovalResult = ProviderRemovalResult.ready()
+    suspend fun prepareUninstall(context: ProviderContext): ProviderRemovalResult = ProviderRemovalResult.ready()
 }
 
 typealias ProviderCall = BuiltInToolCall
@@ -50,6 +74,7 @@ typealias ProviderContent = BuiltInToolContent
 
 class ProviderContext(
     val beforeMutationDispatch: () -> Unit,
+    val secrets: ProviderSecrets = ProviderSecrets.EMPTY,
 )
 
 enum class ProviderRemovalState { READY, RETRY_REQUIRED }
@@ -79,6 +104,7 @@ interface PluginProviderHost {
 
 class ProviderToolDispatcher(
     providers: List<CodexMobileProvider>,
+    private val secrets: (String) -> ProviderSecrets = { ProviderSecrets.EMPTY },
 ) : BuiltInToolDispatcher {
     private val providersByPlugin = providers.associateBy { it.descriptor.pluginId }.also {
         require(it.size == providers.size) { "Provider plugin IDs must be unique" }
@@ -102,13 +128,13 @@ class ProviderToolDispatcher(
     ): BuiltInToolResult {
         val provider = providersByTool[call.tool] ?: error("Tool provider is unavailable")
         check(provider.descriptor.pluginId == call.pluginId) { "Tool provider does not match the plugin" }
-        return provider.execute(call, ProviderContext(beforeMutationDispatch))
+        return provider.execute(call, ProviderContext(beforeMutationDispatch, secrets(call.pluginId)))
     }
 
     override suspend fun replay(call: BuiltInToolCall): BuiltInToolResult? {
         val provider = providersByTool[call.tool] ?: error("Tool provider is unavailable")
         check(provider.descriptor.pluginId == call.pluginId) { "Tool provider does not match the plugin" }
-        return provider.replay(call)
+        return provider.replay(call, ProviderContext({}, secrets(call.pluginId)))
     }
 }
 
