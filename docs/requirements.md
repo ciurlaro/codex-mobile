@@ -7,8 +7,8 @@
 | R1 | Package, authenticate, converse, stream, cancel, and restart Codex App Server `0.144.6`. |
 | R2 | Let the user grant all-files access and select the absolute `cwd` sent with every turn. |
 | R3 | Preserve ordinary shell work through App Server. |
-| R4 | Add public GitHub Codex marketplace sources through App Server and render a cache-first catalog during one bounded refresh. |
-| R5 | Install standard plugins from any App Server marketplace, but accept Android provider splits only from the canonical `ciurlaro/codex-mobile-plugins` Git origin. |
+| R4 | Materialize public GitHub Codex marketplaces as bounded, atomically refreshed local snapshots, register them through App Server, and render a cache-first catalog during one bounded refresh. |
+| R5 | Install standard plugins from any registered marketplace, but accept Android provider splits only from a validated snapshot of the canonical `ciurlaro/codex-mobile-plugins` GitHub repository. |
 | R6 | Keep App Server plugin configuration as the sole enablement truth; disabling retains provider code and state, while uninstall removes them. |
 | R7 | Preserve existing conversations and notify App Server when provider availability changes. |
 | R8 | Accept only closed typed provider schemas, never commands, argv, arbitrary property maps, or executable adapters. |

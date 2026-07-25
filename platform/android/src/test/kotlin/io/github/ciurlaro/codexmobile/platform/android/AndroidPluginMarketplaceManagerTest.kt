@@ -65,14 +65,37 @@ class AndroidPluginMarketplaceManagerTest {
             val manifest = File(marketplace, ".agents/plugins/marketplace.json")
             checkNotNull(manifest.parentFile).mkdirs()
             manifest.writeText(
-                """{"plugins":[{"source":{"source":"local","path":"./plugins/documents"}}]}""",
+                """{"plugins":[{"source":{"source":"local","path":"./catalog/plugins/sample"}}]}""",
             )
             assertTrue(!isValidMarketplaceSnapshot(marketplace))
 
-            File(marketplace, "plugins/documents").mkdirs()
+            File(marketplace, "catalog/plugins/sample").mkdirs()
             assertTrue(isValidMarketplaceSnapshot(marketplace))
         } finally {
             marketplace.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `replaces a stale snapshot at the stable marketplace path`() {
+        val root = Files.createTempDirectory("marketplaces-").toFile()
+        try {
+            val destination = File(root, "stable").apply {
+                mkdirs()
+                resolve("version").writeText("old")
+            }
+            val staging = File(root, ".install").apply {
+                mkdirs()
+                resolve("version").writeText("new")
+            }
+
+            replaceMarketplaceSnapshot(staging, destination)
+
+            assertEquals("new", destination.resolve("version").readText())
+            assertTrue(!staging.exists())
+            assertTrue(root.listFiles().orEmpty().none { it.name.startsWith(".previous-") })
+        } finally {
+            root.deleteRecursively()
         }
     }
 }

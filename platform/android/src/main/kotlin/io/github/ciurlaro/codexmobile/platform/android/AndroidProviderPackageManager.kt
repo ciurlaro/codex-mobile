@@ -62,26 +62,31 @@ class AndroidProviderPackageManager(
         check(Build.SUPPORTED_ABIS.any(descriptor.abis::contains)) { "This provider does not support this device ABI" }
         val candidate = descriptor.toInstalledProvider(plugin, PROVIDER_API, packageInfo.marketplaceRepository)
         val previous = registry.installedRecord(plugin.id)
-        if (installedSplits().containsAll(descriptor.splitNames)) {
-            registry.recordInstalling(candidate.copy(
-                contentSha256 = previous?.takeIf { it.apkSha256 == descriptor.sha256 }?.contentSha256,
-            ))
-            if (registry.isVerified(plugin.id)) return ProviderInstallDisposition.READY
+        val splitName = descriptor.splitNames.single()
+        if (installedSplits().contains(splitName) && previous?.apkSha256 == descriptor.sha256) {
+            registry.recordInstalling(candidate.copy(contentSha256 = previous.contentSha256))
+            val verificationError = runCatching { registry.requireVerified(plugin.id) }.exceptionOrNull()
+            if (verificationError == null) return ProviderInstallDisposition.READY
             registry.restoreInstallRecord(plugin.id, previous)
+            throw descriptor.verificationFailure(verificationError)
         }
         requireInstallerPermission()
 
         val apk = download(descriptor)
+        val contentSha256 = apk.apkContentSha256()
         try {
-            registry.recordInstalling(candidate.copy(contentSha256 = apk.apkContentSha256()))
-            installSplit(descriptor.splitNames.single(), apk)
+            registry.recordInstalling(candidate.copy(contentSha256 = contentSha256))
+            installSplit(splitName, apk)
+            runCatching { registry.requireVerified(plugin.id) }
+                .getOrElse { throw descriptor.verificationFailure(it) }
         } catch (error: Exception) {
-            registry.restoreInstallRecord(plugin.id, previous)
+            val installedContent = runCatching { installedSplitFiles()[splitName]?.apkContentSha256() }.getOrNull()
+            if (installedContent != contentSha256) registry.restoreInstallRecord(plugin.id, previous)
             throw error
         } finally {
             apk.delete()
         }
-        return ProviderInstallDisposition.RESTART_REQUIRED
+        return ProviderInstallDisposition.READY
     }
 
     override fun manages(pluginId: String): Boolean = registry.installedRecord(pluginId) != null
@@ -98,7 +103,12 @@ class AndroidProviderPackageManager(
         registry.installedRecord(pluginId) ?: return ProviderRemovalResult.ready()
         registry.markRemovalPending(pluginId, "Provider cleanup was interrupted; retry removal")
         val provider = registry.provider(pluginId)
-            ?: return ProviderRemovalResult.retry("Provider verification failed; removal was not started")
+        if (provider == null) {
+            BuiltInMutationJournal(appContext).use { it.compact(pluginId) }
+            registry.secretStore(pluginId).clear()
+            registry.markRemovalPrepared(pluginId, "Unverified provider is ready for code removal")
+            return ProviderRemovalResult.ready("Unverified provider is ready for code removal")
+        }
         val result = provider.prepareUninstall(ProviderContext({}, registry.secretStore(pluginId).snapshot()))
         if (result.state == ProviderRemovalState.READY) {
             BuiltInMutationJournal(appContext).use { it.compact(pluginId) }
@@ -247,8 +257,11 @@ class AndroidProviderPackageManager(
         }
     }
 
-    private fun installedSplits(): Set<String> = appContext.packageManager
-        .getApplicationInfo(appContext.packageName, 0).splitNames.orEmpty().toSet()
+    private fun installedSplits(): Set<String> = installedSplitFiles().keys
+
+    private fun installedSplitFiles(): Map<String, File> = appContext.packageManager
+        .getApplicationInfo(appContext.packageName, 0)
+        .let { info -> info.splitNames.orEmpty().zip(info.splitSourceDirs.orEmpty().map(::File)).toMap() }
 
     private inline fun <T> HttpURLConnection.use(block: (HttpURLConnection) -> T): T = try {
         block(this)
@@ -281,7 +294,6 @@ class ProviderPackageResultReceiver : BroadcastReceiver() {
                 }
             }
             PackageInstaller.STATUS_SUCCESS -> {
-                ProviderInstallRestart.mark(context)
                 finish(context, token, Result.success(Unit))
             }
             else -> finish(context, token, Result.failure(IllegalStateException(
@@ -292,6 +304,7 @@ class ProviderPackageResultReceiver : BroadcastReceiver() {
 
     private fun finish(context: Context, token: String, result: Result<Unit>) {
         if (!ProviderPackageCallbacks.complete(token, result)) {
+            if (result.isSuccess) ProviderInstallRestart.mark(context)
             notifyAfterRestart(context, result)
         }
     }
@@ -364,6 +377,11 @@ internal object ProviderInstallRestart {
         return true
     }
 }
+
+private fun ProviderPackageDescriptor.verificationFailure(cause: Throwable) = IllegalStateException(
+    "$displayName provider verification failed: ${cause.message ?: "the installed code does not match its metadata"}",
+    cause,
+)
 
 internal data class ProviderPackageInfo(
     val descriptor: ProviderPackageDescriptor,

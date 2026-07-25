@@ -12,6 +12,7 @@ import io.github.ciurlaro.codexmobile.core.AgentCatalogFreshness
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import io.github.ciurlaro.codexmobile.core.AgentPluginUnavailableException
+import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import java.io.File
 import java.nio.file.Files
@@ -171,6 +172,68 @@ class SkillsPluginsProtocolTest {
             writes[1]["keyPath"]!!.jsonPrimitive.content,
         )
         assertFalse(writes[1]["value"]!!.jsonPrimitive.content.toBoolean())
+    }
+
+    @Test
+    fun `new provider tools are available without recreating the client`(): Unit = runBlocking {
+        var providerInstalled = false
+        var threadStart: JsonObject? = null
+        val definition = BuiltInToolDefinition(
+            pluginId = "drive@openai-curated",
+            name = "drive_search",
+            description = "Search Drive",
+            inputSchema = buildJsonObject {
+                put("type", "object")
+                putJsonObject("properties") {}
+                put("additionalProperties", false)
+            },
+        )
+        val dispatcher = object : BuiltInToolDispatcher {
+            override fun definitions() = if (providerInstalled) listOf(definition) else emptyList()
+            override suspend fun execute(call: BuiltInToolCall) = BuiltInToolResult.text("unused")
+        }
+        val provider = object : PluginProviderHost {
+            override suspend fun install(plugin: AgentPluginReference, mcpServerNames: Set<String>) =
+                ProviderInstallDisposition.READY.also { providerInstalled = true }
+            override fun manages(pluginId: String) = providerInstalled
+            override fun mcpServerNames(pluginId: String) = setOf("drive")
+            override fun installCompleted(pluginId: String) = Unit
+            override suspend fun prepareRemoval(pluginId: String) = ProviderRemovalResult.ready()
+            override suspend fun remove(pluginId: String) = Unit
+        }
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/read" -> server.respond(message.id, pluginDetail(installed = false))
+                "config/value/write" -> server.respond(message.id, buildJsonObject {})
+                "plugin/install" -> server.respond(message.id, buildJsonObject {
+                    put("authPolicy", "ON_USE")
+                    putJsonArray("appsNeedingAuth") {}
+                })
+                "plugin/installed" -> server.respond(message.id, pluginList(installed = true))
+                "thread/start" -> {
+                    threadStart = message.objectValue["params"]!!.jsonObject
+                    server.respond(message.id, buildJsonObject {
+                        putJsonObject("thread") { put("id", "thread-1") }
+                    })
+                }
+            }
+        }
+
+        CodexAgentClient(
+            runtimeFactory = { runtime },
+            requestTimeoutMillis = 1_000,
+            builtInToolDispatcher = dispatcher,
+            providerHost = provider,
+        ).use { client ->
+            client.installPlugin(AgentPluginReference("drive@openai-curated", "drive", "openai-curated"))
+            client.openSession(settings = AgentRuntimeSettings(workingDirectory = "/workspace"))
+        }
+
+        assertEquals(
+            listOf("drive_search"),
+            threadStart!!["dynamicTools"]!!.jsonArray.map { it.jsonObject["name"]!!.jsonPrimitive.content },
+        )
     }
 
     @Test

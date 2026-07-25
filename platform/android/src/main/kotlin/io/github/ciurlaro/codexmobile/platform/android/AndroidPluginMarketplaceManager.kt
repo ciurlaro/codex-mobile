@@ -35,7 +35,6 @@ class AndroidPluginMarketplaceManager internal constructor(context: Context) {
                 require(isGitHubSegment(it)) { "The repository default branch is not supported" }
             }
             val destination = File(root, source.snapshotName(ref))
-            if (isValidMarketplaceSnapshot(destination)) return@withLock destination.canonicalPath
 
             check(root.isDirectory || root.mkdirs()) { "Unable to prepare plugin marketplace storage" }
             val staging = File(root, ".install-${UUID.randomUUID()}")
@@ -53,7 +52,7 @@ class AndroidPluginMarketplaceManager internal constructor(context: Context) {
                 check(hasMarketplaceManifest(staging)) { "The repository has no valid plugin marketplace" }
                 writeOrigin(staging, source.repository)
                 check(isValidMarketplaceSnapshot(staging)) { "The marketplace contains an invalid local plugin path" }
-                replaceSnapshot(staging, destination)
+                replaceMarketplaceSnapshot(staging, destination)
                 destination.canonicalPath
             } finally {
                 if (staging.exists()) staging.deleteRecursively()
@@ -91,26 +90,26 @@ class AndroidPluginMarketplaceManager internal constructor(context: Context) {
     private inline fun <T> HttpURLConnection.useResponse(block: (HttpURLConnection) -> T): T =
         try { block(this) } finally { disconnect() }
 
-    private fun replaceSnapshot(staging: File, destination: File) {
-        if (!destination.exists()) {
-            check(staging.renameTo(destination)) { "Unable to activate plugin marketplace snapshot" }
-            return
-        }
-        val previous = File(root, ".previous-${UUID.randomUUID()}")
-        check(destination.renameTo(previous)) { "Unable to replace plugin marketplace snapshot" }
-        if (!staging.renameTo(destination)) {
-            check(previous.renameTo(destination)) { "Unable to restore plugin marketplace snapshot" }
-            error("Unable to activate plugin marketplace snapshot")
-        }
-        previous.deleteRecursively()
-    }
-
     private companion object {
         const val NETWORK_TIMEOUT_MILLIS = 30_000
         const val MAX_METADATA_BYTES = 1L * 1024 * 1024
         const val MAX_DOWNLOAD_BYTES = 100L * 1024 * 1024
         const val MAX_MANIFEST_BYTES = 1L * 1024 * 1024
     }
+}
+
+internal fun replaceMarketplaceSnapshot(staging: File, destination: File) {
+    if (!destination.exists()) {
+        check(staging.renameTo(destination)) { "Unable to activate plugin marketplace snapshot" }
+        return
+    }
+    val previous = File(checkNotNull(destination.parentFile), ".previous-${UUID.randomUUID()}")
+    check(destination.renameTo(previous)) { "Unable to replace plugin marketplace snapshot" }
+    if (!staging.renameTo(destination)) {
+        check(previous.renameTo(destination)) { "Unable to restore plugin marketplace snapshot" }
+        error("Unable to activate plugin marketplace snapshot")
+    }
+    previous.deleteRecursively()
 }
 
 internal fun isValidMarketplaceSnapshot(directory: File): Boolean = runCatching {

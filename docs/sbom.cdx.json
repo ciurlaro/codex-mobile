@@ -2,7 +2,7 @@
   "bomFormat": "CycloneDX",
   "components": [
     {
-      "bom-ref": "pkg:generic/codex-mobile-core@0.2.0-preview.2",
+      "bom-ref": "pkg:generic/codex-mobile-core@0.2.0-preview.3",
       "description": "Provider-neutral application contracts.",
       "licenses": [
         {
@@ -12,12 +12,12 @@
         }
       ],
       "name": "codex-mobile-core",
-      "purl": "pkg:generic/codex-mobile-core@0.2.0-preview.2",
+      "purl": "pkg:generic/codex-mobile-core@0.2.0-preview.3",
       "type": "library",
-      "version": "0.2.0-preview.2"
+      "version": "0.2.0-preview.3"
     },
     {
-      "bom-ref": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.2",
+      "bom-ref": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.3",
       "description": "Pinned App Server protocol, plugin lifecycle, and dynamic-tool authority.",
       "licenses": [
         {
@@ -27,12 +27,12 @@
         }
       ],
       "name": "codex-mobile-agent-codex",
-      "purl": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.2",
+      "purl": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.3",
       "type": "library",
-      "version": "0.2.0-preview.2"
+      "version": "0.2.0-preview.3"
     },
     {
-      "bom-ref": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.2",
+      "bom-ref": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.3",
       "description": "Android runtime, signed provider host, workspace authority, and mutation journal.",
       "licenses": [
         {
@@ -42,9 +42,9 @@
         }
       ],
       "name": "codex-mobile-platform-android",
-      "purl": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.2",
+      "purl": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.3",
       "type": "library",
-      "version": "0.2.0-preview.2"
+      "version": "0.2.0-preview.3"
     },
     {
       "bom-ref": "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64",
@@ -1018,9 +1018,9 @@
   "dependencies": [
     {
       "dependsOn": [
-        "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.2",
-        "pkg:generic/codex-mobile-core@0.2.0-preview.2",
-        "pkg:generic/codex-mobile-platform-android@0.2.0-preview.2",
+        "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.3",
+        "pkg:generic/codex-mobile-core@0.2.0-preview.3",
+        "pkg:generic/codex-mobile-platform-android@0.2.0-preview.3",
         "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64",
         "pkg:maven/androidx.activity/activity-compose@1.13.0",
         "pkg:maven/androidx.activity/activity-ktx@1.13.0",
@@ -1140,19 +1140,19 @@
         "pkg:maven/org.jetbrains/markdown@0.7.3",
         "pkg:maven/org.jspecify/jspecify@1.0.0"
       ],
-      "ref": "pkg:generic/codex-mobile@0.2.0-preview.2?platform=android"
+      "ref": "pkg:generic/codex-mobile@0.2.0-preview.3?platform=android"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.2"
+      "ref": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.3"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-core@0.2.0-preview.2"
+      "ref": "pkg:generic/codex-mobile-core@0.2.0-preview.3"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.2"
+      "ref": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.3"
     },
     {
       "dependsOn": [],
@@ -1629,7 +1629,7 @@
   ],
   "metadata": {
     "component": {
-      "bom-ref": "pkg:generic/codex-mobile@0.2.0-preview.2?platform=android",
+      "bom-ref": "pkg:generic/codex-mobile@0.2.0-preview.3?platform=android",
       "description": "Provider-neutral Android Codex host.",
       "licenses": [
         {
@@ -1645,12 +1645,12 @@
           "value": "LICENSES/MLKIT-EXCEPTION.txt"
         }
       ],
-      "purl": "pkg:generic/codex-mobile@0.2.0-preview.2?platform=android",
+      "purl": "pkg:generic/codex-mobile@0.2.0-preview.3?platform=android",
       "type": "application",
-      "version": "0.2.0-preview.2"
+      "version": "0.2.0-preview.3"
     }
   },
-  "serialNumber": "urn:uuid:16326be4-2468-5e3f-b569-9a37a51db239",
+  "serialNumber": "urn:uuid:a1c3e152-caac-555e-9feb-1fb8a96236c0",
   "specVersion": "1.6",
   "version": 1
 }

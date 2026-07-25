@@ -75,7 +75,8 @@ if find app platform agent core -path '*/build/*' -prune -o -type d -name provid
 fi
 reject_matches -n -i \
   '@codex-mobile|src/main/assets/codex/plugins|private.backend' \
-  app platform agent core docs gradle/verification-metadata.xml --glob '!**/build/**'
+  app platform agent core docs gradle/verification-metadata.xml \
+  --glob '!**/build/**' --glob '!**/src/test/**' --glob '!**/src/androidTest/**'
 grep -q 'REQUEST_INSTALL_PACKAGES' app/android/src/main/AndroidManifest.xml
 grep -q 'MODE_INHERIT_EXISTING' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
 grep -q 'removeSplit' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
@@ -90,7 +91,17 @@ grep -q 'CANONICAL_PROVIDER_REPOSITORY = "ciurlaro/codex-mobile-plugins"' platfo
 grep -q 'record.marketplaceRepository == CANONICAL_PROVIDER_REPOSITORY' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderRegistry.kt
 grep -q 'class io.github.ciurlaro.codexmobile.provider.api.\*\*' app/android/proguard-rules.pro
 grep -q 'provider-addon-rules.pro' app/android/build.gradle.kts
+grep -qx -- '-dontoptimize' app/android/provider-addon-rules.pro
 grep -qx -- '-dontobfuscate' app/android/provider-addon-rules.pro
+for provider_abi in \
+  'io.github.ciurlaro.codexmobile.provider.api.**' \
+  'io.github.ciurlaro.codexmobile.platform.android.**' \
+  'kotlin.**' \
+  'kotlinx.coroutines.**' \
+  'kotlinx.serialization.**'; do
+  grep -Fqx -- "-keep class $provider_abi { *; }" app/android/provider-addon-rules.pro
+done
+grep -Fqx -- '-keep class io.legere.pdfiumandroid.core.jni.** { *; }' app/android/provider-addon-rules.pro
 grep -q 'AppServerClientMethods.MarketplaceAdd' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
 grep -q 'AppServerClientMethods.ThreadInjectItems' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
 grep -q 'AppServerClientMethods.TurnSteer' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt

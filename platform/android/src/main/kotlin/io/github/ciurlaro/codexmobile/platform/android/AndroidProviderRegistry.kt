@@ -2,7 +2,9 @@ package io.github.ciurlaro.codexmobile.platform.android
 
 import android.content.Context
 import android.util.AtomicFile
+import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolCall
 import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolDispatcher
+import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolResult
 import io.github.ciurlaro.codexmobile.provider.api.CodexMobileProvider
 import io.github.ciurlaro.codexmobile.provider.api.ProviderContext
 import io.github.ciurlaro.codexmobile.provider.api.ProviderWorkspace
@@ -48,14 +50,34 @@ class AndroidProviderRegistry(context: Context) {
     private val store = InstalledProviderStore(appContext)
     private val workspace = WorkspaceManager(appContext)
     private val journal = BuiltInMutationJournal(appContext)
-    private val verificationCache = mutableMapOf<InstalledProvider, CodexMobileProvider?>()
+    private val verificationCache = mutableMapOf<InstalledProvider, CodexMobileProvider>()
 
     init {
         reconcileRemovedSplits()
     }
 
-    val dispatcher: BuiltInToolDispatcher
-        get() = ProviderToolDispatcher(verifiedProviders()) { call, checkActive, beforeDispatch ->
+    val dispatcher: BuiltInToolDispatcher = object : BuiltInToolDispatcher {
+        override fun definitions() = currentDispatcher().definitions()
+
+        override suspend fun execute(call: BuiltInToolCall): BuiltInToolResult =
+            currentDispatcher().execute(call)
+
+        override suspend fun execute(
+            call: BuiltInToolCall,
+            beforeMutationDispatch: () -> Unit,
+        ): BuiltInToolResult = currentDispatcher().execute(call, beforeMutationDispatch)
+
+        override suspend fun execute(
+            call: BuiltInToolCall,
+            checkActive: () -> Unit,
+            beforeMutationDispatch: () -> Unit,
+        ): BuiltInToolResult = currentDispatcher().execute(call, checkActive, beforeMutationDispatch)
+
+        override suspend fun replay(call: BuiltInToolCall): BuiltInToolResult? =
+            currentDispatcher().replay(call)
+    }
+
+    private fun currentDispatcher() = ProviderToolDispatcher(verifiedProviders()) { call, checkActive, beforeDispatch ->
             ProviderContext(
                 beforeMutationDispatch = beforeDispatch,
                 secrets = secretStore(call.pluginId).snapshot(),
@@ -85,8 +107,18 @@ class AndroidProviderRegistry(context: Context) {
                 message = "Provider code removal needs retry",
             )
         }
+        val provider = verifiedProvider(record)
+        if (record.state == ProviderPackageState.INSTALLING && provider == null) {
+            return@mapNotNull ProviderSettingsEntry(
+                pluginId = record.pluginId,
+                displayName = record.displayName,
+                activityClassName = null,
+                removalNeedsRetry = true,
+                message = record.message ?: "Provider verification failed; update the marketplace and retry",
+            )
+        }
         val entryPoint = record.settingsEntryPoint ?: return@mapNotNull null
-        val provider = verifiedProvider(record) ?: return@mapNotNull null
+        provider ?: return@mapNotNull null
         val secretMessage = runCatching {
             val secrets = secretStore(record.pluginId).snapshot()
             if (provider.descriptor.secrets.any { secrets.get(it.name) == null }) "Configuration required" else null
@@ -145,6 +177,10 @@ class AndroidProviderRegistry(context: Context) {
 
     fun isVerified(pluginId: String): Boolean = installedRecord(pluginId)?.let(::verifiedProvider) != null
 
+    fun requireVerified(pluginId: String) {
+        verifiedProviderOrThrow(checkNotNull(installedRecord(pluginId)) { "Provider lifecycle record is missing" })
+    }
+
     fun reconcileRemovedSplits() {
         val installed = installedSplits()
         val records = store.read()
@@ -158,10 +194,13 @@ class AndroidProviderRegistry(context: Context) {
         .filter { it.state != ProviderPackageState.SPLIT_REMOVAL_PENDING }
         .mapNotNull(::verifiedProvider)
 
+    private fun verifiedProvider(record: InstalledProvider): CodexMobileProvider? =
+        runCatching { verifiedProviderOrThrow(record) }.getOrNull()
+
     @Synchronized
-    private fun verifiedProvider(record: InstalledProvider): CodexMobileProvider? {
-        if (verificationCache.containsKey(record)) return verificationCache[record]
-        return runCatching {
+    private fun verifiedProviderOrThrow(record: InstalledProvider): CodexMobileProvider {
+        verificationCache[record]?.let { return it }
+        return run {
             check(record.marketplaceRepository == CANONICAL_PROVIDER_REPOSITORY) { "Provider source is not authoritative" }
             check(splitsInstalled(record)) { "Provider split is missing" }
             check(record.apkSha256.matches(Regex("[a-f0-9]{64}"))) { "Provider package identity is missing" }
@@ -187,7 +226,7 @@ class AndroidProviderRegistry(context: Context) {
             check(descriptor.settingsEntryPoint == record.settingsEntryPoint)
             check(descriptor.schemaDigest == record.schemaDigest)
             provider
-        }.getOrNull().also { verificationCache[record] = it }
+        }.also { verificationCache[record] = it }
     }
 
     private fun splitsInstalled(record: InstalledProvider): Boolean = installedSplits().containsAll(record.splitNames)
