@@ -99,8 +99,10 @@ class CodexAgentClient(
     private val pendingAvailabilityNotices = ConcurrentHashMap<SessionId, PendingAvailabilityNotice>()
     private val threadProviderStateStore = ThreadProviderStateStore(threadProviderStateDirectory)
     private val threadProviderStates = ConcurrentHashMap<SessionId, ThreadProviderState>()
-    private val builtInToolDefinitions = builtInToolDispatcher?.definitions().orEmpty()
-    private val builtInToolsByName = builtInToolDefinitions.associateBy(BuiltInToolDefinition::name)
+    @Volatile
+    private var builtInToolDefinitions = builtInToolDispatcher?.definitions().orEmpty()
+    @Volatile
+    private var builtInToolsByName = builtInToolDefinitions.associateBy(BuiltInToolDefinition::name)
     private val builtInPluginEnabled = ConcurrentHashMap<String, Boolean>().apply {
         builtInToolDefinitions.map(BuiltInToolDefinition::pluginId).distinct().forEach { put(it, true) }
     }
@@ -465,7 +467,10 @@ class CodexAgentClient(
                 message = "Restart Codex Mobile to verify and finish installing this provider.",
             )
         }
-        if (disposition == ProviderInstallDisposition.READY) disableManagedProviderMcp(plugin.id)
+        if (disposition == ProviderInstallDisposition.READY) {
+            refreshBuiltInTools()
+            disableManagedProviderMcp(plugin.id)
+        }
         if (disposition == ProviderInstallDisposition.READY && detail?.summary?.installed == true) {
             checkNotNull(host).installCompleted(plugin.id)
             eventsChannel.send(AgentEvent.PluginsChanged)
@@ -1577,6 +1582,13 @@ class CodexAgentClient(
                 ),
             )
         }
+    }
+
+    private fun refreshBuiltInTools() {
+        val definitions = builtInToolDispatcher?.definitions().orEmpty()
+        builtInToolDefinitions = definitions
+        builtInToolsByName = definitions.associateBy(BuiltInToolDefinition::name)
+        definitions.map(BuiltInToolDefinition::pluginId).forEach { builtInPluginEnabled.putIfAbsent(it, true) }
     }
 
     private suspend fun completePendingProviderInstalls() {

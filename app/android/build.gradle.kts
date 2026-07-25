@@ -75,8 +75,8 @@ android {
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
+                "provider-addon-rules.pro",
             )
-            if (includeProviders) proguardFile("provider-addon-rules.pro")
             if (releaseSigningConfigured) signingConfig = signingConfigs.getByName("release")
         }
     }
@@ -154,4 +154,5 @@ dependencies {
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation("io.github.ciurlaro.codexmobile:app-server-client:0.144.6-1")
+    androidTestImplementation("io.github.ciurlaro.codexmobile:provider-api:2.0.0")
 }

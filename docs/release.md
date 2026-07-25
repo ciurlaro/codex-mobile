@@ -34,7 +34,7 @@ GitHub pull-request CI runs these commands with an ephemeral key. Official relea
 
 `assembleRelease` refuses an unsigned APK. The verifier checks signature, manifest, pinned App Server, locks, dependency verification, SBOM, and that the base packages no provider definitions, models, feature code, or native payloads beyond App Server and AndroidX's declared graphics-path library. Provider-specific ABI, JNI/model size, licence, network, retry, and runtime-download audits belong to each provider release.
 
-Provider release builds keep the project-owned provider API names stable and disable R8 name obfuscation for feature splits while retaining shrinking and optimization. Release verification rejects short default-package class descriptors and requires each split to reference the stable provider API.
+Standalone host and coordinated provider builds use the same R8 rules: the provider API, Android bridge, Kotlin, coroutine, and serialization packages are retained as a stable shared ABI, while optimization and obfuscation are disabled across the independently built boundary. Provider-only implementation code can still be shrunk. Release verification rejects short default-package class descriptors and requires each split to reference the stable provider API.
 
 ## Install on a connected phone
 
