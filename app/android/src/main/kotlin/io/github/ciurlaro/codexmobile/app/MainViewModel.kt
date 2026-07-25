@@ -1514,6 +1514,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun serviceEnded() {
         val recoverAuthentication = authenticationHandoffPending()
+        pendingConversationId = null
         serviceStateJob?.cancel()
         serviceStateJob = null
         cancelServiceRequests()
@@ -1545,6 +1546,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isAvailableSkillsLoading = false,
                 isInstalledPluginsLoading = false,
                 isAvailablePluginsLoading = false,
+                isGitHubSkillLoading = false,
+                isPluginSourceLoading = false,
+                isSkillSourceLoading = false,
+                isCapabilityMutationLoading = false,
+                capabilityOperationId = null,
+                isPluginDetailLoading = false,
+                isConversationLoading = false,
                 skillsError = null,
                 availableSkillsError = null,
                 installedPluginsError = null,

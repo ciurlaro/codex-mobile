@@ -26,6 +26,9 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipFile
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
@@ -232,7 +235,12 @@ class AndroidProviderPackageManager(
                 )
                 session.commit(callback.intentSender)
             }
-            withTimeout(PACKAGE_TIMEOUT_MILLIS) { result.await() }.getOrThrow()
+            try {
+                withTimeout(PACKAGE_TIMEOUT_MILLIS) { result.await() }.getOrThrow()
+            } catch (_: TimeoutCancellationException) {
+                currentCoroutineContext().ensureActive()
+                throw IllegalStateException("Android provider installation timed out")
+            }
         } finally {
             ProviderPackageCallbacks.remove(token)
             runCatching { installer.abandonSession(sessionId) }

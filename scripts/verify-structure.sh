@@ -37,7 +37,7 @@ required=(
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/BuiltInMutationJournal.kt
-  scripts/generate-sbom.py scripts/verify-release.sh scripts/release-local.sh
+  scripts/generate-sbom.py scripts/verify-release.sh scripts/release-local.sh scripts/install-device-fast.sh
 )
 for path in "${required[@]}"; do test -f "$path" || { echo "missing required file: $path" >&2; exit 1; }; done
 

@@ -17,8 +17,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -84,19 +85,45 @@ class AppServerConnectionTest {
 
     @Test
     fun `request timeout removes correlation and a later request still works`() = runBlocking {
+        supervisorScope {
+            val runtime = FakeRuntime()
+            val connection = connection(runtime)
+            initialize(connection, runtime)
+
+            val timedOut = async {
+                connection.request(
+                    AppServerClientMethods.ThreadLoadedList,
+                    ThreadLoadedListParams(),
+                    timeoutMillis = 25,
+                )
+            }
+            val abandoned = runtime.sent.receive().jsonObject()
+            val timeout = assertFailsWith<AppServerTimeoutException> { timedOut.await() }
+            assertTrue(timeout.message.orEmpty().contains("thread/loaded/list"))
+            runtime.receive("""{"id":${abandoned.getValue("id")},"result":{"data":[]}}""")
+
+            val next = async {
+                connection.request(AppServerClientMethods.ThreadLoadedList, ThreadLoadedListParams())
+            }
+            val live = runtime.sent.receive().jsonObject()
+            runtime.receive("""{"id":${live.getValue("id")},"result":{"data":["thread"]}}""")
+            assertEquals(listOf("thread"), next.await().data)
+            connection.shutdown()
+        }
+    }
+
+    @Test
+    fun `caller cancellation remains cancellation and removes correlation`() = runBlocking {
         val runtime = FakeRuntime()
         val connection = connection(runtime)
         initialize(connection, runtime)
 
-        val timedOut = async {
-            connection.request(
-                AppServerClientMethods.ThreadLoadedList,
-                ThreadLoadedListParams(),
-                timeoutMillis = 25,
-            )
+        val cancelled = async {
+            connection.request(AppServerClientMethods.ThreadLoadedList, ThreadLoadedListParams())
         }
         val abandoned = runtime.sent.receive().jsonObject()
-        assertFailsWith<TimeoutCancellationException> { timedOut.await() }
+        cancelled.cancel()
+        assertFailsWith<CancellationException> { cancelled.await() }
         runtime.receive("""{"id":${abandoned.getValue("id")},"result":{"data":[]}}""")
 
         val next = async {

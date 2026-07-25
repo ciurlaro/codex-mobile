@@ -26,8 +26,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -82,6 +85,8 @@ public class AppServerProtocolException(message: String, cause: Throwable? = nul
 
 public class AppServerDeliveryException(message: String) : IllegalStateException(message)
 
+public class AppServerTimeoutException(message: String) : IllegalStateException(message)
+
 public class AppServerConnection(
     private val runtimeFactory: CodexRuntimeFactory,
     private val initializeParams: InitializeParams,
@@ -121,7 +126,7 @@ public class AppServerConnection(
     ): InitializeResponse {
         val response = CompletableDeferred<InitializeResponse>()
         try {
-            return withTimeout(timeoutMillis) {
+            return withAppServerTimeout(timeoutMillis, "App-server startup") {
                 commands.send(Command.Start(response))
                 response.await()
             }
@@ -139,7 +144,7 @@ public class AppServerConnection(
         val response = CompletableDeferred<JsonElement>()
         val encodedParams = JSON.encodeToJsonElement(method.paramsSerializer, params)
         val encodedResponse = try {
-            withTimeout(timeoutMillis) {
+            withAppServerTimeout(timeoutMillis, "App-server request ${method.descriptor.method}") {
                 commands.send(Command.Request(method.descriptor.method, encodedParams, response))
                 response.await()
             }
@@ -183,10 +188,21 @@ public class AppServerConnection(
 
     private suspend fun sendResponse(encoded: String, timeoutMillis: Long) {
         val acknowledgement = CompletableDeferred<Unit>()
-        withTimeout(timeoutMillis) {
+        withAppServerTimeout(timeoutMillis, "App-server response") {
             commands.send(Command.Response(encoded, acknowledgement))
             acknowledgement.await()
         }
+    }
+
+    private suspend fun <T> withAppServerTimeout(
+        timeoutMillis: Long,
+        operation: String,
+        block: suspend () -> T,
+    ): T = try {
+        withTimeout(timeoutMillis) { block() }
+    } catch (error: TimeoutCancellationException) {
+        currentCoroutineContext().ensureActive()
+        throw AppServerTimeoutException("$operation timed out after ${timeoutMillis}ms")
     }
 
     private suspend fun commandLoop() {
