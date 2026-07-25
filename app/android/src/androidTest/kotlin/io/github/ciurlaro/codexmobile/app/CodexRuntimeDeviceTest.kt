@@ -1,5 +1,9 @@
 package io.github.ciurlaro.codexmobile.app
 
+import io.github.ciurlaro.codexmobile.app.presentation.viewmodel.AppViewModel
+import io.github.ciurlaro.codexmobile.app.session.background.CodexForegroundService
+import io.github.ciurlaro.codexmobile.app.ui.shell.MainActivity
+
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
@@ -127,9 +131,9 @@ class CodexRuntimeDeviceTest {
         }
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            lateinit var original: MainViewModel
+            lateinit var original: AppViewModel
             scenario.onActivity { activity ->
-                original = ViewModelProvider(activity)[MainViewModel::class.java]
+                original = ViewModelProvider(activity)[AppViewModel::class.java]
                 original.authenticate()
             }
             withTimeout(60_000) { original.state.first { it.sessionId != null } }
@@ -143,9 +147,9 @@ class CodexRuntimeDeviceTest {
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.RESUMED)
 
             scenario.recreate()
-            lateinit var recreated: MainViewModel
+            lateinit var recreated: AppViewModel
             scenario.onActivity { activity ->
-                recreated = ViewModelProvider(activity)[MainViewModel::class.java]
+                recreated = ViewModelProvider(activity)[AppViewModel::class.java]
             }
             assertSame(original, recreated)
             assertEquals(serviceInstance, recreated.serviceInstanceId)

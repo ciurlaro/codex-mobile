@@ -16,6 +16,8 @@ import android.provider.MediaStore
 import android.view.PixelCopy
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.ciurlaro.codexmobile.app.ui.shell.VisualScenario
+import io.github.ciurlaro.codexmobile.app.ui.shell.VisualScenarioActivity
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
