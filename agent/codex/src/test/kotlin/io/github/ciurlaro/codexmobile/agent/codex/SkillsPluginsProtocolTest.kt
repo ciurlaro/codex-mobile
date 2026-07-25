@@ -1,5 +1,12 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.PluginListResponse
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.McpServerElicitationRequestParams
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputMentionUserInput
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputSkillUserInput
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputTextUserInput
+import io.github.ciurlaro.codexmobile.provider.api.ProviderRemovalResult
+
 import io.github.ciurlaro.codexmobile.core.AgentFormFieldType
 import io.github.ciurlaro.codexmobile.core.AgentCatalogFreshness
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
@@ -17,7 +24,11 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -49,6 +60,7 @@ class SkillsPluginsProtocolTest {
         CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000).use { client ->
             client.addPluginMarketplace("https://github.com/owner/plugins")
             client.addPluginMarketplace("https://github.com/owner/plugins/tree/release/catalog/mobile")
+            client.addPluginMarketplace("/data/user/0/app/no_backup/codex/mobile-marketplaces/snapshot")
         }
 
         assertEquals("https://github.com/owner/plugins.git", requests[0]["source"]!!.jsonPrimitive.content)
@@ -56,6 +68,12 @@ class SkillsPluginsProtocolTest {
         assertFalse("sparsePaths" in requests[0])
         assertEquals("release", requests[1]["refName"]!!.jsonPrimitive.content)
         assertEquals("catalog/mobile", requests[1]["sparsePaths"]!!.jsonArray.single().jsonPrimitive.content)
+        assertEquals(
+            "/data/user/0/app/no_backup/codex/mobile-marketplaces/snapshot",
+            requests[2]["source"]!!.jsonPrimitive.content,
+        )
+        assertFalse("refName" in requests[2])
+        assertFalse("sparsePaths" in requests[2])
     }
 
     @Test
@@ -95,7 +113,7 @@ class SkillsPluginsProtocolTest {
                         putJsonArray("appsNeedingAuth") {}
                     })
                 }
-                "config/value/write" -> { events += "plugin-disable"; server.respond(message.id, buildJsonObject {}) }
+                "config/value/write" -> { events += "config-write"; server.respond(message.id, buildJsonObject {}) }
                 "plugin/uninstall" -> { events += "plugin-uninstall"; server.respond(message.id, buildJsonObject {}) }
             }
         }
@@ -108,7 +126,7 @@ class SkillsPluginsProtocolTest {
 
         assertEquals(
             listOf(
-                "provider-install", "plugin-disable", "plugin-install", "provider-complete", "plugin-disable",
+                "provider-install", "config-write", "config-write", "plugin-install", "provider-complete", "config-write",
                 "provider-prepare", "plugin-uninstall", "provider-remove",
             ),
             events,
@@ -118,6 +136,7 @@ class SkillsPluginsProtocolTest {
     @Test
     fun `repairing provider code does not reinstall an installed plugin`(): Unit = runBlocking {
         val events = mutableListOf<String>()
+        val writes = mutableListOf<JsonObject>()
         val provider = object : PluginProviderHost {
             override suspend fun install(plugin: AgentPluginReference, mcpServerNames: Set<String>) =
                 ProviderInstallDisposition.READY.also { events += "provider-install" }
@@ -131,7 +150,11 @@ class SkillsPluginsProtocolTest {
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
                 "plugin/read" -> server.respond(message.id, pluginDetail(installed = true))
-                "config/value/write" -> { events += "mcp-disable"; server.respond(message.id, buildJsonObject {}) }
+                "config/value/write" -> {
+                    events += "mcp-disable"
+                    writes += message.objectValue["params"]!!.jsonObject
+                    server.respond(message.id, buildJsonObject {})
+                }
                 "plugin/install" -> error("Repair must not reinstall the standard plugin")
             }
         }
@@ -140,7 +163,14 @@ class SkillsPluginsProtocolTest {
             client.installPlugin(AgentPluginReference("sample@catalog", "sample", "catalog"))
         }
 
-        assertEquals(listOf("provider-install", "mcp-disable", "provider-complete"), events)
+        assertEquals(listOf("provider-install", "mcp-disable", "mcp-disable", "provider-complete"), events)
+        assertEquals("mcp_servers.drive", writes[0]["keyPath"]!!.jsonPrimitive.content)
+        assertEquals(JsonNull, writes[0]["value"])
+        assertEquals(
+            "plugins.sample@catalog.mcp_servers.drive.enabled",
+            writes[1]["keyPath"]!!.jsonPrimitive.content,
+        )
+        assertFalse(writes[1]["value"]!!.jsonPrimitive.content.toBoolean())
     }
 
     @Test
@@ -223,19 +253,16 @@ class SkillsPluginsProtocolTest {
             ),
         )
 
-        assertEquals("\$review\n@drive\n\nCheck this", input[0].jsonObject["text"]!!.jsonPrimitive.content)
-        assertEquals(listOf("text", "skill", "mention"), input.map {
-            it.jsonObject["type"]!!.jsonPrimitive.content
-        })
-        assertEquals("/skills/review/SKILL.md", input[1].jsonObject["path"]!!.jsonPrimitive.content)
-        assertEquals("plugin://drive@openai-curated", input[2].jsonObject["path"]!!.jsonPrimitive.content)
+        assertEquals("\$review\n@drive\n\nCheck this", assertIs<UserInputTextUserInput>(input[0]).text)
+        assertEquals("/skills/review/SKILL.md", assertIs<UserInputSkillUserInput>(input[1]).path)
+        assertEquals("plugin://drive@openai-curated", assertIs<UserInputMentionUserInput>(input[2]).path)
     }
 
     @Test
     fun `decodes supported elicitation forms and rejects unsafe urls`() {
         val elicitation = parseElicitation(
             "7",
-            buildJsonObject {
+            Json.decodeFromJsonElement(McpServerElicitationRequestParams.serializer(), buildJsonObject {
                 put("serverName", "drive")
                 put("threadId", "thread-1")
                 put("message", "Choose")
@@ -255,7 +282,7 @@ class SkillsPluginsProtocolTest {
                         putJsonObject("notify") { put("type", "boolean") }
                     }
                 }
-            },
+            }),
         )
 
         assertEquals(listOf(AgentFormFieldType.STRING, AgentFormFieldType.SINGLE_SELECT, AgentFormFieldType.BOOLEAN),
@@ -307,6 +334,10 @@ class SkillsPluginsProtocolTest {
                     message.id,
                     buildJsonObject {
                         putJsonArray("data") {
+                            add(buildJsonObject {
+                                put("name", "codex_apps")
+                                put("authStatus", "oAuth")
+                            })
                             add(buildJsonObject {
                                 put("name", "drive")
                                 put("authStatus", "notLoggedIn")
@@ -427,10 +458,96 @@ class SkillsPluginsProtocolTest {
     }
 
     @Test
+    fun `installed plugins ignore marketplace refresh failures`(): Unit = runBlocking {
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/installed" -> server.respond(
+                    message.id,
+                    buildJsonObject {
+                        putJsonArray("marketplaces") {
+                            add(buildJsonObject {
+                                put("name", "openai-curated")
+                                putJsonArray("plugins") { add(pluginSummary(installed = true)) }
+                            })
+                        }
+                        putJsonArray("marketplaceLoadErrors") {
+                            add(buildJsonObject { put("message", "Stream Closed") })
+                        }
+                    },
+                )
+            }
+        }
+
+        CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000).use { client ->
+            val catalog = client.listInstalledPlugins("/workspace")
+            assertTrue(catalog.plugins.single().installed)
+            assertTrue(catalog.errors.isEmpty())
+        }
+    }
+
+    @Test
+    fun `cancelled plugin refresh does not surface cached data as an error result`(): Unit = runBlocking {
+        val cache = Files.createTempDirectory("plugin-cache-").toFile()
+        val refreshStarted = CompletableDeferred<Unit>()
+        var requests = 0
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/list" -> if (++requests == 1) {
+                    server.respond(message.id, pluginList(installed = false))
+                } else {
+                    refreshStarted.complete(Unit)
+                }
+            }
+        }
+
+        CodexAgentClient({ runtime }, requestTimeoutMillis = 5_000, pluginCacheDirectory = cache).use { client ->
+            client.listAvailablePlugins("/workspace", forceRefresh = true)
+            var delivered = false
+            val refresh = launch {
+                client.listAvailablePlugins("/workspace", forceRefresh = true)
+                delivered = true
+            }
+            refreshStarted.await()
+            refresh.cancel()
+            refresh.join()
+            assertFalse(delivered)
+        }
+        cache.deleteRecursively()
+    }
+
+    @Test
     fun `plugin discovery accepts marketplaces exposed by app server`() {
-        val plugins = parsePluginMarketplaces(pluginList(installed = false, marketplace = "team-catalog"))
+        val response = Json.decodeFromJsonElement(
+            PluginListResponse.serializer(),
+            pluginList(installed = false, marketplace = "team-catalog"),
+        )
+        val plugins = parsePluginMarketplaces(response.marketplaces)
 
         assertEquals("team-catalog", plugins.single().reference.marketplaceName)
+    }
+
+    @Test
+    fun `plugin read sends exactly one marketplace identity`(): Unit = runBlocking {
+        val requests = mutableListOf<JsonObject>()
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/read" -> {
+                    requests += message.objectValue["params"]!!.jsonObject
+                    server.respond(message.id, pluginDetail())
+                }
+            }
+        }
+
+        CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000).use { client ->
+            client.readPlugin(AgentPluginReference("local@catalog", "local", "catalog", "/marketplace"))
+            client.readPlugin(AgentPluginReference("remote@catalog", "remote", "catalog"))
+        }
+
+        assertEquals(setOf("pluginName", "marketplacePath"), requests[0].keys)
+        assertEquals(setOf("pluginName", "remoteMarketplaceName"), requests[1].keys)
     }
 
     @Test

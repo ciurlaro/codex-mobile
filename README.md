@@ -14,10 +14,14 @@ Disabling a plugin immediately revokes its tools while retaining its installed s
 |---|---|
 | `:app:android` | Compose UI, ViewModels, composition root, and foreground lifecycle |
 | `:core` | Provider-neutral application contracts |
-| `:agent:codex` | App Server protocol, plugin lifecycle, dynamic-tool authority, and authentication |
+| `app-server-client` | Published KMP App Server protocol identity and transport contract |
+| `:agent:codex` | Codex product adaptation, plugin lifecycle, dynamic-tool authority, and authentication |
 | `:platform:android` | App Server runtime, storage checks, signed provider lifecycle, and mutation journal |
+| `provider-api` | Published KMP provider contract with host-supplied workspace and mutation capabilities |
+| `:provider_documents`, `:provider_telegram` | Thin base-app feature wrappers; provider behavior comes from exact external artifacts |
 
-Optional provider feature projects are supplied explicitly at build time with `-PcodexMobile.providerProjects=/absolute/project|...`. A normal host build includes none.
+The base build includes no optional providers. A coordinated local provider build uses
+`-PcodexMobile.providerBuild=/absolute/codex-mobile-plugins`; the host-owned wrappers then consume the same published provider coordinates through composite substitution.
 
 ## Verification
 

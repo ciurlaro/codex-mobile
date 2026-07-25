@@ -270,6 +270,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        viewModel.resumeAfterProviderInstall()
         viewModel.refreshStorage()
     }
 

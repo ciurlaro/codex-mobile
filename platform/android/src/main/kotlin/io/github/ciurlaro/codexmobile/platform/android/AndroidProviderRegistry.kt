@@ -3,7 +3,9 @@ package io.github.ciurlaro.codexmobile.platform.android
 import android.content.Context
 import android.util.AtomicFile
 import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolDispatcher
-import io.github.ciurlaro.codexmobile.agent.codex.CodexMobileProvider
+import io.github.ciurlaro.codexmobile.provider.api.CodexMobileProvider
+import io.github.ciurlaro.codexmobile.provider.api.ProviderContext
+import io.github.ciurlaro.codexmobile.provider.api.ProviderWorkspace
 import io.github.ciurlaro.codexmobile.agent.codex.ProviderToolDispatcher
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import java.io.File
@@ -27,6 +29,8 @@ data class InstalledProvider(
     val marketplaceName: String,
     val marketplacePath: String?,
     val marketplaceRepository: String?,
+    val apkSha256: String,
+    val contentSha256: String?,
     val state: ProviderPackageState,
     val message: String? = null,
 )
@@ -42,13 +46,27 @@ data class ProviderSettingsEntry(
 class AndroidProviderRegistry(context: Context) {
     private val appContext = context.applicationContext
     private val store = InstalledProviderStore(appContext)
+    private val workspace = WorkspaceManager(appContext)
+    private val journal = BuiltInMutationJournal(appContext)
+    private val verificationCache = mutableMapOf<InstalledProvider, CodexMobileProvider?>()
 
     init {
         reconcileRemovedSplits()
     }
 
     val dispatcher: BuiltInToolDispatcher
-        get() = ProviderToolDispatcher(verifiedProviders()) { pluginId -> secretStore(pluginId).snapshot() }
+        get() = ProviderToolDispatcher(verifiedProviders()) { call, checkActive, beforeDispatch ->
+            ProviderContext(
+                beforeMutationDispatch = beforeDispatch,
+                secrets = secretStore(call.pluginId).snapshot(),
+                workspace = ProviderWorkspace { path, mustExist ->
+                    workspace.resolveFile(call.workspace, path, mustExist).absolutePath
+                },
+                mutations = journal,
+                deadlineEpochMillis = call.deadlineEpochMillis,
+                checkActive = checkActive,
+            )
+        }
 
     fun secretStore(pluginId: String) = AndroidProviderSecretStore(appContext, pluginId)
 
@@ -64,7 +82,7 @@ class AndroidProviderRegistry(context: Context) {
                 displayName = record.displayName,
                 activityClassName = null,
                 removalNeedsRetry = true,
-                message = record.message ?: "Provider code removal needs retry",
+                message = "Provider code removal needs retry",
             )
         }
         val entryPoint = record.settingsEntryPoint ?: return@mapNotNull null
@@ -78,7 +96,11 @@ class AndroidProviderRegistry(context: Context) {
             displayName = record.displayName,
             activityClassName = entryPoint,
             removalNeedsRetry = record.state == ProviderPackageState.REMOVAL_PENDING,
-            message = record.message ?: secretMessage,
+            message = when (record.state) {
+                ProviderPackageState.INSTALLING -> "Finishing installation"
+                ProviderPackageState.REMOVAL_PENDING -> "Removal needs retry"
+                else -> secretMessage
+            },
         )
     }
 
@@ -136,28 +158,46 @@ class AndroidProviderRegistry(context: Context) {
         .filter { it.state != ProviderPackageState.SPLIT_REMOVAL_PENDING }
         .mapNotNull(::verifiedProvider)
 
-    private fun verifiedProvider(record: InstalledProvider): CodexMobileProvider? = runCatching {
-        check(record.marketplaceRepository == CANONICAL_PROVIDER_REPOSITORY) { "Provider source is not authoritative" }
-        check(splitsInstalled(record)) { "Provider split is missing" }
-        val provider = Class.forName(record.entryPoint)
-            .getConstructor(Context::class.java)
-            .newInstance(appContext) as CodexMobileProvider
-        val descriptor = provider.descriptor
-        val currentVersion = appContext.packageManager.getPackageInfo(appContext.packageName, 0).compatVersionCode()
-        check(record.hostVersionCode == currentVersion && currentVersion in descriptor.minHostVersionCode..descriptor.maxHostVersionCode)
-        check(descriptor.providerApi == record.providerApi)
-        check(descriptor.pluginId == record.pluginId)
-        check(descriptor.implementationVersion == record.implementationVersion)
-        check(descriptor.displayName == record.displayName)
-        check(descriptor.settingsEntryPoint == record.settingsEntryPoint)
-        check(descriptor.schemaDigest == record.schemaDigest)
-        provider
-    }.getOrNull()
+    @Synchronized
+    private fun verifiedProvider(record: InstalledProvider): CodexMobileProvider? {
+        if (verificationCache.containsKey(record)) return verificationCache[record]
+        return runCatching {
+            check(record.marketplaceRepository == CANONICAL_PROVIDER_REPOSITORY) { "Provider source is not authoritative" }
+            check(splitsInstalled(record)) { "Provider split is missing" }
+            check(record.apkSha256.matches(Regex("[a-f0-9]{64}"))) { "Provider package identity is missing" }
+            check(record.contentSha256?.matches(Regex("[a-f0-9]{64}")) == true) {
+                "Provider installation identity is missing"
+            }
+            val split = checkNotNull(installedSplitFiles()[record.splitNames.singleOrNull()]) {
+                "Provider split is missing"
+            }
+            check(split.apkContentSha256() == record.contentSha256) {
+                "Provider package does not match its signed release"
+            }
+            val provider = Class.forName(record.entryPoint)
+                .getConstructor(Context::class.java)
+                .newInstance(appContext) as CodexMobileProvider
+            val descriptor = provider.descriptor
+            val currentVersion = appContext.packageManager.getPackageInfo(appContext.packageName, 0).compatVersionCode()
+            check(record.hostVersionCode == currentVersion && currentVersion in descriptor.minHostVersionCode..descriptor.maxHostVersionCode)
+            check(descriptor.providerApi == record.providerApi)
+            check(descriptor.pluginId == record.pluginId)
+            check(descriptor.implementationVersion == record.implementationVersion)
+            check(descriptor.displayName == record.displayName)
+            check(descriptor.settingsEntryPoint == record.settingsEntryPoint)
+            check(descriptor.schemaDigest == record.schemaDigest)
+            provider
+        }.getOrNull().also { verificationCache[record] = it }
+    }
 
     private fun splitsInstalled(record: InstalledProvider): Boolean = installedSplits().containsAll(record.splitNames)
 
     private fun installedSplits(): Set<String> = appContext.packageManager
         .getApplicationInfo(appContext.packageName, 0).splitNames.orEmpty().toSet()
+
+    private fun installedSplitFiles(): Map<String, File> = appContext.packageManager
+        .getApplicationInfo(appContext.packageName, 0)
+        .let { info -> info.splitNames.orEmpty().zip(info.splitSourceDirs.orEmpty().map(::File)).toMap() }
 
     private fun update(pluginId: String, transform: (InstalledProvider) -> InstalledProvider) {
         val records = store.read()
@@ -228,6 +268,8 @@ private fun JSONObject.installedProvider() = InstalledProvider(
     marketplaceName = getString("marketplaceName"),
     marketplacePath = optString("marketplacePath").takeIf(String::isNotEmpty),
     marketplaceRepository = optString("marketplaceRepository").takeIf(String::isNotEmpty),
+    apkSha256 = optString("apkSha256"),
+    contentSha256 = optString("contentSha256").takeIf(String::isNotEmpty),
     state = ProviderPackageState.valueOf(getString("state")),
     message = optString("message").takeIf(String::isNotEmpty),
 )
@@ -247,5 +289,7 @@ private fun InstalledProvider.json() = JSONObject()
     .put("marketplaceName", marketplaceName)
     .put("marketplacePath", marketplacePath)
     .put("marketplaceRepository", marketplaceRepository)
+    .put("apkSha256", apkSha256)
+    .put("contentSha256", contentSha256)
     .put("state", state.name)
     .put("message", message)

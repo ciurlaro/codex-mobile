@@ -2,7 +2,8 @@ package io.github.ciurlaro.codexmobile.platform.android
 
 import android.content.Context
 import android.content.Intent
-import io.github.ciurlaro.codexmobile.agent.codex.CodexRuntime
+import io.github.ciurlaro.codexmobile.appserver.transport.CodexRuntime
+import io.github.ciurlaro.codexmobile.appserver.host.android.AndroidCodexRuntime
 import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolDispatcher
 import java.io.File
 
@@ -17,6 +18,7 @@ class AndroidPlatform internal constructor(
     private val providers = AndroidProviderRegistry(appContext)
     val builtInToolDispatcher: BuiltInToolDispatcher? = providers.dispatcher
     val providerPackages = AndroidProviderPackageManager(appContext, providers)
+    val pluginMarketplaces = AndroidPluginMarketplaceManager(appContext)
     val skillPackages = AndroidSkillPackageManager(appContext)
 
     fun createCodexRuntime(): CodexRuntime =
@@ -40,6 +42,8 @@ class AndroidPlatform internal constructor(
     fun clearWorkspace() = workspace.clear()
 
     fun providerSettings(): List<ProviderSettingsEntry> = providers.settings()
+
+    fun consumeProviderInstallRestart(): Boolean = ProviderInstallRestart.consume(appContext)
 
     fun openProviderSettings(pluginId: String) {
         val entry = providers.settings().singleOrNull { it.pluginId == pluginId }

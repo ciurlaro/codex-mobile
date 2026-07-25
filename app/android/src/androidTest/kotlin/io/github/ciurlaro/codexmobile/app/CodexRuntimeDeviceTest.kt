@@ -10,8 +10,8 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.ciurlaro.codexmobile.agent.codex.CodexAgentClient
-import io.github.ciurlaro.codexmobile.agent.codex.CodexJsonLine
-import io.github.ciurlaro.codexmobile.agent.codex.CodexRuntimeEvent
+import io.github.ciurlaro.codexmobile.appserver.transport.CodexJsonLine
+import io.github.ciurlaro.codexmobile.appserver.transport.CodexRuntimeEvent
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.platform.android.AndroidPlatform

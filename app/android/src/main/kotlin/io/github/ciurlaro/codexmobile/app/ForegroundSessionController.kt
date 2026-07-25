@@ -25,6 +25,7 @@ import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
 import io.github.ciurlaro.codexmobile.core.SessionId
 import io.github.ciurlaro.codexmobile.platform.android.AndroidSkillPackageManager
+import io.github.ciurlaro.codexmobile.platform.android.AndroidPluginMarketplaceManager
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -67,6 +68,7 @@ internal class ForegroundSessionController(
     private val agentClient: AgentClient,
     private val scope: CoroutineScope,
     private val skillPackages: AndroidSkillPackageManager? = null,
+    private val pluginMarketplaces: AndroidPluginMarketplaceManager? = null,
 ) : AutoCloseable {
     private val mutableState = MutableStateFlow(ForegroundSessionState())
     private val turnClaimed = AtomicBoolean(false)
@@ -261,7 +263,11 @@ internal class ForegroundSessionController(
     ): AgentPluginCatalog = agentClient.listAvailablePlugins(workingDirectory, forceRefresh)
 
     suspend fun addPluginMarketplace(sourceUrl: String) =
-        runExternalOperation("Adding plugin source") { agentClient.addPluginMarketplace(sourceUrl) }
+        runExternalOperation("Adding plugin source") {
+            val snapshot = requireNotNull(pluginMarketplaces) { "Plugin marketplaces are unavailable" }
+                .snapshot(sourceUrl)
+            agentClient.addPluginMarketplace(snapshot)
+        }
 
     suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail =
         agentClient.readPlugin(plugin)

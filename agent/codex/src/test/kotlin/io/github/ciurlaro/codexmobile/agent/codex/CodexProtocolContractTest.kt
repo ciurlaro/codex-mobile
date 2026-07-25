@@ -28,6 +28,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -309,6 +310,33 @@ class CodexProtocolContractTest {
     }
 
     @Test
+    fun `terminal failure closes runtime while event delivery is backpressured`(): Unit = runBlocking {
+        val process = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "skills/list" -> {
+                    server.respond(message.id, buildJsonObject { put("data", buildJsonArray {}) })
+                    repeat(64) { server.notify("skills/changed", buildJsonObject {}) }
+                    server.sendRaw("{")
+                }
+            }
+        }
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
+        try {
+            client.listSkills("/workspace")
+            withTimeout(1_000) {
+                while (!process.allClientStreamsClosed()) kotlinx.coroutines.yield()
+            }
+
+            val events = withTimeout(1_000) { client.events.take(65).toList() }
+            assertTrue(events.take(64).all { it is AgentEvent.SkillsChanged })
+            assertEquals("protocol_failure", assertIs<AgentEvent.Failure>(events.last()).code)
+        } finally {
+            client.close()
+        }
+    }
+
+    @Test
     fun `rejects malformed unknown and orphan messages without deadlock`(): Unit = runBlocking {
         val requestRejected = CountDownLatch(1)
         val process = FakeCodexRuntime { message, server ->
@@ -381,7 +409,12 @@ class CodexProtocolContractTest {
             client.sendTurn(session, AgentTurnRequest("hello"))
             coroutineScope {
                 val first = async(start = CoroutineStart.UNDISPATCHED) { client.cancelTurn(session) }
-                assertTrue(interruptReceived.await(1, TimeUnit.SECONDS))
+                withTimeout(1_000) {
+                    while (!interruptReceived.await(10, TimeUnit.MILLISECONDS)) {
+                        if (first.isCompleted) first.await()
+                        kotlinx.coroutines.yield()
+                    }
+                }
                 val second = runCatching { client.cancelTurn(session) }
                 releaseInterrupt.countDown()
                 first.await()
@@ -482,8 +515,7 @@ class CodexProtocolContractTest {
     }
 
     @Test
-    fun `slow event consumers exert bounded backpressure`(): Unit = runBlocking {
-        val sentAll = CountDownLatch(1)
+    fun `slow event consumers fail explicitly instead of blocking the runtime reader`(): Unit = runBlocking {
         val process = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
@@ -503,20 +535,19 @@ class CodexProtocolContractTest {
                             },
                         )
                     }
-                    sentAll.countDown()
                 }
             }
         }
         val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             client.sendTurn(SessionId("thread-1"), AgentTurnRequest("hello"))
-            assertFalse(sentAll.await(100, TimeUnit.MILLISECONDS), "producer was not backpressured")
-
-            val events = withTimeout(5_000) {
-                client.events.filterIsInstance<AgentEvent.TextDelta>().take(2_000).toList()
+            withTimeout(2_000) {
+                while (process.isAlive) kotlinx.coroutines.yield()
             }
-            assertEquals(2_000, events.size)
-            assertTrue(sentAll.await(1, TimeUnit.SECONDS))
+            val failure = withTimeout(5_000) {
+                client.events.filterIsInstance<AgentEvent.Failure>().first()
+            }
+            assertTrue(failure.message.contains("event buffer exceeded"))
         } finally {
             client.close()
         }
@@ -609,7 +640,7 @@ class CodexProtocolContractTest {
             val required = assertIs<AgentEvent.AuthenticationRequired>(received[0])
             assertEquals("https://auth.openai.com/oauth/authorize?state=test", required.signInUrl)
             assertIs<AgentEvent.Authenticated>(received[1])
-            assertEquals(AgentEvent.SessionOpened(SessionId("thread-1")), received[2])
+            assertEquals(AgentEvent.SessionOpened(SessionId("thread-1"), model = "test"), received[2])
             assertEquals(AgentEvent.TextDelta(SessionId("thread-1"), "Hello", "item-1"), received[3])
             assertEquals(AgentEvent.TurnCompleted(SessionId("thread-1")), received[4])
             assertIs<AgentEvent.Failure>(received[5])

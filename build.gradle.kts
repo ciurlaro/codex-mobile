@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.dynamic.feature) apply false
     alias(libs.plugins.kotlin.compose) apply false
     alias(libs.plugins.kotlin.jvm) apply false
+    alias(libs.plugins.kotlin.multiplatform) apply false
 }
 
 val bundletool by configurations.creating
@@ -51,5 +52,15 @@ tasks.register("visualCapture") {
 allprojects {
     dependencyLocking {
         lockAllConfigurations()
+    }
+}
+
+providers.gradleProperty("codexMobile.providerBuild").orNull?.let {
+    val providers = gradle.includedBuild("codex-mobile-plugins")
+    project(":provider_documents").tasks.matching { it.name == "assembleDebugAndroidTest" }.configureEach {
+        dependsOn(providers.task(":documents-android:assembleDebugAndroidTest"))
+    }
+    project(":provider_telegram").tasks.matching { it.name == "assembleDebugAndroidTest" }.configureEach {
+        dependsOn(providers.task(":telegram-android:assembleDebugAndroidTest"))
     }
 }

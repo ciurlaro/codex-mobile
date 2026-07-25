@@ -59,6 +59,7 @@ import io.github.ciurlaro.codexmobile.core.AgentSkillScope
 internal fun CapabilitiesScreen(state: MainUiState, onEvent: (ChatUiEvent) -> Unit) {
     var showGitHubDialog by remember { mutableStateOf(false) }
     var showPluginSourceDialog by remember { mutableStateOf(false) }
+    var pluginSourceSubmissionStarted by remember(showPluginSourceDialog) { mutableStateOf(false) }
     LaunchedEffect(state.selectedSkillPackage) {
         if (state.selectedSkillPackage != null) showGitHubDialog = false
     }
@@ -114,7 +115,14 @@ internal fun CapabilitiesScreen(state: MainUiState, onEvent: (ChatUiEvent) -> Un
             },
         )
         LaunchedEffect(state.isPluginSourceLoading, state.pluginSourceError) {
-            if (!state.isPluginSourceLoading && state.pluginSourceError == null) showPluginSourceDialog = false
+            if (state.isPluginSourceLoading) pluginSourceSubmissionStarted = true
+            if (
+                pluginSourceSubmissionStarted &&
+                !state.isPluginSourceLoading &&
+                state.pluginSourceError == null
+            ) {
+                showPluginSourceDialog = false
+            }
         }
     }
 }
@@ -659,11 +667,14 @@ private fun PluginDetailScreen(detail: AgentPluginDetail, state: MainUiState, on
             }
             if (detail.skills.isNotEmpty()) item("skills") {
                 SectionTitle("Skills")
-                Text(detail.skills.joinToString("\n") { "• ${it.name}" })
+                Text(detail.skills.joinToString("\n") {
+                    "• ${it.name.substringAfter(':').replace('-', ' ').replaceFirstChar(Char::uppercase)}"
+                })
             }
-            if (detail.connectors.isNotEmpty() || detail.mcpServers.isNotEmpty()) item("connectors") {
+            val visibleMcpServers = detail.mcpServers.takeUnless { detail.providerManaged }.orEmpty()
+            if (detail.connectors.isNotEmpty() || visibleMcpServers.isNotEmpty()) item("connectors") {
                 SectionTitle("Connectors")
-                Text((detail.connectors.map { it.name } + detail.mcpServers).joinToString("\n") { "• $it" })
+                Text((detail.connectors.map { it.name } + visibleMcpServers).joinToString("\n") { "• $it" })
             }
             if (detail.hookCount > 0) item("hooks") {
                 Text("This plugin declares hooks. Codex Mobile does not load or run hooks.", color = ChatColors.Danger)

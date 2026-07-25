@@ -293,7 +293,6 @@ class ChatRuntimeContractTest {
                         buildJsonObject {
                             putJsonObject("thread") { put("id", "thread-1") }
                             put("model", "runtime-model")
-                            put("reasoningEffort", "high")
                         },
                     )
                 }
@@ -314,7 +313,7 @@ class ChatRuntimeContractTest {
             }
             client.openSession(SessionId("thread-1"))
             assertEquals(
-                AgentEvent.SessionOpened(SessionId("thread-1"), "runtime-model", "high"),
+                AgentEvent.SessionOpened(SessionId("thread-1"), "runtime-model", null),
                 opened.await(),
             )
 

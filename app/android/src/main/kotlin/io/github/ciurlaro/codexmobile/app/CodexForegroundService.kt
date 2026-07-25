@@ -38,7 +38,12 @@ class CodexForegroundService : Service() {
         graph = (application as CodexMobileApplication).graph
         notificationManager = getSystemService(NotificationManager::class.java)
         createNotificationChannel()
-        controller = ForegroundSessionController(graph.newAgentClient(), serviceScope, graph.platform.skillPackages)
+        controller = ForegroundSessionController(
+            graph.newAgentClient(),
+            serviceScope,
+            graph.platform.skillPackages,
+            graph.platform.pluginMarketplaces,
+        )
         serviceScope.launch {
             controller.state.collect { state ->
                 val active = state.needsForeground()

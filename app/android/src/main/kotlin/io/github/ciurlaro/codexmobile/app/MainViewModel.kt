@@ -209,6 +209,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun resumeAfterProviderInstall() {
+        if (graph.platform.consumeProviderInstallRestart()) authenticate()
+    }
+
     fun cancelAuthentication() {
         setAuthenticationHandoffPending(false)
         mutableState.update { it.copy(statusMessage = "Cancelling sign-in…", isAuthenticationInProgress = false) }
@@ -609,7 +613,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun addPluginSource(url: String) {
-        val controller = serviceController ?: return
+        val controller = serviceController ?: run {
+            mutableState.update { it.copy(pluginSourceError = "Codex is not ready") }
+            return
+        }
         if (url.isBlank() || pluginSourceJob?.isActive == true) return
         mutableState.update { it.copy(pluginSourceError = null, isPluginSourceLoading = true) }
         pluginSourceJob = viewModelScope.launch {
@@ -1149,6 +1156,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         persistSelection()
         loadSkills(forceReload = false)
         loadInstalledPlugins(forceReload = false)
+        if (mutableState.value.screen == AppScreen.CAPABILITIES) loadCurrentCapabilities(forceReload = false)
     }
 
     private fun loadCurrentCapabilities(forceReload: Boolean) {
@@ -1175,6 +1183,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         skillsJob = viewModelScope.launch {
             runCatching { controller.listSkills(workingDirectory, forceReload) }
                 .onSuccess { catalog ->
+                    if (serviceController !== controller) return@onSuccess
                     mutableState.update {
                         it.copy(
                             skills = catalog.skills,
@@ -1186,6 +1195,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .onFailure { error ->
                     if (error is CancellationException) throw error
+                    if (serviceController !== controller) return@onFailure
                     mutableState.update {
                         it.copy(
                             skillsLoaded = true,
@@ -1207,6 +1217,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val installed = mutableState.value.skills.map(AgentSkill::name).toSet()
             runCatching { controller.listAvailableSkills(installed, forceReload) }
                 .onSuccess { catalog ->
+                    if (serviceController !== controller) return@onSuccess
                     mutableState.update {
                         it.copy(
                             availableSkills = catalog.skills,
@@ -1222,6 +1233,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .onFailure { error ->
                     if (error is CancellationException) throw error
+                    if (serviceController !== controller) return@onFailure
                     mutableState.update {
                         it.copy(
                             availableSkillsLoaded = true,
@@ -1243,6 +1255,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         installedPluginsJob = viewModelScope.launch {
             runCatching { controller.listInstalledPlugins(workingDirectory) }
                 .onSuccess { catalog ->
+                    if (serviceController !== controller) return@onSuccess
                     mutableState.update {
                         it.copy(
                             installedPlugins = catalog.plugins,
@@ -1254,6 +1267,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .onFailure { error ->
                     if (error is CancellationException) throw error
+                    if (serviceController !== controller) return@onFailure
                     mutableState.update {
                         it.copy(
                             installedPluginsLoaded = true,
@@ -1274,6 +1288,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         availablePluginsJob = viewModelScope.launch {
             runCatching { controller.listAvailablePlugins(workingDirectory, forceReload) }
                 .onSuccess { catalog ->
+                    if (serviceController !== controller) return@onSuccess
                     val refreshAfterCache = !forceReload && catalog.freshness != AgentCatalogFreshness.LIVE
                     mutableState.update {
                         val installedIds = it.installedPlugins.map { plugin -> plugin.reference.id }.toSet()
@@ -1291,6 +1306,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 .onFailure { error ->
                     if (error is CancellationException) throw error
+                    if (serviceController !== controller) return@onFailure
                     mutableState.update {
                         it.copy(
                             availablePluginsLoaded = true,
@@ -1326,13 +1342,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         viewModelScope.launch {
-            runCatching { block() }
-                .onSuccess {
-                    mutableState.update {
-                        it.copy(isCapabilityMutationLoading = false, capabilityOperationId = null)
-                    }
+            try {
+                block()
+                mutableState.update {
+                    it.copy(isCapabilityMutationLoading = false, capabilityOperationId = null)
                 }
-                .onFailure { error -> capabilityFailure(error, message) }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                capabilityFailure(error, message)
+            }
         }
     }
 
@@ -1497,6 +1516,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val recoverAuthentication = authenticationHandoffPending()
         serviceStateJob?.cancel()
         serviceStateJob = null
+        cancelServiceRequests()
         serviceController = null
         notificationsEnabled = null
         signOutAction = null
@@ -1517,6 +1537,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isAuthenticationInProgress = recoverAuthentication,
                 isTurnActive = false,
                 isBackgroundActive = false,
+                skillsLoaded = false,
+                availableSkillsLoaded = false,
+                installedPluginsLoaded = false,
+                availablePluginsLoaded = false,
+                isSkillsLoading = false,
+                isAvailableSkillsLoading = false,
+                isInstalledPluginsLoading = false,
+                isAvailablePluginsLoading = false,
+                skillsError = null,
+                availableSkillsError = null,
+                installedPluginsError = null,
+                availablePluginsError = null,
+                capabilityActionError = null,
             )
         }
         if (recoverAuthentication) {
@@ -1525,6 +1558,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (serviceController == null && authenticationHandoffPending()) authenticate()
             }
         }
+    }
+
+    private fun cancelServiceRequests() {
+        skillsJob?.cancel()
+        availableSkillsJob?.cancel()
+        installedPluginsJob?.cancel()
+        availablePluginsJob?.cancel()
+        skillSourceJob?.cancel()
+        pluginSourceJob?.cancel()
+        skillsJob = null
+        availableSkillsJob = null
+        installedPluginsJob = null
+        availablePluginsJob = null
+        skillSourceJob = null
+        pluginSourceJob = null
     }
 
     private fun authenticationHandoffPending(): Boolean =

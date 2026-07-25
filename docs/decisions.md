@@ -2,7 +2,7 @@
 
 | Decision | Why | Revisit when |
 |---|---|---|
-| Put App Server mechanics behind `CodexRuntime` | Protocol code must not import processes, streams, or Android | A second real runtime appears |
+| Publish the pinned App Server identity and `CodexRuntime` transport contract as KMP | Reusable protocol code must not import processes, streams, product types, or Android | A proven consumer needs a separately released runtime-host artifact |
 | Pin App Server `0.144.6` and use dynamic tools | It preserves the Codex harness while typed providers enforce local authority | The pinned protocol gains a better native extension API |
 | Use the standard Codex Git marketplace | One catalog, lifecycle, skill UX, and enablement truth work across hosts | App Server replaces this surface |
 | Restrict Android code to the canonical provider Git origin | Ordinary Codex plugins stay portable while executable same-UID add-ons remain owner-reviewed and officially signed | A stronger platform-native trust mechanism replaces repository provenance |

@@ -1,5 +1,7 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
+import io.github.ciurlaro.codexmobile.appserver.client.AppServerRpcException
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.DynamicToolSpecFunctionDynamicToolSpec
 import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
 import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentEvent
@@ -14,6 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.filterIsInstance
@@ -35,12 +38,13 @@ class BuiltInToolsProtocolTest {
     @Test
     fun `schemas are closed and contain only the stable tool set`() {
         val tools = builtInDynamicTools(setOf(ALPHA_PLUGIN_ID, BETA_PLUGIN_ID), TEST_DEFINITIONS)
-        assertEquals(TEST_DEFINITIONS.map { it.name }, tools.map { it.jsonObject["name"]!!.jsonPrimitive.content })
-        tools.forEach { raw ->
-            val schema = raw.jsonObject["inputSchema"]!!.jsonObject
+        val functions = tools.map { assertIs<DynamicToolSpecFunctionDynamicToolSpec>(it) }
+        assertEquals(TEST_DEFINITIONS.map { it.name }, functions.map { it.name })
+        functions.forEach { function ->
+            val schema = function.inputSchema.jsonObject
             assertEquals("false", schema["additionalProperties"]!!.jsonPrimitive.content)
         }
-        assertFalse(Regex("\"(command|subcommand|argv|rawArguments)\"").containsMatchIn(tools.toString()))
+        assertFalse(Regex("\"(command|subcommand|argv|rawArguments)\"").containsMatchIn(functions.map { it.inputSchema }.toString()))
     }
 
     @Test
@@ -126,7 +130,7 @@ class BuiltInToolsProtocolTest {
             builtInToolDispatcher = dispatcher { BuiltInToolResult.text("unused") },
         ).use { client ->
             client.openSession(settings = AgentRuntimeSettings(workingDirectory = "/workspace"))
-            assertFailsWith<RpcException> { client.setPluginEnabled(ALPHA_PLUGIN_ID, false) }
+            assertFailsWith<AppServerRpcException> { client.setPluginEnabled(ALPHA_PLUGIN_ID, false) }
             client.openSession(settings = AgentRuntimeSettings(workingDirectory = "/workspace"))
             assertEquals(advertised[0], advertised[1])
             assertTrue("alpha_edit" in advertised[1])

@@ -34,6 +34,8 @@ GitHub pull-request CI runs these commands with an ephemeral key. Official relea
 
 `assembleRelease` refuses an unsigned APK. The verifier checks signature, manifest, pinned App Server, locks, dependency verification, SBOM, and that the base packages no provider definitions, models, feature code, or native payloads beyond App Server and AndroidX's declared graphics-path library. Provider-specific ABI, JNI/model size, licence, network, retry, and runtime-download audits belong to each provider release.
 
+Provider release builds keep the project-owned provider API names stable and disable R8 name obfuscation for feature splits while retaining shrinking and optimization. Release verification rejects short default-package class descriptors and requires each split to reference the stable provider API.
+
 ## Install on a connected phone
 
 ```sh
@@ -56,3 +58,4 @@ The command verifies the signed release, updates a base-only installation on the
 The release record covers startup, session readiness, first token, long streams, memory, CPU, file descriptors, threads, process activity, APK size/hash, supported Android versions, and marketplace/package lifecycle drills. Before promotion, verify source addition, cache-first catalog refresh, installation confirmation and restart continuation, disable/re-enable/uninstall, existing-thread notices, ordinary shell work, all approval modes, mutation recovery without resubmission, official plugins, foreground behavior, and app-data erasure.
 
 Provider publishing is separate. Each add-on manifest pins a matching host version, API range, schema digest, MCP names, split name, ABI set, artifact URL, and SHA-256. Its release checks prove signer compatibility, post-restart activation/removal, functional behavior, declared JNI/models, licences, size, network/download behavior, and absence of helper executables.
+The coordinated provider release publishes a deterministic `release-manifest.json` that binds the exact host APK, App Server client/protocol/runtime, provider API and implementations, plugin content, feature APKs, MCP image, compatibility ranges, and both SBOMs by revision and SHA-256.

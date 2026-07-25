@@ -16,24 +16,22 @@ dependencyResolutionManagement {
 
 rootProject.name = "codex-mobile"
 
+includeBuild("app-server-client")
+includeBuild("provider-api")
+
+val providerBuild = providers.gradleProperty("codexMobile.providerBuild").orNull
+providerBuild?.let { includeBuild(it) }
+
 include(
     ":app:android",
     ":core",
     ":agent:codex",
     ":platform:android",
+    ":runtime-host",
+    ":runtime-host:android",
 )
-
-providers.gradleProperty("codexMobile.providerProjects").orNull
-    ?.split('|')
-    ?.filter(String::isNotBlank)
-    .orEmpty()
-    .forEach { directory ->
-        val projectDirectory = file(directory).canonicalFile
-        require(projectDirectory.isDirectory) { "Provider project does not exist: $projectDirectory" }
-        val splitName = "provider_${projectDirectory.name.replace('-', '_')}"
-        require(splitName.matches(Regex("[a-z][a-z0-9_]{0,79}"))) { "Invalid provider project name: $splitName" }
-        val path = ":$splitName"
-        require(findProject(path) == null) { "Duplicate provider project name: $splitName" }
-        include(path)
-        project(path).projectDir = projectDirectory
-    }
+if (providerBuild != null) {
+    include(":provider_documents", ":provider_telegram")
+    project(":provider_documents").projectDir = file("providers/documents")
+    project(":provider_telegram").projectDir = file("providers/telegram")
+}

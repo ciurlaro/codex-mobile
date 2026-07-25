@@ -1,5 +1,22 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.AppInfo
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.AppSummary
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.McpAuthStatus
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.McpElicitationSchema
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.McpServerStatus
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.McpServerElicitationRequestParams
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.McpServerElicitationRequestParamsForm
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.McpServerElicitationRequestParamsUrl
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.PluginDetail
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.PluginInstallPolicy
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.PluginMarketplaceEntry
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.PluginSummary
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.SkillMetadata
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.SkillScope
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInput
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputMentionUserInput
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputSkillUserInput
 import io.github.ciurlaro.codexmobile.core.AgentConnector
 import io.github.ciurlaro.codexmobile.core.AgentElicitation
 import io.github.ciurlaro.codexmobile.core.AgentFormField
@@ -23,6 +40,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -31,149 +49,150 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-internal fun parseSkill(item: JsonObject): AgentSkill {
-    val interfaceInfo = item.optionalObject("interface")
-    val path = item.requiredString("path")
-    val dependencies = item.optionalObject("dependencies")?.optionalArray("tools").orEmpty()
-        .mapNotNull { it.jsonObject.optionalString("value") }
+internal fun parseSkill(item: SkillMetadata): AgentSkill {
+    val interfaceInfo = item.interface_
+    val path = item.path
     return AgentSkill(
-        name = item.requiredString("name"),
-        displayName = interfaceInfo?.optionalString("displayName")
-            ?: item.requiredString("name").replace('-', ' ').replaceFirstChar(Char::uppercase),
-        description = interfaceInfo?.optionalString("shortDescription")
-            ?: item.optionalString("shortDescription")
-            ?: item.requiredText("description"),
+        name = item.name,
+        displayName = interfaceInfo?.displayName
+            ?: item.name.replace('-', ' ').replaceFirstChar(Char::uppercase),
+        description = interfaceInfo?.shortDescription
+            ?: item.shortDescription
+            ?: item.description,
         path = path,
-        scope = if ("/plugins/" in path) AgentSkillScope.PLUGIN else when (item.requiredString("scope")) {
-            "system" -> AgentSkillScope.SYSTEM
-            "user" -> AgentSkillScope.USER
-            "repo" -> AgentSkillScope.REPO
-            "admin" -> AgentSkillScope.ADMIN
-            else -> error("Unsupported skill scope")
+        scope = if ("/plugins/" in path) AgentSkillScope.PLUGIN else when (item.scope) {
+            SkillScope.SYSTEM -> AgentSkillScope.SYSTEM
+            SkillScope.USER -> AgentSkillScope.USER
+            SkillScope.REPO -> AgentSkillScope.REPO
+            SkillScope.ADMIN -> AgentSkillScope.ADMIN
         },
-        enabled = item.requiredBoolean("enabled"),
-        brandColor = interfaceInfo?.optionalString("brandColor"),
-        dependencies = dependencies,
+        enabled = item.enabled,
+        brandColor = interfaceInfo?.brandColor,
+        dependencies = item.dependencies?.tools.orEmpty().map { it.value },
     )
 }
 
 internal fun parsePluginSummary(
-    item: JsonObject,
+    item: PluginSummary,
     marketplaceName: String,
     marketplacePath: String?,
 ): AgentPluginSummary {
-    val interfaceInfo = item.optionalObject("interface")
-    val name = item.requiredString("name")
+    val interfaceInfo = item.interface_
+    val name = item.name
     return AgentPluginSummary(
         reference = AgentPluginReference(
-            id = item.requiredString("id"),
+            id = item.id,
             name = name,
             marketplaceName = marketplaceName,
             marketplacePath = marketplacePath,
         ),
-        displayName = interfaceInfo?.optionalString("displayName")
+        displayName = interfaceInfo?.displayName
             ?: name.replace('-', ' ').replaceFirstChar(Char::uppercase),
-        description = interfaceInfo?.optionalString("shortDescription")
-            ?: interfaceInfo?.optionalString("longDescription").orEmpty(),
-        installed = item.requiredBoolean("installed"),
-        enabled = item.requiredBoolean("enabled"),
-        installPolicy = enumValueOf(item.requiredString("installPolicy")),
-        authPolicy = enumValueOf(item.requiredString("authPolicy")),
-        available = item.optionalString("availability") != "DISABLED_BY_ADMIN" &&
-            item.requiredString("installPolicy") != "NOT_AVAILABLE",
-        capabilities = interfaceInfo?.optionalArray("capabilities").orEmpty()
-            .mapNotNull { it.jsonPrimitive.contentOrNull },
-        brandColor = interfaceInfo?.optionalString("brandColor"),
-        privacyPolicyUrl = interfaceInfo?.optionalString("privacyPolicyUrl"),
-        termsOfServiceUrl = interfaceInfo?.optionalString("termsOfServiceUrl"),
-        websiteUrl = interfaceInfo?.optionalString("websiteUrl"),
+        description = interfaceInfo?.shortDescription ?: interfaceInfo?.longDescription.orEmpty(),
+        installed = item.installed,
+        enabled = item.enabled,
+        installPolicy = enumValueOf(item.installPolicy.name),
+        authPolicy = enumValueOf(item.authPolicy.name),
+        available = (item.availability as? JsonPrimitive)?.contentOrNull != "DISABLED_BY_ADMIN" &&
+            item.installPolicy != PluginInstallPolicy.NOT_AVAILABLE,
+        capabilities = interfaceInfo?.capabilities.orEmpty(),
+        brandColor = interfaceInfo?.brandColor,
+        privacyPolicyUrl = interfaceInfo?.privacyPolicyUrl,
+        termsOfServiceUrl = interfaceInfo?.termsOfServiceUrl,
+        websiteUrl = interfaceInfo?.websiteUrl,
     )
 }
 
-internal fun parsePluginMarketplaces(result: JsonObject): List<AgentPluginSummary> =
-    result.requiredArray("marketplaces").flatMap { rawMarketplace ->
-        val marketplace = rawMarketplace.jsonObject
-        val name = marketplace.requiredString("name")
-        val path = marketplace.optionalString("path")
-        marketplace.requiredArray("plugins").map {
-            parsePluginSummary(it.jsonObject, name, path)
+internal fun parsePluginMarketplaces(marketplaces: List<PluginMarketplaceEntry>): List<AgentPluginSummary> =
+    marketplaces.flatMap { marketplace ->
+        marketplace.plugins.map {
+            parsePluginSummary(it, marketplace.name, marketplace.path)
         }
     }
 
-internal fun parsePluginDetail(result: JsonObject): AgentPluginDetail {
-    val plugin = result.requiredObject("plugin")
-    val marketplaceName = plugin.requiredString("marketplaceName")
+internal fun parsePluginDetail(plugin: PluginDetail): AgentPluginDetail {
     val summary = parsePluginSummary(
-        plugin.requiredObject("summary"),
-        marketplaceName,
-        plugin.optionalString("marketplacePath"),
+        plugin.summary,
+        plugin.marketplaceName,
+        plugin.marketplacePath,
     )
     return AgentPluginDetail(
         summary = summary,
-        description = plugin.optionalString("description") ?: summary.description,
-        skills = plugin.requiredArray("skills").map { raw ->
-            val skill = raw.jsonObject
+        description = plugin.description ?: summary.description,
+        skills = plugin.skills.map { skill ->
             AgentPluginSkill(
-                name = skill.requiredString("name"),
-                description = skill.requiredText("description"),
-                enabled = skill.requiredBoolean("enabled"),
-                path = skill.optionalString("path"),
+                name = skill.name,
+                description = skill.description,
+                enabled = skill.enabled,
+                path = skill.path,
             )
         },
-        connectors = plugin.requiredArray("apps").map { parseConnector(it.jsonObject) },
-        mcpServers = plugin.requiredArray("mcpServers").mapNotNull { it.jsonPrimitive.contentOrNull },
-        hookCount = plugin.requiredArray("hooks").size,
+        connectors = plugin.apps.map(::parseConnector),
+        mcpServers = plugin.mcpServers,
+        hookCount = plugin.hooks.size,
     )
 }
 
-internal fun parseConnector(item: JsonObject) = AgentConnector(
-    id = item.requiredString("id"),
-    name = item.requiredString("name"),
-    description = item.optionalString("description").orEmpty(),
-    installUrl = item.optionalString("installUrl"),
-    isAccessible = item.optionalBoolean("isAccessible") ?: false,
-    isEnabled = item.optionalBoolean("isEnabled") ?: true,
-    pluginNames = item.optionalArray("pluginDisplayNames").mapNotNull {
-        it.jsonPrimitive.contentOrNull
-    },
+internal fun parseConnector(item: AppInfo) = AgentConnector(
+    id = item.id,
+    name = item.name,
+    description = item.description.orEmpty(),
+    installUrl = item.installUrl,
+    isAccessible = item.isAccessible ?: false,
+    isEnabled = item.isEnabled ?: true,
+    pluginNames = item.pluginDisplayNames.orEmpty(),
 )
 
-internal fun parseMcpServer(item: JsonObject): AgentMcpServer {
-    val name = item.requiredString("name")
+internal fun parseConnector(item: AppSummary) = AgentConnector(
+    id = item.id,
+    name = item.name,
+    description = item.description.orEmpty(),
+    installUrl = item.installUrl,
+    isAccessible = false,
+    isEnabled = true,
+    pluginNames = emptyList(),
+)
+
+internal fun parseMcpServer(item: McpServerStatus): AgentMcpServer {
+    val name = item.name
     return AgentMcpServer(
         name = name,
-        displayName = item.optionalObject("serverInfo")?.optionalString("title") ?: name,
-        authStatus = when (item.requiredString("authStatus")) {
-            "unsupported" -> AgentMcpAuthStatus.UNSUPPORTED
-            "notLoggedIn" -> AgentMcpAuthStatus.NOT_LOGGED_IN
-            "bearerToken" -> AgentMcpAuthStatus.BEARER_TOKEN
-            "oAuth" -> AgentMcpAuthStatus.OAUTH
-            else -> error("Unsupported MCP authentication status")
+        displayName = item.serverInfo?.title ?: name,
+        authStatus = when (item.authStatus) {
+            McpAuthStatus.UNSUPPORTED -> AgentMcpAuthStatus.UNSUPPORTED
+            McpAuthStatus.NOT_LOGGED_IN -> AgentMcpAuthStatus.NOT_LOGGED_IN
+            McpAuthStatus.BEARER_TOKEN -> AgentMcpAuthStatus.BEARER_TOKEN
+            McpAuthStatus.O_AUTH -> AgentMcpAuthStatus.OAUTH
         },
     )
 }
 
 internal fun parseElicitation(
     requestId: String,
-    params: JsonObject,
+    params: McpServerElicitationRequestParams,
 ): AgentElicitation {
-    val common = AgentElicitation(
-        requestId = requestId,
-        serverName = params.requiredString("serverName"),
-        sessionId = SessionId(params.requiredString("threadId")),
-        message = params.requiredText("message"),
-    )
-    return when (params.requiredString("mode")) {
-        "form" -> common.copy(form = parseForm(params.requiredObject("requestedSchema")))
-        "url" -> common.copy(url = params.requiredString("url").also(::requireSafeAuthUrl))
+    return when (params) {
+        is McpServerElicitationRequestParamsForm -> AgentElicitation(
+            requestId = requestId,
+            serverName = params.serverName,
+            sessionId = SessionId(params.threadId),
+            message = params.message,
+            form = parseForm(params.requestedSchema),
+        )
+        is McpServerElicitationRequestParamsUrl -> AgentElicitation(
+            requestId = requestId,
+            serverName = params.serverName,
+            sessionId = SessionId(params.threadId),
+            message = params.message,
+            url = params.url.also(::requireSafeAuthUrl),
+        )
         else -> error("Unsupported MCP elicitation mode")
     }
 }
 
-private fun parseForm(schema: JsonObject): List<AgentFormField> {
-    check(schema.requiredString("type") == "object") { "Elicitation schema must be an object" }
-    val required = schema.optionalArray("required").mapNotNull { it.jsonPrimitive.contentOrNull }.toSet()
-    return schema.requiredObject("properties").map { (name, raw) ->
+private fun parseForm(schema: McpElicitationSchema): List<AgentFormField> {
+    val required = schema.required.orEmpty().toSet()
+    return schema.properties.map { (name, raw) ->
         val field = raw.jsonObject
         val type = field.requiredString("type")
         val options = when {
@@ -235,19 +254,9 @@ private fun parseDefault(field: JsonObject, type: AgentFormFieldType): AgentForm
     }
 }
 
-internal fun invocationInput(invocation: AgentInvocation): JsonObject = buildJsonObject {
-    when (invocation) {
-        is AgentInvocation.Skill -> {
-            put("type", "skill")
-            put("name", invocation.name)
-            put("path", invocation.path)
-        }
-        is AgentInvocation.Plugin -> {
-            put("type", "mention")
-            put("name", invocation.name)
-            put("path", invocation.uri)
-        }
-    }
+internal fun invocationInput(invocation: AgentInvocation): UserInput = when (invocation) {
+    is AgentInvocation.Skill -> UserInputSkillUserInput(invocation.name, invocation.path)
+    is AgentInvocation.Plugin -> UserInputMentionUserInput(invocation.name, invocation.uri)
 }
 
 internal fun parseInvocation(item: JsonObject): AgentInvocation? = when (item.optionalString("type")) {

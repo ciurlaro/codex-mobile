@@ -26,7 +26,7 @@ interface AgentClient : AutoCloseable {
         forceRefresh: Boolean = false,
     ): AgentPluginCatalog
 
-    suspend fun addPluginMarketplace(sourceUrl: String) {
+    suspend fun addPluginMarketplace(source: String) {
         error("Plugin marketplace sources are unavailable")
     }
 

@@ -15,11 +15,24 @@ required=(
   README.md LICENSE LICENSES/MLKIT-EXCEPTION.txt THIRD_PARTY_NOTICES.md CONTRIBUTING.md SECURITY.md
   release-signing-certificate.sha256 settings.gradle.kts gradle.properties gradle.lockfile gradle/verification-metadata.xml
   core/build.gradle.kts agent/codex/build.gradle.kts platform/android/build.gradle.kts app/android/build.gradle.kts
+  app/android/provider-addon-rules.pro
   docs/requirements.md docs/architecture.md docs/objects.md docs/decisions.md docs/security.md docs/privacy.md docs/release.md docs/sbom.cdx.json
-  agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexRuntime.kt
-  agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexMobileProvider.kt
+  provider-api/settings.gradle.kts provider-api/build.gradle.kts provider-api/gradle.lockfile
+  provider-api/gradle/verification-metadata.xml
+  app-server-client/settings.gradle.kts app-server-client/build.gradle.kts app-server-client/gradle.lockfile
+  app-server-client/gradle/verification-metadata.xml app-server-client/protocol/provenance.json
+  app-server-client/protocol/codex_app_server_protocol.v2.schemas.json
+  app-server-client/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/AppServerProtocolIdentity.kt
+  app-server-client/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/transport/CodexRuntime.kt
+  runtime-host/build.gradle.kts runtime-host/android/build.gradle.kts
+  runtime-host/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/host/AppServerRuntimeDistribution.kt
+  runtime-host/android/src/main/kotlin/io/github/ciurlaro/codexmobile/appserver/host/android/AndroidCodexRuntime.kt
+  providers/documents/build.gradle.kts providers/documents/src/main/AndroidManifest.xml
+  providers/telegram/build.gradle.kts providers/telegram/src/main/AndroidManifest.xml
+  providers/telegram/src/main/kotlin/io/github/ciurlaro/codexmobile/providers/telegram/TelegramSettingsActivity.kt
+  provider-api/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/provider/api/CodexMobileProvider.kt
+  agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/ProviderHost.kt
   agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/ThreadProviderStateStore.kt
-  platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidCodexRuntime.kt
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderRegistry.kt
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
@@ -29,13 +42,20 @@ required=(
 for path in "${required[@]}"; do test -f "$path" || { echo "missing required file: $path" >&2; exit 1; }; done
 
 grep -qx 'codexMobile.codexVersion=0.144.6' gradle.properties
+grep -q 'includeBuild("app-server-client")' settings.gradle.kts
+grep -q 'version = "0.144.6-1"' app-server-client/build.gradle.kts
+grep -q 'const val APP_SERVER_VERSION = "0.144.6"' \
+  app-server-client/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/AppServerProtocolIdentity.kt
+test "$(shasum -a 256 app-server-client/protocol/codex_app_server_protocol.v2.schemas.json | cut -d' ' -f1)" = \
+  '007e12d25541eb0a50bc778dfcff9e6ab88b3124c9425c4e8f79391d3538bec0'
 grep -q 'GNU GENERAL PUBLIC LICENSE' LICENSE
 grep -q 'GNU GPL version 3 section 7' LICENSES/MLKIT-EXCEPTION.txt
 grep -qx '30934b849c0aec49f66b77c37ab95f021dba5c841e2caf005b513806f7b20765' release-signing-certificate.sha256
 
 process_owners=$(rg -l 'ProcessBuilder|java\.lang\.Process|Runtime\.getRuntime\(\)\.exec' \
-  agent/codex/src/main platform/android/src/main app/android/src/main --glob '!**/build/**' || true)
-test "$process_owners" = "platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidCodexRuntime.kt" || {
+  agent/codex/src/main platform/android/src/main app/android/src/main runtime-host/android/src/main \
+  --glob '!**/build/**' || true)
+test "$process_owners" = "runtime-host/android/src/main/kotlin/io/github/ciurlaro/codexmobile/appserver/host/android/AndroidCodexRuntime.kt" || {
   echo "AndroidCodexRuntime must be the only host child-process owner" >&2
   printf '%s\n' "$process_owners" >&2
   exit 1
@@ -62,15 +82,30 @@ grep -q 'removeSplit' platform/android/src/main/kotlin/io/github/ciurlaro/codexm
 grep -q 'const val PROVIDER_API = 2' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
 grep -q 'AndroidKeyStore' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
 grep -q 'AES/GCM/NoPadding' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
-grep -q 'interface ProviderSecretStore' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexMobileProvider.kt
+grep -q 'interface CodexMobileProvider' provider-api/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/provider/api/CodexMobileProvider.kt
+grep -q 'ProviderMutationJournal' provider-api/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/provider/api/CodexMobileProvider.kt
+grep -q 'ProviderWorkspace' provider-api/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/provider/api/CodexMobileProvider.kt
+grep -q 'interface ProviderSecretStore' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/ProviderHost.kt
 grep -q 'CANONICAL_PROVIDER_REPOSITORY = "ciurlaro/codex-mobile-plugins"' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
 grep -q 'record.marketplaceRepository == CANONICAL_PROVIDER_REPOSITORY' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderRegistry.kt
-grep -q 'marketplace/add' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
-grep -q 'thread/inject_items' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
-grep -q 'turn/steer' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
+grep -q 'class io.github.ciurlaro.codexmobile.provider.api.\*\*' app/android/proguard-rules.pro
+grep -q 'provider-addon-rules.pro' app/android/build.gradle.kts
+grep -qx -- '-dontobfuscate' app/android/provider-addon-rules.pro
+grep -q 'AppServerClientMethods.MarketplaceAdd' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
+grep -q 'AppServerClientMethods.ThreadInjectItems' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
+grep -q 'AppServerClientMethods.TurnSteer' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
 grep -q 'mcp_servers\.' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
 
 reject_matches -n '^[[:space:]]*import[[:space:]]+(android|androidx)\.' core/src agent/codex/src
+reject_matches -n 'decodeFromJsonElement\(method\.paramsSerializer|AppServerRequestDescriptor\(' \
+  core/src agent/codex/src --glob '*.kt'
+reject_matches -n '^[[:space:]]*import[[:space:]]+(android|androidx|io\.github\.ciurlaro\.codexmobile\.(agent|app|core|platform|provider))\.' \
+  app-server-client/src
+reject_matches -n '^[[:space:]]*import[[:space:]]+(android|androidx|io\.github\.ciurlaro\.codexmobile\.(agent|app|core|platform))\.' provider-api/src
+reject_matches -n '^[[:space:]]*import[[:space:]]+io\.github\.ciurlaro\.codexmobile\.(agent|app|core|platform|provider)\.' \
+  runtime-host/src runtime-host/android/src
+test -z "$(find providers/documents/src/main -name '*.kt' -print)"
+test "$(find providers/telegram/src/main -name '*.kt' -print | wc -l | tr -d ' ')" = 1
 reject_matches -n '@Ignore|TODO[[:space:]]*\(' --glob '*.kt' core/src agent/codex/src platform/android/src app/android/src
 reject_matches -n '(^|[^[:alnum:]_])(Log\.[vdiwe]|println|print|System\.(out|err))[[:space:]]*\(' \
   --glob '*.kt' core/src/main agent/codex/src/main platform/android/src/main app/android/src/main --glob '!**/build/**'

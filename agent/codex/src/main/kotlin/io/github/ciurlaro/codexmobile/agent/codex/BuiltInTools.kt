@@ -1,49 +1,23 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.DynamicToolSpec
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.DynamicToolSpecFunctionDynamicToolSpec
 import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
+import io.github.ciurlaro.codexmobile.provider.api.ProviderCall
+import io.github.ciurlaro.codexmobile.provider.api.ProviderContent
+import io.github.ciurlaro.codexmobile.provider.api.ProviderResult
+import io.github.ciurlaro.codexmobile.provider.api.ProviderToolDefinition
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.buildJsonArray
-import kotlinx.serialization.json.buildJsonObject
-import kotlinx.serialization.json.put
 
-data class BuiltInToolDefinition(
-    val pluginId: String,
-    val name: String,
-    val description: String,
-    val inputSchema: JsonObject,
-    val mutation: Boolean = false,
-)
-
-data class BuiltInToolCall(
-    val threadId: String,
-    val turnId: String,
-    val callId: String,
-    val pluginId: String,
-    val tool: String,
-    val arguments: JsonObject,
-    val workspace: String,
-    val argumentsHash: String,
-)
-
-data class BuiltInToolResult(
-    val content: List<BuiltInToolContent>,
-    val success: Boolean,
-) {
-    companion object {
-        fun text(value: String, success: Boolean = true) =
-            BuiltInToolResult(listOf(BuiltInToolContent.Text(value)), success)
-    }
-}
-
-sealed interface BuiltInToolContent {
-    data class Text(val value: String) : BuiltInToolContent
-    data class Image(val dataUrl: String) : BuiltInToolContent
-}
+typealias BuiltInToolDefinition = ProviderToolDefinition
+typealias BuiltInToolCall = ProviderCall
+typealias BuiltInToolResult = ProviderResult
+typealias BuiltInToolContent = ProviderContent
 
 fun interface BuiltInToolDispatcher {
     suspend fun execute(call: BuiltInToolCall): BuiltInToolResult
@@ -54,6 +28,12 @@ fun interface BuiltInToolDispatcher {
         call: BuiltInToolCall,
         beforeMutationDispatch: () -> Unit = {},
     ): BuiltInToolResult = execute(call)
+
+    suspend fun execute(
+        call: BuiltInToolCall,
+        checkActive: () -> Unit,
+        beforeMutationDispatch: () -> Unit,
+    ): BuiltInToolResult = execute(call, beforeMutationDispatch)
 
     suspend fun replay(call: BuiltInToolCall): BuiltInToolResult? = null
 }
@@ -69,17 +49,12 @@ fun typedMutationAuthority(preset: AgentApprovalPreset): TypedMutationAuthority 
 fun builtInDynamicTools(
     enabledPluginIds: Set<String>,
     definitions: List<BuiltInToolDefinition>,
-): JsonArray = buildJsonArray {
-    definitions.filter { it.pluginId in enabledPluginIds }.forEach { definition ->
-        add(functionTool(definition.name, definition.description, definition.inputSchema))
-    }
-}
-
-private fun functionTool(name: String, description: String, schema: JsonObject) = buildJsonObject {
-    put("type", "function")
-    put("name", name)
-    put("description", description)
-    put("inputSchema", schema)
+): List<DynamicToolSpec> = definitions.filter { it.pluginId in enabledPluginIds }.map { definition ->
+    DynamicToolSpecFunctionDynamicToolSpec(
+        name = definition.name,
+        description = definition.description,
+        inputSchema = definition.inputSchema,
+    )
 }
 
 internal fun canonicalJson(value: JsonElement): String = when (value) {

@@ -1,0 +1,61 @@
+{
+    "formatVersion": 1,
+    "appServerVersion": "0.144.6",
+    "upstreamRepository": "https://github.com/openai/codex",
+    "upstreamTag": "rust-v0.144.6",
+    "upstreamTagObject": "1e66aaa95b5ab39d3ef3057cd50bdecd576a8356",
+    "upstreamRevision": "5d1fbf26c43abc65a203928b2e31561cb039e06d",
+    "inputs": [
+        {
+            "path": "codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json",
+            "gitBlob": "e1afc7883a511f3d8559cfabace13fd52c218a97",
+            "sha256": "007e12d25541eb0a50bc778dfcff9e6ab88b3124c9425c4e8f79391d3538bec0"
+        },
+        {
+            "path": "codex-rs/app-server-protocol/src/rpc.rs",
+            "gitBlob": "4e8858ce00a048abe5c0c7ccb056ac2380694f25",
+            "sha256": "27c09a1fbf92a02fe427155798a1b5c738d2b1a7a0483941ca6dff9c748052c0"
+        },
+        {
+            "path": "codex-rs/app-server-protocol/src/protocol/common.rs",
+            "gitBlob": "27a8b0205da7998b91edca9b94733b1d3a0b92e3",
+            "sha256": "5679cbc5b3e935a2edd69fbe62b82b956eff4d5d050c9969b090ccc9d367fdee"
+        },
+        {
+            "path": "codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json",
+            "gitBlob": "b7526b080da1487feb2bd5d1d5f8908b00ef1b88",
+            "sha256": "5c40798d0ea83e14988a6f73e854f905f35df8b8c41c4ac61afb67f8698a4c4f"
+        },
+        {
+            "path": "codex-rs/app-server-protocol/src/protocol/v2/thread.rs",
+            "gitBlob": "367a4a64c8f22552ecb964b9af07a4b81ab097a2",
+            "sha256": "9e492d1a3b7b00a77bb27cb21892e0d24183fb3f2a062ea1f631fc49fc240acc"
+        },
+        {
+            "path": "codex-rs/app-server-protocol/src/protocol/v2/turn.rs",
+            "gitBlob": "af99b4b2e72501c50795df51481f32f11111f0a9",
+            "sha256": "8c6311bb5e1a1eaa5f37efa495ab1f2f1125151d8281bc49f31753156466a09a"
+        }
+    ],
+    "schemaExtraction": "git show rust-v0.144.6:codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.v2.schemas.json",
+    "wireNote": "The pinned protocol intentionally omits the jsonrpc field.",
+    "completeSchemaExtraction": "git show rust-v0.144.6:codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json",
+    "generator": {
+        "version": "2",
+        "command": "./gradlew updateProtocol -PcodexProtocolSchema=/path/to/codex_app_server_protocol.schemas.json -PcodexProtocolCommon=/path/to/common.rs -PcodexProtocolThread=/path/to/thread.rs -PcodexProtocolTurn=/path/to/turn.rs",
+        "outputs": [
+            {
+                "path": "protocol/descriptors.json",
+                "sha256": "eda14fb706acabb6d5b291aeb3fc9b370cdd249969550d35ed4191eda843c1af"
+            },
+            {
+                "path": "src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/generated/GeneratedProtocolDescriptors.kt",
+                "sha256": "ac84a7aebd444669ffff560b7345c41c70d01f709e79ffb42f73bf717cc92acb"
+            },
+            {
+                "path": "src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/generated/GeneratedProtocolModels.kt",
+                "sha256": "f2d993e3e7f44d50c8ad16bd1cc91be29204bdc17aa897b61ba375d2c2b79cd3"
+            }
+        ]
+    }
+}

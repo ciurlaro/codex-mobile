@@ -1,5 +1,10 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.Thread
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.ByteRange
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.TextElement
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInput
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputTextUserInput
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentMessage
@@ -34,6 +39,15 @@ internal fun conversationSummary(thread: JsonObject): AgentConversationSummary {
         sessionId = SessionId(thread.requiredString("id")),
         title = deriveConversationTitle(thread.optionalString("name"), preview),
         updatedAtEpochSeconds = thread.requiredLong("updatedAt"),
+    )
+}
+
+internal fun conversationSummary(thread: Thread): AgentConversationSummary {
+    val preview = cleanTaggedPreview(thread.preview)
+    return AgentConversationSummary(
+        sessionId = SessionId(thread.id),
+        title = deriveConversationTitle(thread.name, preview),
+        updatedAtEpochSeconds = thread.updatedAt,
     )
 }
 
@@ -72,7 +86,7 @@ internal fun conversationMessage(rawItem: JsonElement): AgentMessage? {
     }
 }
 
-internal fun turnInput(request: AgentTurnRequest): JsonArray {
+internal fun turnInput(request: AgentTurnRequest): List<UserInput> {
     val capabilities = request.capabilities.sortedBy(AgentCapability::id)
     val invocations = request.invocations.distinctBy(AgentInvocation::key)
     val tagBlock = buildList {
@@ -89,38 +103,12 @@ internal fun turnInput(request: AgentTurnRequest): JsonArray {
         request.prompt.isBlank() -> tagBlock
         else -> "$tagBlock\n\n${request.prompt}"
     }
-    return buildJsonArray {
-        add(
-            buildJsonObject {
-                put("type", "text")
-                put("text", text)
-                if (capabilities.isNotEmpty()) {
-                    put(
-                        "text_elements",
-                        buildJsonArray {
-                            var start = 0
-                            capabilities.forEach { capability ->
-                                val end = start + capability.promptLabel
-                                    .toByteArray(StandardCharsets.UTF_8)
-                                    .size
-                                add(
-                                    buildJsonObject {
-                                        putJsonObject("byteRange") {
-                                            put("start", start)
-                                            put("end", end)
-                                        }
-                                        put("placeholder", capability.displayLabel)
-                                    },
-                                )
-                                start = end + 1
-                            }
-                        },
-                    )
-                }
-            },
-        )
-        invocations.forEach { add(invocationInput(it)) }
-    }
+    var start = 0L
+    val elements = capabilities.map { capability ->
+        val end = start + capability.promptLabel.toByteArray(StandardCharsets.UTF_8).size
+        TextElement(ByteRange(start = start, end = end), capability.displayLabel).also { start = end + 1 }
+    }.takeIf { it.isNotEmpty() }
+    return listOf(UserInputTextUserInput(text, elements)) + invocations.map(::invocationInput)
 }
 
 internal fun parsePrompt(

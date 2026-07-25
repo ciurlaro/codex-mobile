@@ -25,15 +25,10 @@ val appVersionName = providers.gradleProperty("codexMobile.versionName")
 val codexVersion = providers.gradleProperty("codexMobile.codexVersion")
 val codexArchiveSha256 = providers.gradleProperty("codexMobile.codexArchiveSha256")
 val codexBinarySha256 = providers.gradleProperty("codexMobile.codexBinarySha256")
-val providerProjectPaths = providers.gradleProperty("codexMobile.providerProjects").orNull
-    ?.split('|')
-    ?.filter(String::isNotBlank)
-    .orEmpty()
-    .map { ":provider_${file(it).canonicalFile.name.replace('-', '_')}" }
-
+val includeProviders = providers.gradleProperty("codexMobile.providerBuild").isPresent
 android {
     namespace = "io.github.ciurlaro.codexmobile.app"
-    dynamicFeatures += providerProjectPaths
+    if (includeProviders) dynamicFeatures += setOf(":provider_documents", ":provider_telegram")
     compileSdk = 37
 
     defaultConfig {
@@ -81,6 +76,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+            if (includeProviders) proguardFile("provider-addon-rules.pro")
             if (releaseSigningConfigured) signingConfig = signingConfigs.getByName("release")
         }
     }
@@ -157,4 +153,5 @@ dependencies {
     testImplementation(kotlin("test-junit"))
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation("io.github.ciurlaro.codexmobile:app-server-client:0.144.6-1")
 }

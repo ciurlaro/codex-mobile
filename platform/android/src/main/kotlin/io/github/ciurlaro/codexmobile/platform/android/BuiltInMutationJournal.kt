@@ -7,6 +7,10 @@ import android.database.sqlite.SQLiteOpenHelper
 import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolCall
 import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolContent
 import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolResult
+import io.github.ciurlaro.codexmobile.provider.api.ProviderContent
+import io.github.ciurlaro.codexmobile.provider.api.ProviderMutationEntry
+import io.github.ciurlaro.codexmobile.provider.api.ProviderMutationJournal
+import io.github.ciurlaro.codexmobile.provider.api.ProviderMutationState
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -18,24 +22,17 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 
-enum class MutationState { PREPARED, DISPATCHED, SUCCEEDED, FAILED, INDETERMINATE }
-
-data class JournalEntry(
-    val state: MutationState,
-    val result: BuiltInToolResult?,
-    val beforeHash: String?,
-    val afterHash: String?,
-)
-
 private data class StoredJournalEntry(
     val argumentsHash: String,
     val plugin: String,
     val tool: String,
-    val entry: JournalEntry,
+    val entry: ProviderMutationEntry,
 )
 
 class BuiltInMutationJournal(context: Context) :
-    SQLiteOpenHelper(context.applicationContext, "built-in-mutations.sqlite", null, 1), AutoCloseable {
+    SQLiteOpenHelper(context.applicationContext, "built-in-mutations.sqlite", null, 1),
+    ProviderMutationJournal,
+    AutoCloseable {
 
     override fun onCreate(database: SQLiteDatabase) {
         database.execSQL(
@@ -60,7 +57,7 @@ class BuiltInMutationJournal(context: Context) :
     override fun onUpgrade(database: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
 
     @Synchronized
-    fun prepare(call: BuiltInToolCall): JournalEntry? {
+    override fun prepare(call: BuiltInToolCall): ProviderMutationEntry? {
         val database = writableDatabase
         read(database, call)?.let { stored ->
             require(
@@ -78,14 +75,14 @@ class BuiltInMutationJournal(context: Context) :
             put("arguments_hash", call.argumentsHash)
             put("plugin", call.pluginId)
             put("tool", call.tool)
-            put("state", MutationState.PREPARED.name)
+            put("state", ProviderMutationState.PREPARED.name)
         }
         check(database.insertOrThrow("mutations", null, values) >= 0)
         return null
     }
 
     @Synchronized
-    fun find(call: BuiltInToolCall): JournalEntry? = read(writableDatabase, call)?.let { stored ->
+    override fun find(call: BuiltInToolCall): ProviderMutationEntry? = read(writableDatabase, call)?.let { stored ->
         require(
             stored.argumentsHash == call.argumentsHash &&
                 stored.plugin == call.pluginId && stored.tool == call.tool,
@@ -96,17 +93,17 @@ class BuiltInMutationJournal(context: Context) :
     }
 
     @Synchronized
-    fun dispatched(call: BuiltInToolCall, beforeHash: String? = null, afterHash: String? = null) {
-        update(call, MutationState.DISPATCHED, null, beforeHash, afterHash)
+    override fun dispatched(call: BuiltInToolCall, beforeHash: String?, afterHash: String?) {
+        update(call, ProviderMutationState.DISPATCHED, null, beforeHash, afterHash)
     }
 
     @Synchronized
-    fun finish(
+    override fun finish(
         call: BuiltInToolCall,
-        state: MutationState,
+        state: ProviderMutationState,
         result: BuiltInToolResult,
-        beforeHash: String? = null,
-        afterHash: String? = null,
+        beforeHash: String?,
+        afterHash: String?,
     ) {
         require(state in TERMINAL_STATES)
         update(call, state, result, beforeHash, afterHash)
@@ -121,13 +118,13 @@ class BuiltInMutationJournal(context: Context) :
             database.delete(
                 "mutations",
                 "plugin=? AND state=?",
-                arrayOf(pluginId, MutationState.PREPARED.name),
+                arrayOf(pluginId, ProviderMutationState.PREPARED.name),
             )
             database.update(
                 "mutations",
-                ContentValues().apply { put("state", MutationState.INDETERMINATE.name) },
+                ContentValues().apply { put("state", ProviderMutationState.INDETERMINATE.name) },
                 "plugin=? AND state=?",
-                arrayOf(pluginId, MutationState.DISPATCHED.name),
+                arrayOf(pluginId, ProviderMutationState.DISPATCHED.name),
             )
             database.update(
                 "mutations",
@@ -147,7 +144,7 @@ class BuiltInMutationJournal(context: Context) :
 
     private fun update(
         call: BuiltInToolCall,
-        state: MutationState,
+        state: ProviderMutationState,
         result: BuiltInToolResult?,
         beforeHash: String?,
         afterHash: String?,
@@ -183,7 +180,7 @@ class BuiltInMutationJournal(context: Context) :
                 argumentsHash = cursor.getString(0),
                 plugin = cursor.getString(1),
                 tool = cursor.getString(2),
-                entry = JournalEntry(
+                entry = ProviderMutationEntry(
                     state = enumValueOf(cursor.getString(3)),
                     result = cursor.getString(4)?.let(::decode),
                     beforeHash = cursor.getString(5),
@@ -200,11 +197,11 @@ class BuiltInMutationJournal(context: Context) :
                 result.content.forEach { item ->
                     add(
                         when (item) {
-                            is BuiltInToolContent.Text -> buildJsonObject {
+                            is ProviderContent.Text -> buildJsonObject {
                                 put("type", "text")
                                 put("value", item.value)
                             }
-                            is BuiltInToolContent.Image -> buildJsonObject {
+                            is ProviderContent.Image -> buildJsonObject {
                                 put("type", "image")
                                 put("value", item.dataUrl)
                             }
@@ -221,8 +218,8 @@ class BuiltInMutationJournal(context: Context) :
             content = json["content"]!!.jsonArray.map { raw ->
                 val item = raw.jsonObject
                 when (item["type"]!!.jsonPrimitive.content) {
-                    "text" -> BuiltInToolContent.Text(item["value"]!!.jsonPrimitive.content)
-                    "image" -> BuiltInToolContent.Image(item["value"]!!.jsonPrimitive.content)
+                    "text" -> ProviderContent.Text(item["value"]!!.jsonPrimitive.content)
+                    "image" -> ProviderContent.Image(item["value"]!!.jsonPrimitive.content)
                     else -> error("Invalid mutation journal result")
                 }
             },
@@ -232,9 +229,9 @@ class BuiltInMutationJournal(context: Context) :
 
     private companion object {
         val TERMINAL_STATES = setOf(
-            MutationState.SUCCEEDED,
-            MutationState.FAILED,
-            MutationState.INDETERMINATE,
+            ProviderMutationState.SUCCEEDED,
+            ProviderMutationState.FAILED,
+            ProviderMutationState.INDETERMINATE,
         )
     }
 }

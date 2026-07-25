@@ -1,26 +1,29 @@
 package io.github.ciurlaro.codexmobile.platform.android
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageInstaller
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import io.github.ciurlaro.codexmobile.agent.codex.PluginProviderHost
 import io.github.ciurlaro.codexmobile.agent.codex.ProviderInstallDisposition
-import io.github.ciurlaro.codexmobile.agent.codex.ProviderContext
-import io.github.ciurlaro.codexmobile.agent.codex.ProviderRemovalResult
-import io.github.ciurlaro.codexmobile.agent.codex.ProviderRemovalState
+import io.github.ciurlaro.codexmobile.provider.api.ProviderContext
+import io.github.ciurlaro.codexmobile.provider.api.ProviderRemovalResult
+import io.github.ciurlaro.codexmobile.provider.api.ProviderRemovalState
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URI
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.zip.ZipFile
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -57,7 +60,9 @@ class AndroidProviderPackageManager(
         val candidate = descriptor.toInstalledProvider(plugin, PROVIDER_API, packageInfo.marketplaceRepository)
         val previous = registry.installedRecord(plugin.id)
         if (installedSplits().containsAll(descriptor.splitNames)) {
-            registry.recordInstalling(candidate)
+            registry.recordInstalling(candidate.copy(
+                contentSha256 = previous?.takeIf { it.apkSha256 == descriptor.sha256 }?.contentSha256,
+            ))
             if (registry.isVerified(plugin.id)) return ProviderInstallDisposition.READY
             registry.restoreInstallRecord(plugin.id, previous)
         }
@@ -65,10 +70,9 @@ class AndroidProviderPackageManager(
 
         val apk = download(descriptor)
         try {
-            verifyArchive(descriptor, apk)
-            registry.recordInstalling(candidate)
+            registry.recordInstalling(candidate.copy(contentSha256 = apk.apkContentSha256()))
             installSplit(descriptor.splitNames.single(), apk)
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             registry.restoreInstallRecord(plugin.id, previous)
             throw error
         } finally {
@@ -108,7 +112,7 @@ class AndroidProviderPackageManager(
         registry.markSplitRemovalPending(pluginId)
         try {
             record.splitNames.filter { it in installedSplits() }.forEach { removeSplit(it) }
-        } catch (error: Throwable) {
+        } catch (error: Exception) {
             registry.markSplitRemovalPending(pluginId, error.message ?: "Provider code removal needs retry")
             throw error
         }
@@ -194,6 +198,7 @@ class AndroidProviderPackageManager(
     private suspend fun installSplit(splitName: String, apk: File) {
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_INHERIT_EXISTING).apply {
             setAppPackageName(appContext.packageName)
+            if (Build.VERSION.SDK_INT >= 34) setDontKillApp(true)
         }
         commit(installer.createSession(params)) { session ->
             session.openWrite(splitName, 0, apk.length()).use { output ->
@@ -201,51 +206,6 @@ class AndroidProviderPackageManager(
                 session.fsync(output)
             }
         }
-    }
-
-    private fun verifyArchive(descriptor: ProviderPackageDescriptor, apk: File) {
-        val archive = packageArchiveInfo(apk)
-            ?: error("Provider APK is unreadable")
-        val installed = packageInfo()
-        check(archive.packageName == appContext.packageName) { "Provider APK package name does not match" }
-        check(archive.compatVersionCode() == descriptor.hostVersionCode) { "Provider APK version does not match" }
-        check(archive.splitNames.orEmpty().singleOrNull() in descriptor.splitNames) {
-            "Provider APK split name does not match"
-        }
-        fun certificates(info: android.content.pm.PackageInfo) = (if (Build.VERSION.SDK_INT >= 28) {
-            checkNotNull(info.signingInfo) { "Package signing information is missing" }.apkContentsSigners
-        } else {
-            @Suppress("DEPRECATION") checkNotNull(info.signatures) { "Package signing information is missing" }
-        })
-            .map { signer -> MessageDigest.getInstance("SHA-256").digest(signer.toByteArray()).toHex() }
-            .toSet()
-        check(certificates(archive) == certificates(installed)) { "Provider APK signing certificate does not match" }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun packageArchiveInfo(apk: File) = if (Build.VERSION.SDK_INT >= 33) {
-        appContext.packageManager.getPackageArchiveInfo(
-            apk.absolutePath,
-            PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
-        )
-    } else {
-        appContext.packageManager.getPackageArchiveInfo(
-            apk.absolutePath,
-            if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES,
-        )
-    }
-
-    @Suppress("DEPRECATION")
-    private fun packageInfo() = if (Build.VERSION.SDK_INT >= 33) {
-        appContext.packageManager.getPackageInfo(
-            appContext.packageName,
-            PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
-        )
-    } else {
-        appContext.packageManager.getPackageInfo(
-            appContext.packageName,
-            if (Build.VERSION.SDK_INT >= 28) PackageManager.GET_SIGNING_CERTIFICATES else PackageManager.GET_SIGNATURES,
-        )
     }
 
     private suspend fun removeSplit(splitName: String) {
@@ -257,50 +217,26 @@ class AndroidProviderPackageManager(
     }
 
     private suspend fun commit(sessionId: Int, write: (PackageInstaller.Session) -> Unit) {
-        val action = "${appContext.packageName}.PROVIDER_PACKAGE.${UUID.randomUUID()}"
+        val token = UUID.randomUUID().toString()
         val result = CompletableDeferred<Result<Unit>>()
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(context: Context, intent: Intent) {
-                when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
-                    PackageInstaller.STATUS_PENDING_USER_ACTION -> pendingUserAction(intent)?.let {
-                        it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        context.startActivity(it)
-                    } ?: result.complete(Result.failure(IllegalStateException("Provider installation needs confirmation")))
-                    PackageInstaller.STATUS_SUCCESS -> result.complete(Result.success(Unit))
-                    else -> result.complete(Result.failure(IllegalStateException(
-                        intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "Provider package update failed",
-                    )))
-                }
-            }
-        }
-        if (Build.VERSION.SDK_INT >= 33) {
-            appContext.registerReceiver(receiver, IntentFilter(action), Context.RECEIVER_NOT_EXPORTED)
-        } else {
-            @Suppress("DEPRECATION") appContext.registerReceiver(receiver, IntentFilter(action))
-        }
+        ProviderPackageCallbacks.register(token, result)
         try {
             installer.openSession(sessionId).use { session ->
                 write(session)
                 val callback = PendingIntent.getBroadcast(
                     appContext,
                     sessionId,
-                    Intent(action).setPackage(appContext.packageName),
+                    Intent(appContext, ProviderPackageResultReceiver::class.java)
+                        .putExtra(ProviderPackageResultReceiver.EXTRA_TOKEN, token),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
                 )
                 session.commit(callback.intentSender)
             }
             withTimeout(PACKAGE_TIMEOUT_MILLIS) { result.await() }.getOrThrow()
         } finally {
-            runCatching { appContext.unregisterReceiver(receiver) }
+            ProviderPackageCallbacks.remove(token)
             runCatching { installer.abandonSession(sessionId) }
         }
-    }
-
-    @Suppress("DEPRECATION")
-    private fun pendingUserAction(intent: Intent): Intent? = if (Build.VERSION.SDK_INT >= 33) {
-        intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
-    } else {
-        intent.getParcelableExtra(Intent.EXTRA_INTENT)
     }
 
     private fun installedSplits(): Set<String> = appContext.packageManager
@@ -318,7 +254,106 @@ class AndroidProviderPackageManager(
         const val MAX_DESCRIPTOR_BYTES = 64L * 1024
         const val MAX_APK_BYTES = 512L * 1024 * 1024
         const val NETWORK_TIMEOUT_MILLIS = 30_000
-        const val PACKAGE_TIMEOUT_MILLIS = 120_000L
+        const val PACKAGE_TIMEOUT_MILLIS = 15L * 60 * 1_000
+    }
+}
+
+class ProviderPackageResultReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        val token = intent.getStringExtra(EXTRA_TOKEN) ?: return
+        when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
+            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
+                val confirmation = pendingUserAction(intent)
+                if (confirmation == null) {
+                    finish(context, token, Result.failure(IllegalStateException("Provider installation needs confirmation")))
+                } else {
+                    runCatching {
+                        context.startActivity(confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    }.onFailure { finish(context, token, Result.failure(it)) }
+                }
+            }
+            PackageInstaller.STATUS_SUCCESS -> {
+                ProviderInstallRestart.mark(context)
+                finish(context, token, Result.success(Unit))
+            }
+            else -> finish(context, token, Result.failure(IllegalStateException(
+                intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "Provider package update failed",
+            )))
+        }
+    }
+
+    private fun finish(context: Context, token: String, result: Result<Unit>) {
+        if (!ProviderPackageCallbacks.complete(token, result)) {
+            notifyAfterRestart(context, result)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun pendingUserAction(intent: Intent): Intent? = if (Build.VERSION.SDK_INT >= 33) {
+        intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+    } else {
+        intent.getParcelableExtra(Intent.EXTRA_INTENT)
+    }
+
+    private fun notifyAfterRestart(context: Context, result: Result<Unit>) {
+        val notifications = context.getSystemService(NotificationManager::class.java)
+        notifications.createNotificationChannel(
+            NotificationChannel(CHANNEL_ID, "Provider installation", NotificationManager.IMPORTANCE_DEFAULT),
+        )
+        val openApp = context.packageManager.getLaunchIntentForPackage(context.packageName)?.let {
+            PendingIntent.getActivity(context, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        }
+        notifications.notify(
+            NOTIFICATION_ID,
+            Notification.Builder(context, CHANNEL_ID)
+                .setSmallIcon(if (result.isSuccess) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_notify_error)
+                .setContentTitle("Codex Mobile")
+                .setContentText(if (result.isSuccess) {
+                    "Provider installed. Open Codex Mobile to finish setup."
+                } else {
+                    result.exceptionOrNull()?.message ?: "Provider installation failed"
+                })
+                .setContentIntent(openApp)
+                .setAutoCancel(true)
+                .build(),
+        )
+    }
+
+    companion object {
+        const val EXTRA_TOKEN = "providerPackageToken"
+        private const val CHANNEL_ID = "provider-installation"
+        private const val NOTIFICATION_ID = 5002
+    }
+}
+
+internal object ProviderPackageCallbacks {
+    private val callbacks = ConcurrentHashMap<String, CompletableDeferred<Result<Unit>>>()
+
+    fun register(token: String, result: CompletableDeferred<Result<Unit>>) {
+        check(callbacks.putIfAbsent(token, result) == null)
+    }
+
+    fun complete(token: String, result: Result<Unit>): Boolean = callbacks.remove(token)?.complete(result) == true
+
+    fun remove(token: String) {
+        callbacks.remove(token)
+    }
+}
+
+internal object ProviderInstallRestart {
+    private const val PREFERENCES = "provider-installation"
+    private const val PENDING = "resume"
+
+    fun mark(context: Context) {
+        check(context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().putBoolean(PENDING, true).commit())
+    }
+
+    @Synchronized
+    fun consume(context: Context): Boolean {
+        val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        if (!preferences.getBoolean(PENDING, false)) return false
+        check(preferences.edit().remove(PENDING).commit())
+        return true
     }
 }
 
@@ -362,6 +397,8 @@ internal data class ProviderPackageDescriptor(
         marketplaceName = plugin.marketplaceName,
         marketplacePath = plugin.marketplacePath,
         marketplaceRepository = marketplaceRepository,
+        apkSha256 = sha256,
+        contentSha256 = null,
         state = ProviderPackageState.INSTALLING,
     )
 
@@ -510,6 +547,41 @@ private fun kotlinx.serialization.json.JsonObject.requireOnly(vararg names: Stri
 }
 
 private fun ByteArray.toHex() = joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+internal fun File.apkContentSha256(): String = ZipFile(this).use { apk ->
+    val digest = MessageDigest.getInstance("SHA-256")
+    val entries = apk.entries().asSequence()
+        .filterNot { it.name.isApkSignatureEntry() }
+        .sortedBy { it.name }
+        .toList()
+    require(entries.map { it.name }.distinct().size == entries.size) { "Provider APK contains duplicate entries" }
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    entries.forEach { entry ->
+        val name = entry.name.toByteArray(Charsets.UTF_8)
+        digest.update(byteArrayOf(
+            (name.size ushr 24).toByte(),
+            (name.size ushr 16).toByte(),
+            (name.size ushr 8).toByte(),
+            name.size.toByte(),
+        ))
+        digest.update(name)
+        apk.getInputStream(entry).use { input ->
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+    }
+    digest.digest().toHex()
+}
+
+private fun String.isApkSignatureEntry(): Boolean {
+    val upper = uppercase()
+    if (upper == "META-INF/MANIFEST.MF") return true
+    if (!upper.startsWith("META-INF/") || '/' in upper.removePrefix("META-INF/")) return false
+    return upper.endsWith(".SF") || upper.endsWith(".RSA") || upper.endsWith(".DSA") || upper.endsWith(".EC")
+}
 
 @Suppress("DEPRECATION")
 internal fun android.content.pm.PackageInfo.compatVersionCode(): Int =

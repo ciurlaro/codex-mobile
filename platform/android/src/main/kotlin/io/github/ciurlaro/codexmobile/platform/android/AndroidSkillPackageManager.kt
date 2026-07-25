@@ -430,7 +430,7 @@ internal fun parseGitHubSkillTree(
     }
 }.distinctBy(GitHubSkillLocation::path).sortedBy { it.path }
 
-private class LimitedInputStream(input: InputStream, private val maximum: Long) : FilterInputStream(input) {
+internal class LimitedInputStream(input: InputStream, private val maximum: Long) : FilterInputStream(input) {
     private var count = 0L
 
     override fun read(): Int = super.read().also { if (it >= 0) add(1) }
@@ -444,7 +444,7 @@ private class LimitedInputStream(input: InputStream, private val maximum: Long) 
     }
 }
 
-private fun safeZipSegments(name: String): List<String> {
+internal fun safeZipSegments(name: String): List<String> {
     require(name.isNotBlank() && !name.startsWith('/') && '\\' !in name && '\u0000' !in name) {
         "Invalid archive path"
     }
@@ -460,7 +460,7 @@ private fun requireSkillName(value: String) {
 private fun isSkillName(value: String): Boolean =
     value.length in 1..64 && value.first().isLetterOrDigit() && value.all { it.isLetterOrDigit() || it == '-' || it == '_' }
 
-private fun isGitHubSegment(value: String): Boolean =
+internal fun isGitHubSegment(value: String): Boolean =
     value.isNotEmpty() && value.length <= 128 && value != "." && value != ".." &&
         value.all { it.isLetterOrDigit() || it == '-' || it == '_' || it == '.' }
 

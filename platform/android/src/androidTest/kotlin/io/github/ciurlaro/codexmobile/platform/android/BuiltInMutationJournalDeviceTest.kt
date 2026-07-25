@@ -3,6 +3,7 @@ package io.github.ciurlaro.codexmobile.platform.android
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolCall
 import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolResult
+import io.github.ciurlaro.codexmobile.provider.api.ProviderMutationState
 import java.util.UUID
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -23,7 +24,7 @@ class BuiltInMutationJournalDeviceTest {
 
         assertNull(journal.prepare(call))
         journal.dispatched(call, beforeHash = "before", afterHash = "after")
-        journal.finish(call, MutationState.INDETERMINATE, result, "before", "after")
+        journal.finish(call, ProviderMutationState.INDETERMINATE, result, "before", "after")
 
         assertEquals(result, journal.find(call)?.result)
         assertThrows(IllegalArgumentException::class.java) {
@@ -43,7 +44,7 @@ class BuiltInMutationJournalDeviceTest {
         }
 
         BuiltInMutationJournal(context).use { journal ->
-            assertEquals(MutationState.DISPATCHED, journal.find(call(callId, "hash"))?.state)
+            assertEquals(ProviderMutationState.DISPATCHED, journal.find(call(callId, "hash"))?.state)
         }
     }
 
@@ -58,21 +59,21 @@ class BuiltInMutationJournalDeviceTest {
         BuiltInMutationJournal(context).use { journal ->
             journal.prepare(terminal)
             journal.dispatched(terminal, "before", "after")
-            journal.finish(terminal, MutationState.SUCCEEDED, BuiltInToolResult.text("sensitive"), "before", "after")
+            journal.finish(terminal, ProviderMutationState.SUCCEEDED, BuiltInToolResult.text("sensitive"), "before", "after")
             journal.prepare(dispatched)
             journal.dispatched(dispatched, "before", "after")
             journal.prepare(prepared)
             journal.prepare(other)
-            journal.finish(other, MutationState.FAILED, otherResult)
+            journal.finish(other, ProviderMutationState.FAILED, otherResult)
 
             journal.compact(pluginId)
 
             val terminalEntry = journal.find(terminal)
-            assertEquals(MutationState.SUCCEEDED, terminalEntry?.state)
+            assertEquals(ProviderMutationState.SUCCEEDED, terminalEntry?.state)
             assertNull(terminalEntry?.result)
             assertNull(terminalEntry?.beforeHash)
             assertNull(terminalEntry?.afterHash)
-            assertEquals(MutationState.INDETERMINATE, journal.find(dispatched)?.state)
+            assertEquals(ProviderMutationState.INDETERMINATE, journal.find(dispatched)?.state)
             assertNull(journal.find(dispatched)?.result)
             assertNull(journal.find(prepared))
             assertEquals(otherResult, journal.find(other)?.result)

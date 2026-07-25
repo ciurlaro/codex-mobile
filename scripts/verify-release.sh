@@ -11,7 +11,7 @@ aab=${2:-"$root/app/android/build/outputs/bundle/release/android-release.aab"}
 tools=${ANDROID_HOME:?ANDROID_HOME must point to the Android SDK}/build-tools/36.0.0
 
 test -f "$apk" && test -f "$aab"
-test -x "$tools/apksigner" && test -x "$tools/aapt2"
+test -x "$tools/apksigner" && test -x "$tools/aapt2" && test -x "$tools/dexdump"
 test -s "$root/app/android/build/outputs/mapping/release/mapping.txt"
 "$tools/apksigner" verify --verbose "$apk" | grep -q 'Verified using v2 scheme.*true'
 manifest=$("$tools/aapt2" dump xmltree "$apk" --file AndroidManifest.xml)
@@ -23,6 +23,11 @@ grep -q 'REQUEST_INSTALL_PACKAGES' <<<"$manifest"
 grep -q 'CodexForegroundService' <<<"$manifest"
 test "$(grep -c 'exported.*=true' <<<"$manifest")" -eq 1
 ! grep -q 'debuggable.*=true' <<<"$manifest"
+
+host_dex=$(mktemp)
+trap 'rm -f "$host_dex"' EXIT
+"$tools/dexdump" -f "$apk" > "$host_dex"
+grep -Fq "Class descriptor  : 'Lio/github/ciurlaro/codexmobile/provider/api/CodexMobileProvider;'" "$host_dex"
 
 base=$(unzip -Z1 "$apk")
 bundle=$(unzip -Z1 "$aab")

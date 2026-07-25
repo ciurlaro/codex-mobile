@@ -1,5 +1,10 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
+import io.github.ciurlaro.codexmobile.appserver.client.AppServerConnection
+import io.github.ciurlaro.codexmobile.appserver.client.AppServerEvent
+import io.github.ciurlaro.codexmobile.appserver.client.AppServerRpcException
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.*
+import io.github.ciurlaro.codexmobile.appserver.transport.CodexRuntimeFactory
 import io.github.ciurlaro.codexmobile.core.AgentClient
 import io.github.ciurlaro.codexmobile.core.AgentCatalogFreshness
 import io.github.ciurlaro.codexmobile.core.AgentCapability
@@ -14,6 +19,7 @@ import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentMcpServer
 import io.github.ciurlaro.codexmobile.core.AgentModel
 import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
+import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentPluginAuthPolicy
 import io.github.ciurlaro.codexmobile.core.AgentPluginCatalog
 import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
@@ -28,6 +34,8 @@ import io.github.ciurlaro.codexmobile.core.AgentSkillChunk
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
 import io.github.ciurlaro.codexmobile.core.SessionId
+import io.github.ciurlaro.codexmobile.provider.api.ProviderContent
+import io.github.ciurlaro.codexmobile.provider.api.ProviderRemovalState
 import java.io.File
 import java.net.URI
 import java.io.RandomAccessFile
@@ -38,23 +46,25 @@ import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.receiveAsFlow
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -78,7 +88,7 @@ class CodexAgentClient(
     private val authMutex = Mutex()
     private val loginStateLock = Any()
     private val cancelledLoginIds = mutableSetOf<String>()
-    private val pendingApprovalRequests = ConcurrentHashMap<String, JsonElement>()
+    private val pendingApprovalRequests = ConcurrentHashMap<String, PendingApproval>()
     private val pendingBuiltInApprovals = ConcurrentHashMap<String, PendingBuiltInApproval>()
     private val pendingElicitationRequests = ConcurrentHashMap<String, JsonElement>()
     private val workItems = ConcurrentHashMap<String, Pair<SessionId, AgentWorkActivity>>()
@@ -107,12 +117,27 @@ class CodexAgentClient(
     private val closed = AtomicBoolean(false)
     private val connection = AppServerConnection(
         runtimeFactory = runtimeFactory,
-        clientVersion = clientVersion,
+        initializeParams = InitializeParams(
+            clientInfo = ClientInfo("codex_mobile", clientVersion, "Codex Mobile"),
+            capabilities = InitializeCapabilities(
+                experimentalApi = true,
+                mcpServerOpenaiFormElicitation = false,
+            ),
+        ),
         requestTimeoutMillis = requestTimeoutMillis,
-        onServerRequest = ::handleServerRequest,
-        onNotification = ::handleNotification,
-        onFailure = ::handleConnectionFailure,
     )
+
+    init {
+        scope.launch {
+            try {
+                connection.events.collect(::handleConnectionEvent)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (!closed.get()) handleConnectionFailure("event_stream", error.visibleMessage())
+            }
+        }
+    }
 
     @Volatile
     private var loginId: String? = null
@@ -130,11 +155,11 @@ class CodexAgentClient(
         }
         if (loginId != null) return@withLock
 
-        val account = request(
-            "account/read",
-            buildJsonObject { put("refreshToken", false) },
-        ).jsonObject["account"]
-        if (account is JsonObject && account["type"]?.jsonPrimitive?.contentOrNull == "chatgpt") {
+        val account = connection.request(
+            AppServerClientMethods.AccountRead,
+            GetAccountParams(refreshToken = false),
+        ).account
+        if (account is AccountChatgptAccount) {
             emitAuthenticated()
             return@withLock
         }
@@ -144,15 +169,15 @@ class CodexAgentClient(
             loginCompletedDuringStart = null
         }
         try {
-            val result = request(
-                "account/login/start",
-                buildJsonObject {
-                    put("type", "chatgpt")
-                    put("useHostedLoginSuccessPage", true)
-                    put("appBrand", "codex")
-                },
-            ).jsonObject
-            val startedLoginId = result.requiredString("loginId")
+            val result = connection.request(
+                AppServerClientMethods.AccountLoginStart,
+                LoginAccountParamsChatgpt(
+                    appBrand = LoginAppBrand.CODEX,
+                    useHostedLoginSuccessPage = true,
+                ),
+            ) as? LoginAccountResponseChatgpt
+                ?: error("App-server returned an unexpected login method")
+            val startedLoginId = result.loginId
             val earlyCompletion = synchronized(loginStateLock) {
                 loginStarting = false
                 loginCompletedDuringStart
@@ -167,7 +192,7 @@ class CodexAgentClient(
                 authenticated.get() -> Unit
                 else -> eventsChannel.send(
                     AgentEvent.AuthenticationRequired(
-                        signInUrl = result.requiredString("authUrl"),
+                        signInUrl = result.authUrl,
                     ),
                 )
             }
@@ -186,16 +211,16 @@ class CodexAgentClient(
             loginId?.also(cancelledLoginIds::add)
         } ?: return@withLock
         try {
-            val status = request(
-                "account/login/cancel",
-                buildJsonObject { put("loginId", activeLoginId) },
-            ).jsonObject.requiredString("status")
-            check(status == "canceled" || status == "notFound") {
+            val status = connection.request(
+                AppServerClientMethods.AccountLoginCancel,
+                CancelLoginAccountParams(activeLoginId),
+            ).status
+            check(status == CancelLoginAccountStatus.CANCELED || status == CancelLoginAccountStatus.NOT_FOUND) {
                 "Unexpected login cancellation status: $status"
             }
             synchronized(loginStateLock) {
                 if (loginId == activeLoginId) loginId = null
-                if (status == "notFound") cancelledLoginIds -= activeLoginId
+                if (status == CancelLoginAccountStatus.NOT_FOUND) cancelledLoginIds -= activeLoginId
             }
         } catch (error: Exception) {
             synchronized(loginStateLock) { cancelledLoginIds -= activeLoginId }
@@ -205,7 +230,7 @@ class CodexAgentClient(
 
     override suspend fun signOut() = authMutex.withLock {
         connection.ensureStarted()
-        request("account/logout", buildJsonObject {})
+        connection.request(AppServerClientMethods.AccountLogout, Unit)
         authenticated.set(false)
         synchronized(loginStateLock) {
             loginId = null
@@ -225,30 +250,25 @@ class CodexAgentClient(
         sessionRuntimeSettings.clear()
     }
 
-    override suspend fun listModels(): List<AgentModel> = requestAllPages("model/list") { item ->
-        val serviceTiers = (
-            item.optionalArray("serviceTiers") + item.optionalArray("additionalSpeedTiers")
-            ).mapNotNull { raw ->
-                val tier = raw as? JsonObject ?: return@mapNotNull null
-                val id = tier.optionalString("id") ?: tier.optionalString("serviceTier")
-                    ?: return@mapNotNull null
-                AgentServiceTier(
-                    id = id,
-                    name = tier.optionalString("name") ?: id.replaceFirstChar { it.uppercase() },
-                    description = tier.optionalString("description").orEmpty(),
-                )
+    override suspend fun listModels(): List<AgentModel> =
+        requestAllPages(
+            AppServerClientMethods.ModelList,
+            params = { ModelListParams(cursor = it) },
+            data = ModelListResponse::data,
+            nextCursor = ModelListResponse::nextCursor,
+        ) { item ->
+        val serviceTiers = item.serviceTiers.orEmpty().map { tier ->
+                AgentServiceTier(tier.id, tier.name, tier.description)
             }.distinctBy(AgentServiceTier::id)
         AgentModel(
-            id = item.requiredString("model"),
-            displayName = item.requiredString("displayName"),
-            description = item.requiredString("description"),
-            supportedEfforts = item.requiredArray("supportedReasoningEfforts").map { effort ->
-                effort.jsonObject.requiredString("reasoningEffort")
-            },
-            defaultEffort = item.requiredString("defaultReasoningEffort"),
-            isDefault = item.requiredBoolean("isDefault"),
+            id = item.model,
+            displayName = item.displayName,
+            description = item.description,
+            supportedEfforts = item.supportedReasoningEfforts.map { it.reasoningEffort },
+            defaultEffort = item.defaultReasoningEffort,
+            isDefault = item.isDefault,
             serviceTiers = serviceTiers,
-            defaultServiceTier = item.optionalString("defaultServiceTier"),
+            defaultServiceTier = item.defaultServiceTier,
         )
     }
 
@@ -257,20 +277,15 @@ class CodexAgentClient(
         forceReload: Boolean,
     ): AgentSkillCatalog {
         require(workingDirectory.startsWith('/')) { "Working directory must be absolute" }
-        val result = request(
-            "skills/list",
-            buildJsonObject {
-                put("cwds", buildJsonArray { add(JsonPrimitive(workingDirectory)) })
-                put("forceReload", forceReload)
-            },
-        ).jsonObject
-        val entries = result.requiredArray("data").map(JsonElement::jsonObject)
+        val result = connection.request(
+            AppServerClientMethods.SkillsList,
+            SkillsListParams(cwds = listOf(workingDirectory), forceReload = forceReload),
+        )
+        val entries = result.data
         return AgentSkillCatalog(
-            skills = entries.flatMap { it.requiredArray("skills") }.map { parseSkill(it.jsonObject) }
+            skills = entries.flatMap { it.skills }.map(::parseSkill)
                 .distinctBy { it.path },
-            errors = entries.flatMap { it.requiredArray("errors") }.map { error ->
-                error.jsonObject.let { "${it.requiredString("path")}: ${it.requiredText("message")}" }
-            },
+            errors = entries.flatMap { it.errors }.map { "${it.path}: ${it.message}" },
         ).also { catalog ->
             knownSkillPaths.clear()
             catalog.skills.mapTo(knownSkillPaths, io.github.ciurlaro.codexmobile.core.AgentSkill::path)
@@ -300,17 +315,21 @@ class CodexAgentClient(
 
     override suspend fun setSkillEnabled(path: String, enabled: Boolean) {
         require(path.startsWith('/')) { "Skill path must be absolute" }
-        request(
-            "skills/config/write",
-            buildJsonObject {
-                put("path", path)
-                put("enabled", enabled)
-            },
+        connection.request(
+            AppServerClientMethods.SkillsConfigWrite,
+            SkillsConfigWriteParams(path = path, enabled = enabled),
         )
     }
 
     override suspend fun listInstalledPlugins(workingDirectory: String): AgentPluginCatalog {
-        val catalog = listPlugins(workingDirectory, "plugin/installed")
+        // Marketplace refresh failures belong to Discover; the installed inventory is still usable.
+        val catalog = listPlugins(
+            workingDirectory,
+            AppServerClientMethods.PluginInstalled,
+            PluginInstalledParams(cwds = listOf(workingDirectory)),
+            marketplaces = PluginInstalledResponse::marketplaces,
+            loadErrors = PluginInstalledResponse::marketplaceLoadErrors,
+        ).copy(errors = emptyList())
         reconcileProvidersInBackground(catalog)
         return catalog
     }
@@ -323,32 +342,40 @@ class CodexAgentClient(
         val cache = pluginCacheFile(workingDirectory)
         if (!forceRefresh) readPluginCache(cache)?.let { return it }
         return runCatching {
-            val catalog = listPlugins(workingDirectory, "plugin/list", PLUGIN_CATALOG_TIMEOUT_MILLIS) {
-                writePluginCache(cache, it)
-            }
+            val catalog = listPlugins(
+                workingDirectory,
+                AppServerClientMethods.PluginList,
+                PluginListParams(cwds = listOf(workingDirectory)),
+                PLUGIN_CATALOG_TIMEOUT_MILLIS,
+                marketplaces = PluginListResponse::marketplaces,
+                loadErrors = PluginListResponse::marketplaceLoadErrors,
+            ) { writePluginCache(cache, it) }
             catalog
         }.getOrElse { error ->
+            if (error is CancellationException) throw error
             readPluginCache(cache, stale = true)?.copy(
                 errors = listOfNotNull(error.message ?: "Available plugins could not be refreshed"),
             ) ?: throw error
         }
     }
 
-    private suspend fun listPlugins(
+    private suspend fun <P, R> listPlugins(
         workingDirectory: String,
-        method: String,
+        method: AppServerMethod<P, R>,
+        params: P,
         timeoutMillis: Long? = null,
-        onResponse: (JsonObject) -> Unit = {},
+        marketplaces: (R) -> List<PluginMarketplaceEntry>,
+        loadErrors: (R) -> List<MarketplaceLoadErrorInfo>?,
+        onResponse: (R) -> Unit = {},
     ): AgentPluginCatalog {
         require(workingDirectory.startsWith('/')) { "Working directory must be absolute" }
-        val params = buildJsonObject {
-            put("cwds", buildJsonArray { add(JsonPrimitive(workingDirectory)) })
+        val result = if (timeoutMillis == null) {
+            connection.request(method, params)
+        } else {
+            connection.request(method, params, timeoutMillis)
         }
-        val result = request(method, params, timeoutMillis).jsonObject
-        val errors = result.optionalArray("marketplaceLoadErrors").mapNotNull { raw ->
-            raw.jsonObject.optionalString("message")
-        }.distinct()
-        val catalog = AgentPluginCatalog(parsePluginMarketplaces(result), errors)
+        val errors = loadErrors(result).orEmpty().map { it.message }.distinct()
+        val catalog = AgentPluginCatalog(parsePluginMarketplaces(marketplaces(result)), errors)
         if (builtInToolDispatcher != null) {
             builtInToolGate.withLock {
                 applyBuiltInPluginEnablement(catalog)
@@ -370,29 +397,27 @@ class CodexAgentClient(
     private fun readPluginCache(file: File?, stale: Boolean = false): AgentPluginCatalog? {
         if (file?.isFile != true) return null
         return runCatching {
-            val result = Json.parseToJsonElement(file.readText()).jsonObject
+            val result = PROTOCOL_JSON.decodeFromString(PluginListResponse.serializer(), file.readText())
             val freshness = if (!stale && System.currentTimeMillis() - file.lastModified() <= CATALOG_CACHE_TTL_MILLIS) {
                 AgentCatalogFreshness.FRESH_CACHE
             } else {
                 AgentCatalogFreshness.STALE_CACHE
             }
             AgentPluginCatalog(
-                plugins = parsePluginMarketplaces(result),
-                errors = result.optionalArray("marketplaceLoadErrors").mapNotNull {
-                    it.jsonObject.optionalString("message")
-                }.distinct(),
+                plugins = parsePluginMarketplaces(result.marketplaces),
+                errors = result.marketplaceLoadErrors.orEmpty().map { it.message }.distinct(),
                 freshness = freshness,
             )
         }.getOrNull()
     }
 
-    private fun writePluginCache(file: File?, response: JsonObject) {
+    private fun writePluginCache(file: File?, response: PluginListResponse) {
         if (file == null) return
         check(file.parentFile?.let { it.isDirectory || it.mkdirs() } == true) {
             "Unable to prepare plugin catalog cache"
         }
         val next = File(file.parentFile, ".${file.name}.next")
-        next.writeText(response.toString())
+        next.writeText(PROTOCOL_JSON.encodeToString(PluginListResponse.serializer(), response))
         Files.move(
             next.toPath(),
             file.toPath(),
@@ -403,25 +428,26 @@ class CodexAgentClient(
 
     override suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail {
         return try {
-            parsePluginDetail(request("plugin/read", pluginParams(plugin)).jsonObject).let { detail ->
+            parsePluginDetail(
+                connection.request(AppServerClientMethods.PluginRead, pluginReadParams(plugin)).plugin,
+            ).let { detail ->
                 detail.copy(providerManaged = providerHost?.manages(plugin.id) == true)
             }
-        } catch (error: RpcException) {
+        } catch (error: AppServerRpcException) {
             throw error.forPlugin(plugin)
         }
     }
 
-    override suspend fun addPluginMarketplace(sourceUrl: String) {
-        val source = parseGitHubMarketplaceSource(sourceUrl)
-        request(
-            "marketplace/add",
-            buildJsonObject {
-                put("source", source.repository)
-                source.refName?.let { put("refName", it) }
-                source.sparsePaths?.let { paths ->
-                    put("sparsePaths", buildJsonArray { paths.forEach { add(JsonPrimitive(it)) } })
-                }
-            },
+    override suspend fun addPluginMarketplace(source: String) {
+        val marketplace = if (source.startsWith('/')) {
+            require(source.length <= 4_096 && '\u0000' !in source) { "Invalid local marketplace path" }
+            MarketplaceSource(source)
+        } else {
+            parseGitHubMarketplaceSource(source)
+        }
+        connection.request(
+            AppServerClientMethods.MarketplaceAdd,
+            MarketplaceAddParams(marketplace.repository, marketplace.refName, marketplace.sparsePaths),
         )
         eventsChannel.send(AgentEvent.PluginsChanged)
     }
@@ -446,17 +472,15 @@ class CodexAgentClient(
             return AgentPluginInstallResult(detail.summary.authPolicy, emptyList())
         }
         val result = try {
-            request("plugin/install", pluginParams(plugin)).jsonObject
-        } catch (error: Throwable) {
-            throw if (error is RpcException) error.forPlugin(plugin) else error
+            connection.request(AppServerClientMethods.PluginInstall, pluginInstallParams(plugin))
+        } catch (error: AppServerRpcException) {
+            throw error.forPlugin(plugin)
         }
         if (disposition == ProviderInstallDisposition.READY) host?.installCompleted(plugin.id)
         eventsChannel.send(AgentEvent.PluginsChanged)
         return AgentPluginInstallResult(
-            authPolicy = enumValueOf(result.requiredString("authPolicy")),
-            connectorsNeedingAuthentication = result.requiredArray("appsNeedingAuth").map {
-                parseConnector(it.jsonObject)
-            },
+            authPolicy = enumValueOf(result.authPolicy.name),
+            connectorsNeedingAuthentication = result.appsNeedingAuth.map(::parseConnector),
         )
     }
 
@@ -475,7 +499,10 @@ class CodexAgentClient(
             }
             removalWarning = preparation.message
         }
-        request("plugin/uninstall", buildJsonObject { put("pluginId", plugin.id) })
+        connection.request(
+            AppServerClientMethods.PluginUninstall,
+            PluginUninstallParams(plugin.id),
+        )
         if (host != null) {
             host.remove(plugin.id)
             eventsChannel.send(AgentEvent.PluginsChanged)
@@ -496,15 +523,15 @@ class CodexAgentClient(
         require(pluginId.isNotBlank() && '.' !in pluginId) { "Invalid plugin ID" }
         if (builtInPluginEnabled.containsKey(pluginId)) {
             builtInToolGate.withLock {
-                request(
-                    "config/value/write",
+                connection.request(
+                    AppServerClientMethods.ConfigValueWrite,
                     pluginEnablementParams(pluginId, enabled),
                 )
                 builtInPluginEnabled[pluginId] = enabled
             }
             notifyOpenSessionsOfPluginAvailability()
         } else {
-            request("config/value/write", pluginEnablementParams(pluginId, enabled))
+            connection.request(AppServerClientMethods.ConfigValueWrite, pluginEnablementParams(pluginId, enabled))
         }
     }
 
@@ -512,48 +539,55 @@ class CodexAgentClient(
         sessionId: SessionId?,
         forceReload: Boolean,
     ): List<AgentConnector> = requestAllPages(
-        "app/list",
-        buildJsonObject {
-            sessionId?.let { put("threadId", it.value) }
-            put("forceRefetch", forceReload)
-        },
-        ::parseConnector,
+        AppServerClientMethods.AppList,
+        params = { cursor -> AppsListParams(cursor, forceReload, threadId = sessionId?.value) },
+        data = AppsListResponse::data,
+        nextCursor = AppsListResponse::nextCursor,
+        transform = ::parseConnector,
     )
 
     override suspend fun listMcpServers(): List<AgentMcpServer> =
-        requestAllPages("mcpServerStatus/list", transform = ::parseMcpServer)
+        requestAllPages(
+            AppServerClientMethods.McpServerStatusList,
+            params = { ListMcpServerStatusParams(cursor = it) },
+            data = ListMcpServerStatusResponse::data,
+            nextCursor = ListMcpServerStatusResponse::nextCursor,
+            transform = ::parseMcpServer,
+        )
+            .filterNot { it.name == INTERNAL_APPS_MCP_SERVER }
 
     override suspend fun startMcpOauth(serverName: String, sessionId: SessionId?): String {
         require(serverName.isNotBlank()) { "MCP server name must not be blank" }
-        return request(
-            "mcpServer/oauth/login",
-            buildJsonObject {
-                put("name", serverName)
-                sessionId?.let { put("threadId", it.value) }
-            },
-        ).jsonObject.requiredString("authorizationUrl").also(::requireSafeAuthUrl)
+        return connection.request(
+            AppServerClientMethods.McpServerOauthLogin,
+            McpServerOauthLoginParams(name = serverName, threadId = sessionId?.value),
+        ).authorizationUrl.also(::requireSafeAuthUrl)
     }
 
     override suspend fun listSessions(): List<AgentConversationSummary> = requestAllPages(
-        "thread/list",
-        buildJsonObject {
-            put("sortKey", "updated_at")
-            put("sortDirection", "desc")
+        AppServerClientMethods.ThreadList,
+        params = { cursor ->
+            ThreadListParams(
+                cursor = cursor,
+                sortDirection = SortDirection.DESC,
+                sortKey = ThreadSortKey.UPDATED_AT,
+            )
         },
-        ::conversationSummary,
+        data = ThreadListResponse::data,
+        nextCursor = ThreadListResponse::nextCursor,
+        transform = ::conversationSummary,
     )
 
     override suspend fun readSession(sessionId: SessionId): AgentConversation {
-        val thread = request(
-            "thread/read",
-            buildJsonObject {
-                put("threadId", sessionId.value)
-                put("includeTurns", true)
-            },
-        ).jsonObject.requiredObject("thread")
-        check(thread.requiredString("id") == sessionId.value) { "App-server returned another thread" }
-        val messages = thread.requiredArray("turns").flatMap { turn ->
-            turn.jsonObject.requiredArray("items").mapNotNull(::conversationMessage)
+        val thread = connection.request(
+            AppServerClientMethods.ThreadRead,
+            ThreadReadParams(sessionId.value, includeTurns = true),
+        ).thread
+        check(thread.id == sessionId.value) { "App-server returned another thread" }
+        val messages = thread.turns.flatMap { turn ->
+            turn.items.mapNotNull { item ->
+                conversationMessage(PROTOCOL_JSON.encodeToJsonElement(ThreadItem.serializer(), item))
+            }
         }
         return AgentConversation(conversationSummary(thread), messages)
     }
@@ -561,19 +595,16 @@ class CodexAgentClient(
     override suspend fun renameSession(sessionId: SessionId, name: String) {
         val snapshot = name.trim()
         require(snapshot.isNotEmpty()) { "Conversation name must not be blank" }
-        request(
-            "thread/name/set",
-            buildJsonObject {
-                put("threadId", sessionId.value)
-                put("name", snapshot)
-            },
+        connection.request(
+            AppServerClientMethods.ThreadNameSet,
+            ThreadSetNameParams(name = snapshot, threadId = sessionId.value),
         )
     }
 
     override suspend fun deleteSession(sessionId: SessionId) {
-        request(
-            "thread/delete",
-            buildJsonObject { put("threadId", sessionId.value) },
+        connection.request(
+            AppServerClientMethods.ThreadDelete,
+            ThreadDeleteParams(sessionId.value),
         )
         openedSessions -= sessionId
         sessionRuntimeSettings -= sessionId
@@ -595,79 +626,98 @@ class CodexAgentClient(
             connection.ensureStarted()
             refreshBuiltInPluginEnablement(settings.workingDirectory ?: "/")
         }
-        val params = buildJsonObject {
-            previous?.let { put("threadId", it.value) }
-            put("approvalPolicy", settings.approvalPreset.approvalPolicy)
-            put("approvalsReviewer", settings.approvalPreset.approvalsReviewer)
-            put("sandbox", "danger-full-access")
-            settings.serviceTier?.let { put("serviceTier", it) }
-            settings.workingDirectory?.let { put("cwd", it) }
-            if (previous == null) put("ephemeral", false)
-            put(
-                "developerInstructions",
-                "Answer conversationally using Markdown. The shell starts in the user's selected Android " +
-                    "workspace and may use ordinary shell commands to inspect and modify files. Use enabled " +
-                    "plugin tools through their advertised typed contracts. Use the " +
-                    "built-in web search tool only when the user input contains the structured " +
-                    "'${AgentCapability.WEB_SEARCH.promptLabel}' prompt tag.",
-            )
-            if (previous == null && builtInToolDispatcher != null) {
+        val developerInstructions =
+            "Answer conversationally using Markdown. The shell starts in the user's selected Android " +
+                "workspace and may use ordinary shell commands to inspect and modify files. Use enabled " +
+                "plugin tools through their advertised typed contracts. Use the " +
+                "built-in web search tool only when the user input contains the structured " +
+                "'${AgentCapability.WEB_SEARCH.promptLabel}' prompt tag."
+        val config = buildJsonObject {
+            put("web_search", "live")
+            putJsonObject("tools") {
+                putJsonObject("experimental_request_user_input") { put("enabled", false) }
+            }
+            putJsonObject("features") {
+                put("shell_tool", true)
+                put("code_mode", false)
+                put("multi_agent", false)
+                put("apps", true)
+                put("enable_mcp_apps", true)
+                put("plugins", true)
+                put("image_generation", false)
+                put("goals", false)
+                put("hooks", false)
+                put("skill_mcp_dependency_install", false)
+                put("workspace_dependencies", false)
+                put("standalone_web_search", false)
+            }
+            putJsonObject("shell_environment_policy") {
+                put("inherit", "all")
                 put(
-                    "dynamicTools",
-                    builtInDynamicTools(
-                        builtInPluginEnabled.filterValues { it }.keys,
-                        builtInToolDefinitions,
-                    ),
+                    "exclude",
+                    buildJsonArray {
+                        listOf(
+                            "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
+                            "http_proxy", "https_proxy", "all_proxy", "no_proxy",
+                        ).forEach { add(JsonPrimitive(it)) }
+                    },
                 )
             }
-            putJsonObject("config") {
-                put("web_search", "live")
-                putJsonObject("tools") {
-                    putJsonObject("experimental_request_user_input") { put("enabled", false) }
-                }
-                putJsonObject("features") {
-                    put("shell_tool", true)
-                    put("code_mode", false)
-                    put("multi_agent", false)
-                    put("apps", true)
-                    put("enable_mcp_apps", true)
-                    put("plugins", true)
-                    put("image_generation", false)
-                    put("goals", false)
-                    put("hooks", false)
-                    put("skill_mcp_dependency_install", false)
-                    put("workspace_dependencies", false)
-                    put("standalone_web_search", false)
-                }
-                putJsonObject("shell_environment_policy") {
-                    put("inherit", "all")
-                    put(
-                        "exclude",
-                        buildJsonArray {
-                            listOf(
-                                "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY",
-                                "http_proxy", "https_proxy", "all_proxy", "no_proxy",
-                            ).forEach { add(JsonPrimitive(it)) }
-                        },
-                    )
-                }
-            }
         }
-        val result = request(if (previous == null) "thread/start" else "thread/resume", params).jsonObject
-        val sessionId = SessionId(result.requiredObject("thread").requiredString("id"))
+        val opened = if (previous == null) {
+            val result = connection.request(
+                AppServerClientMethods.ThreadStart,
+                ThreadStartParams(
+                    approvalPolicy = JsonPrimitive(settings.approvalPreset.approvalPolicy),
+                    approvalsReviewer = approvalsReviewer(settings.approvalPreset),
+                    config = config,
+                    cwd = settings.workingDirectory,
+                    developerInstructions = developerInstructions,
+                    ephemeral = false,
+                    sandbox = SandboxMode.DANGER_FULL_ACCESS,
+                    serviceTier = settings.serviceTier,
+                    dynamicTools = builtInToolDispatcher?.let {
+                        builtInDynamicTools(
+                            builtInPluginEnabled.filterValues { it }.keys,
+                            builtInToolDefinitions,
+                        )
+                    },
+                ),
+            )
+            AgentEvent.SessionOpened(
+                sessionId = SessionId(result.thread.id),
+                model = result.model,
+                effort = result.reasoningEffort,
+                serviceTier = result.serviceTier,
+            )
+        } else {
+            val result = connection.request(
+                AppServerClientMethods.ThreadResume,
+                ThreadResumeParams(
+                    threadId = previous.value,
+                    approvalPolicy = JsonPrimitive(settings.approvalPreset.approvalPolicy),
+                    approvalsReviewer = approvalsReviewer(settings.approvalPreset),
+                    config = config,
+                    cwd = settings.workingDirectory,
+                    developerInstructions = developerInstructions,
+                    sandbox = SandboxMode.DANGER_FULL_ACCESS,
+                    serviceTier = settings.serviceTier,
+                ),
+            )
+            AgentEvent.SessionOpened(
+                sessionId = SessionId(result.thread.id),
+                model = result.model,
+                effort = null,
+                serviceTier = settings.serviceTier,
+            )
+        }
+        val sessionId = opened.sessionId
         openedSessions += sessionId
         sessionRuntimeSettings[sessionId] = SessionRuntimeSettings(
             workspace = settings.workingDirectory,
             approvalPreset = settings.approvalPreset,
         )
-        eventsChannel.send(
-            AgentEvent.SessionOpened(
-                sessionId = sessionId,
-                model = result.optionalString("model"),
-                effort = result.optionalString("reasoningEffort"),
-                serviceTier = result.optionalString("serviceTier"),
-            ),
-        )
+        eventsChannel.send(opened)
         if (previous == null) {
             val original = builtInPluginEnabled.filterValues { it }.keys.toSet()
             val state = ThreadProviderState(original, original.associateWith { true })
@@ -718,21 +768,21 @@ class CodexAgentClient(
         )
 
         try {
-            val result = request(
-                "turn/start",
-                buildJsonObject {
-                    put("threadId", sessionId.value)
-                    snapshot.clientMessageId?.let { put("clientUserMessageId", it) }
-                    put("input", turnInput(snapshot))
-                    snapshot.model?.let { put("model", it) }
-                    snapshot.effort?.let { put("effort", it) }
-                    snapshot.serviceTier?.let { put("serviceTier", it) }
-                    snapshot.workingDirectory?.let { put("cwd", it) }
-                    put("approvalPolicy", snapshot.approvalPreset.approvalPolicy)
-                    put("approvalsReviewer", snapshot.approvalPreset.approvalsReviewer)
-                },
-            ).jsonObject
-            val turnId = result.requiredObject("turn").requiredString("id")
+            val result = connection.request(
+                AppServerClientMethods.TurnStart,
+                TurnStartParams(
+                    input = turnInput(snapshot),
+                    threadId = sessionId.value,
+                    approvalPolicy = JsonPrimitive(snapshot.approvalPreset.approvalPolicy),
+                    approvalsReviewer = approvalsReviewer(snapshot.approvalPreset),
+                    clientUserMessageId = snapshot.clientMessageId,
+                    cwd = snapshot.workingDirectory,
+                    effort = snapshot.effort,
+                    model = snapshot.model,
+                    serviceTier = snapshot.serviceTier,
+                ),
+            )
+            val turnId = result.turn.id
             synchronized(turnStateLock) {
                 startingTurns -= sessionId
                 if (terminalDuringStart.remove(sessionId) != turnId) {
@@ -765,12 +815,9 @@ class CodexAgentClient(
             startingTurns += sessionId
         }
         try {
-            request(
-                "thread/shellCommand",
-                buildJsonObject {
-                    put("threadId", sessionId.value)
-                    put("command", snapshot)
-                },
+            connection.request(
+                AppServerClientMethods.ThreadShellCommand,
+                ThreadShellCommandParams(command = snapshot, threadId = sessionId.value),
             )
         } finally {
             synchronized(turnStateLock) {
@@ -790,15 +837,12 @@ class CodexAgentClient(
         cancelPendingBuiltInTools(sessionId, turnId, "Built-in tool call was cancelled")
         try {
             try {
-                request(
-                    "turn/interrupt",
-                    buildJsonObject {
-                        put("threadId", sessionId.value)
-                        put("turnId", turnId)
-                    },
+                connection.request(
+                    AppServerClientMethods.TurnInterrupt,
+                    TurnInterruptParams(threadId = sessionId.value, turnId = turnId),
                 )
-            } catch (error: RpcException) {
-                if (error.code != "-32600" || error.detail != "no active turn to interrupt") throw error
+            } catch (error: AppServerRpcException) {
+                if (error.code != -32600L || error.detail != "no active turn to interrupt") throw error
             }
         } finally {
             synchronized(turnStateLock) { cancellingTurns -= sessionId }
@@ -818,12 +862,21 @@ class CodexAgentClient(
             }
             return
         }
-        val wireId = pendingApprovalRequests.remove(requestId)
+        val pending = pendingApprovalRequests.remove(requestId)
             ?: error("Approval request is no longer pending")
-        connection.respond(
-            wireId,
-            buildJsonObject { put("decision", decision.name.lowercase()) },
-        )
+        val wireDecision = JsonPrimitive(decision.name.lowercase())
+        when (pending.type) {
+            ApprovalType.COMMAND -> connection.respond(
+                pending.wireId,
+                AppServerServerMethods.ItemCommandExecutionRequestApproval,
+                CommandExecutionRequestApprovalResponse(wireDecision),
+            )
+            ApprovalType.FILE_CHANGE -> connection.respond(
+                pending.wireId,
+                AppServerServerMethods.ItemFileChangeRequestApproval,
+                FileChangeRequestApprovalResponse(wireDecision),
+            )
+        }
     }
 
     override suspend fun resolveElicitation(
@@ -832,7 +885,11 @@ class CodexAgentClient(
     ) {
         val wireId = pendingElicitationRequests.remove(requestId)
             ?: error("Elicitation request is no longer pending")
-        connection.respond(wireId, elicitationResponse(response))
+        connection.respond(
+            wireId,
+            AppServerServerMethods.McpServerElicitationRequest,
+            elicitationResponse(response),
+        )
     }
 
     override fun close() {
@@ -847,22 +904,9 @@ class CodexAgentClient(
         sessionRuntimeSettings.clear()
         pendingAvailabilityNotices.clear()
         threadProviderStates.clear()
-        connection.close()
+        runBlocking { connection.shutdown() }
         scope.cancel()
         eventsChannel.close()
-    }
-
-    private suspend fun request(
-        method: String,
-        params: JsonObject,
-        timeoutMillis: Long? = null,
-    ): JsonElement {
-        connection.ensureStarted()
-        return if (timeoutMillis == null) {
-            connection.request(method, params)
-        } else {
-            connection.request(method, params, timeoutMillis)
-        }
     }
 
     private suspend fun notifyOpenSessionsOfPluginAvailability() {
@@ -872,7 +916,8 @@ class CodexAgentClient(
     private suspend fun notifySessionOfPluginAvailability(sessionId: SessionId) {
         val state = threadProviderStates[sessionId] ?: return
         val availability = state.originalPluginIds.associateWith { builtInPluginEnabled[it] == true }
-        if (availability == state.lastAvailability) return
+        val effectiveAvailability = pendingAvailabilityNotices[sessionId]?.availability ?: state.lastAvailability
+        if (availability == effectiveAvailability) return
         sendPluginAvailabilityNotice(
             sessionId,
             PendingAvailabilityNotice(pluginAvailabilityNotice(availability), availability),
@@ -896,54 +941,36 @@ class CodexAgentClient(
         val activeTurn = synchronized(turnStateLock) { activeTurns[sessionId] }
         val delivered = runCatching {
             if (activeTurn == null) {
-                request(
-                    "thread/inject_items",
-                    buildJsonObject {
-                        put("threadId", sessionId.value)
-                        put(
-                            "items",
-                            buildJsonArray {
-                                add(
-                                    buildJsonObject {
-                                        put("type", "message")
-                                        put("role", "developer")
-                                        put(
-                                            "content",
-                                            buildJsonArray {
-                                                add(
-                                                    buildJsonObject {
-                                                        put("type", "input_text")
-                                                        put("text", notice)
-                                                    },
-                                                )
-                                            },
-                                        )
-                                    },
-                                )
-                            },
-                        )
-                    },
+                connection.request(
+                    AppServerClientMethods.ThreadInjectItems,
+                    ThreadInjectItemsParams(
+                        items = listOf(
+                            PROTOCOL_JSON.encodeToJsonElement(
+                                ResponseItem.serializer(),
+                                ResponseItemMessageResponseItem(
+                                    content = listOf(ContentItemInputTextContentItem(notice)),
+                                    role = "developer",
+                                ),
+                            ),
+                        ),
+                        threadId = sessionId.value,
+                    ),
                 )
             } else {
-                request(
-                    "turn/steer",
-                    buildJsonObject {
-                        put("threadId", sessionId.value)
-                        put("expectedTurnId", activeTurn)
-                        put("clientUserMessageId", "$AVAILABILITY_MESSAGE_PREFIX:${System.nanoTime()}")
-                        put(
-                            "input",
-                            buildJsonArray {
-                                add(buildJsonObject { put("type", "text"); put("text", notice) })
-                            },
-                        )
-                        putJsonObject("additionalContext") {
-                            putJsonObject("codex-mobile.plugin-availability") {
-                                put("value", notice)
-                                put("kind", "application")
-                            }
-                        }
-                    },
+                connection.request(
+                    AppServerClientMethods.TurnSteer,
+                    TurnSteerParams(
+                        expectedTurnId = activeTurn,
+                        input = listOf(UserInputTextUserInput(notice)),
+                        threadId = sessionId.value,
+                        clientUserMessageId = "$AVAILABILITY_MESSAGE_PREFIX:${System.nanoTime()}",
+                        additionalContext = mapOf(
+                            "codex-mobile.plugin-availability" to AdditionalContextEntry(
+                                kind = AdditionalContextKind.APPLICATION,
+                                value = notice,
+                            ),
+                        ),
+                    ),
                 )
             }
         }.isSuccess
@@ -965,14 +992,12 @@ class CodexAgentClient(
             if (builtInEnablementLoaded.get()) return
             runCatching {
                 val result = connection.request(
-                    "plugin/installed",
-                    buildJsonObject {
-                        put("cwds", buildJsonArray { add(JsonPrimitive(workingDirectory)) })
-                    },
+                    AppServerClientMethods.PluginInstalled,
+                    PluginInstalledParams(cwds = listOf(workingDirectory)),
                     PLUGIN_CATALOG_TIMEOUT_MILLIS,
-                ).jsonObject
+                )
                 applyBuiltInPluginEnablement(
-                    AgentPluginCatalog(parsePluginMarketplaces(result), emptyList()),
+                    AgentPluginCatalog(parsePluginMarketplaces(result.marketplaces), emptyList()),
                 )
             }.onFailure {
                 builtInPluginEnabled.keys.forEach { builtInPluginEnabled[it] = false }
@@ -988,60 +1013,72 @@ class CodexAgentClient(
         }
     }
 
-    private fun handleServerRequest(id: JsonElement, method: String, rawParams: JsonElement?) {
-        if (
-            method == "item/commandExecution/requestApproval" ||
-            method == "item/fileChange/requestApproval"
-        ) {
-            handleApprovalRequest(id, method, rawParams)
-            return
+    private suspend fun handleConnectionEvent(event: AppServerEvent) {
+        when (event) {
+            is AppServerEvent.Request -> handleServerRequest(event.value, event.descriptor.method)
+            is AppServerEvent.Notification -> handleNotification(event.value)
+            is AppServerEvent.Failure -> handleConnectionFailure(event.code, event.message)
         }
-        if (method == "mcpServer/elicitation/request") {
-            handleElicitationRequest(id, rawParams)
-            return
-        }
-        if (method == "item/tool/call") {
-            handleBuiltInToolCall(id, rawParams)
-            return
-        }
-        rejectServerRequest(id, method)
     }
 
-    private fun handleBuiltInToolCall(id: JsonElement, rawParams: JsonElement?) {
+    private suspend fun handleServerRequest(request: ServerRequest, method: String) {
+        when (request) {
+            is ServerRequestItemCommandExecutionRequestApprovalRequest -> handleApprovalRequest(
+                request.id,
+                request.params.threadId,
+                request.params.reason,
+                buildList {
+                    request.params.command?.let { add("Command: $it") }
+                    request.params.cwd?.let { add("Folder: $it") }
+                },
+                ApprovalType.COMMAND,
+            )
+            is ServerRequestItemFileChangeRequestApprovalRequest -> handleApprovalRequest(
+                request.id,
+                request.params.threadId,
+                request.params.reason,
+                buildList { request.params.grantRoot?.let { add("Folder: $it") } },
+                ApprovalType.FILE_CHANGE,
+            )
+            is ServerRequestMcpServerElicitationRequestRequest ->
+                handleElicitationRequest(request.id, request.params)
+            is ServerRequestItemToolCallRequest -> handleBuiltInToolCall(request.id, request.params)
+            else -> {
+                val wire = PROTOCOL_JSON.encodeToJsonElement(ServerRequest.serializer(), request).jsonObject
+                rejectServerRequest(wire.getValue("id"), method)
+            }
+        }
+    }
+
+    private fun handleBuiltInToolCall(id: JsonElement, params: DynamicToolCallParams) {
         val pending = runCatching {
             checkNotNull(builtInToolDispatcher) { "Built-in tools are unavailable" }
-            val params = rawParams as? JsonObject ?: error("Tool call params are missing")
-            check(params["namespace"] == null || params["namespace"] is kotlinx.serialization.json.JsonNull) {
-                "Built-in tools do not use namespaces"
-            }
-            val tool = params.requiredString("tool")
+            check(params.namespace == null) { "Built-in tools do not use namespaces" }
+            val tool = params.tool
             val definition = builtInToolsByName[tool] ?: error("Unknown built-in tool")
             val pluginId = definition.pluginId
-            val sessionId = SessionId(params.requiredString("threadId"))
+            val sessionId = SessionId(params.threadId)
             check(sessionId in openedSessions) { "Tool call session is not open" }
             val runtimeSettings = sessionRuntimeSettings[sessionId]
                 ?: error("Tool call session settings are unavailable")
             val workspace = runtimeSettings.workspace
                 ?: error("A selected Android workspace is required")
-            val arguments = params["arguments"] as? JsonObject
+            val arguments = params.arguments as? JsonObject
                 ?: error("Tool arguments must be an object")
             val call = BuiltInToolCall(
                 threadId = sessionId.value,
-                turnId = params.requiredString("turnId"),
-                callId = params.requiredString("callId"),
+                turnId = params.turnId,
+                callId = params.callId,
                 pluginId = pluginId,
                 tool = tool,
                 arguments = arguments,
                 workspace = workspace,
                 argumentsHash = sha256(canonicalJson(arguments)),
+                deadlineEpochMillis = System.currentTimeMillis() + BUILT_IN_TOOL_DEADLINE_MILLIS,
             )
-            val startedAt = params["startedAtMs"]?.jsonPrimitive?.longOrNull
-                ?.takeIf { it > 0 }
-                ?: System.currentTimeMillis()
             PendingBuiltInApproval(
                 wireId = id,
                 call = call,
-                deadlineEpochMillis = startedAt + BUILT_IN_TOOL_DEADLINE_MILLIS,
                 requiresPermit = definition.mutation &&
                     typedMutationAuthority(runtimeSettings.approvalPreset) ==
                     TypedMutationAuthority.USER_APPROVAL,
@@ -1119,17 +1156,21 @@ class CodexAgentClient(
         val result = runCatching {
             builtInToolGate.withLock {
                 validateBuiltInCall(pending)
-                checkNotNull(builtInToolDispatcher).execute(pending.call) {
-                    validateBuiltInCall(pending)
-                    check(pending.dispatch.compareAndSet(false, true)) {
-                        "Built-in mutation dispatch was already used"
-                    }
-                    if (pending.requiresPermit) {
-                        check(pending.permit.compareAndSet(true, false)) {
-                            "Built-in mutation approval is missing or was already used"
+                checkNotNull(builtInToolDispatcher).execute(
+                    pending.call,
+                    checkActive = { validateBuiltInCall(pending) },
+                    beforeMutationDispatch = {
+                        validateBuiltInCall(pending)
+                        check(pending.dispatch.compareAndSet(false, true)) {
+                            "Built-in mutation dispatch was already used"
                         }
-                    }
-                }
+                        if (pending.requiresPermit) {
+                            check(pending.permit.compareAndSet(true, false)) {
+                                "Built-in mutation approval is missing or was already used"
+                            }
+                        }
+                    },
+                )
             }
         }.getOrElse { error -> BuiltInToolResult.text(error.visibleMessage(), false) }
         runCatching { respondBuiltInResult(pending.wireId, result) }
@@ -1138,7 +1179,7 @@ class CodexAgentClient(
     private fun validateBuiltInCall(pending: PendingBuiltInApproval) {
         val call = pending.call
         check(builtInPluginEnabled[call.pluginId] == true) { "${call.pluginId} is disabled" }
-        check(System.currentTimeMillis() <= pending.deadlineEpochMillis) {
+        check(System.currentTimeMillis() <= call.deadlineEpochMillis) {
             "Built-in tool call deadline expired"
         }
         val sessionId = SessionId(call.threadId)
@@ -1169,37 +1210,34 @@ class CodexAgentClient(
     private suspend fun respondBuiltInResult(id: JsonElement, result: BuiltInToolResult) {
         connection.respond(
             id,
-            buildJsonObject {
-                put(
-                    "contentItems",
-                    buildJsonArray {
-                        result.content.forEach { item ->
-                            add(
-                                when (item) {
-                                    is BuiltInToolContent.Text -> buildJsonObject {
-                                        put("type", "inputText")
-                                        put("text", item.value.take(MAX_BUILT_IN_RESULT_CHARS))
-                                    }
-                                    is BuiltInToolContent.Image -> buildJsonObject {
-                                        check(item.dataUrl.startsWith("data:image/")) {
-                                            "Built-in images must use inline data URLs"
-                                        }
-                                        put("type", "inputImage")
-                                        put("imageUrl", item.dataUrl)
-                                    }
-                                },
+            AppServerServerMethods.ItemToolCall,
+            DynamicToolCallResponse(
+                contentItems = result.content.map { item ->
+                    when (item) {
+                        is ProviderContent.Text ->
+                            DynamicToolCallOutputContentItemInputTextDynamicToolCallOutputContentItem(
+                                item.value.take(MAX_BUILT_IN_RESULT_CHARS),
+                            )
+                        is ProviderContent.Image -> {
+                            check(item.dataUrl.startsWith("data:image/")) {
+                                "Built-in images must use inline data URLs"
+                            }
+                            DynamicToolCallOutputContentItemInputImageDynamicToolCallOutputContentItem(
+                                item.dataUrl,
                             )
                         }
-                    },
-                )
-                put("success", result.success)
-            },
+                    }
+                },
+                success = result.success,
+            ),
         )
     }
 
-    private fun handleElicitationRequest(id: JsonElement, rawParams: JsonElement?) {
+    private suspend fun handleElicitationRequest(
+        id: JsonElement,
+        params: McpServerElicitationRequestParams,
+    ) {
         val elicitation = runCatching {
-            val params = rawParams as? JsonObject ?: error("Elicitation params are missing")
             val requestId = id.toString()
             val parsed = parseElicitation(requestId, params)
             check(parsed.sessionId in openedSessions) { "Elicitation session is not open" }
@@ -1208,65 +1246,62 @@ class CodexAgentClient(
             }
             parsed
         }.getOrElse {
-            runBlocking {
-                connection.respond(
-                    id,
-                    buildJsonObject { put("action", "decline") },
-                )
-            }
+            connection.respond(
+                id,
+                AppServerServerMethods.McpServerElicitationRequest,
+                McpServerElicitationRequestResponse(McpServerElicitationAction.DECLINE),
+            )
             return
         }
-        emitBlocking(AgentEvent.ElicitationRequested(elicitation))
+        eventsChannel.send(AgentEvent.ElicitationRequested(elicitation))
     }
 
-    private fun handleApprovalRequest(
+    private suspend fun handleApprovalRequest(
         id: JsonElement,
-        method: String,
-        rawParams: JsonElement?,
+        threadId: String,
+        reason: String?,
+        detailLines: List<String>,
+        type: ApprovalType,
     ) {
         val event = runCatching {
-            val params = rawParams as? JsonObject ?: error("Approval params are missing")
-            val sessionId = SessionId(params.requiredString("threadId"))
+            val sessionId = SessionId(threadId)
             check(sessionId in openedSessions) { "Approval session is not open" }
             val requestId = id.toString()
-            check(pendingApprovalRequests.putIfAbsent(requestId, id) == null) {
+            check(pendingApprovalRequests.putIfAbsent(requestId, PendingApproval(id, type)) == null) {
                 "Approval request ID is already pending"
             }
-            val title = if (method.contains("fileChange")) {
+            val title = if (type == ApprovalType.FILE_CHANGE) {
                 "Approve file changes?"
             } else {
                 "Approve command?"
             }
             val details = buildList {
-                params.optionalString("reason")?.let(::add)
-                params["command"]?.let { add("Command: ${compactDescription(it)}") }
-                params.optionalString("cwd")?.let { add("Folder: $it") }
-                params["changes"]?.let { add("Changes: ${compactDescription(it)}") }
+                reason?.let(::add)
+                addAll(detailLines)
             }.joinToString("\n").ifBlank { "Codex requested permission to continue." }
             AgentEvent.ApprovalRequested(sessionId, requestId, title, details)
         }.getOrElse {
             respondServerError(id, -32602, "Invalid approval request")
             return
         }
-        emitBlocking(event)
+        eventsChannel.send(event)
     }
 
-    private fun rejectServerRequest(id: JsonElement, method: String) {
+    private suspend fun rejectServerRequest(id: JsonElement, method: String) {
         respondServerError(id, -32601, "Client method is not available: $method")
     }
 
-    private fun respondServerError(id: JsonElement, code: Int, message: String) =
-        connection.respondError(id, code, message)
+    private suspend fun respondServerError(id: JsonElement, code: Int, message: String) =
+        connection.respondError(id, code.toLong(), message)
 
-    private fun handleNotification(message: JsonObject) {
-        val method = message["method"]!!.jsonPrimitive.content
-        val params = message["params"] as? JsonObject ?: error("$method params are missing")
-        when (method) {
-            "account/login/completed" -> {
+    private suspend fun handleNotification(notification: ServerNotification) {
+        when (notification) {
+            is ServerNotificationAccountLoginCompletedNotification -> {
+                val params = notification.params
                 val completion = LoginCompletion(
-                    loginId = params.requiredString("loginId"),
-                    success = params["success"]?.jsonPrimitive?.booleanOrNull == true,
-                    error = params["error"]?.jsonPrimitive?.contentOrNull,
+                    loginId = params.loginId ?: error("Login completion ID is missing"),
+                    success = params.success,
+                    error = params.error,
                 )
                 val applyNow = synchronized(loginStateLock) {
                     if (cancelledLoginIds.remove(completion.loginId)) {
@@ -1285,84 +1320,87 @@ class CodexAgentClient(
                 if (applyNow) applyLoginCompletion(completion)
             }
 
-            "account/updated" -> {
-                if (params["authMode"]?.jsonPrimitive?.contentOrNull == "chatgpt") {
-                    emitBlockingAuthenticated()
+            is ServerNotificationAccountUpdatedNotification -> {
+                if (notification.params.authMode?.jsonPrimitive?.contentOrNull == "chatgpt") {
+                    emitAuthenticated()
                 }
             }
 
-            "skills/changed" -> emitBlocking(AgentEvent.SkillsChanged)
+            is ServerNotificationSkillsChangedNotification ->
+                eventsChannel.send(AgentEvent.SkillsChanged)
 
-            "app/list/updated" -> emitBlocking(AgentEvent.ConnectorsChanged)
+            is ServerNotificationAppListUpdatedNotification ->
+                eventsChannel.send(AgentEvent.ConnectorsChanged)
 
-            "mcpServer/oauthLogin/completed" -> emitBlocking(
+            is ServerNotificationMcpServerOauthLoginCompletedNotification -> eventsChannel.send(
                 AgentEvent.McpOauthCompleted(
-                    serverName = params.requiredString("name"),
-                    success = params.requiredBoolean("success"),
-                    error = params.optionalString("error"),
+                    serverName = notification.params.name,
+                    success = notification.params.success,
+                    error = notification.params.error,
                 ),
             )
 
-            "item/agentMessage/delta" -> {
-                val sessionId = SessionId(params.requiredString("threadId"))
-                emitBlocking(
+            is ServerNotificationItemAgentMessageDeltaNotification -> {
+                val params = notification.params
+                val sessionId = SessionId(params.threadId)
+                eventsChannel.send(
                     AgentEvent.TextDelta(
                         sessionId = sessionId,
-                        text = params.requiredString("delta"),
-                        itemId = params.optionalString("itemId"),
+                        text = params.delta,
+                        itemId = params.itemId,
                     ),
                 )
             }
 
-            "item/commandExecution/outputDelta" -> {
-                val itemId = params.requiredString("itemId")
-                if (itemId in userShellItems) {
-                    emitBlocking(
+            is ServerNotificationItemCommandExecutionOutputDeltaNotification -> {
+                val params = notification.params
+                if (params.itemId in userShellItems) {
+                    eventsChannel.send(
                         AgentEvent.ShellOutputDelta(
-                            sessionId = SessionId(params.requiredString("threadId")),
-                            text = params.requiredString("delta"),
+                            sessionId = SessionId(params.threadId),
+                            text = params.delta,
                         ),
                     )
                 }
             }
 
-            "item/started" -> updateItemActivity(params, started = true)
+            is ServerNotificationItemStartedNotification -> updateItemActivity(
+                notification.params.threadId,
+                notification.params.turnId,
+                notification.params.item,
+                started = true,
+            )
 
-            "item/completed" -> {
-                completeUserShellItem(params)
-                updateItemActivity(params, started = false)
+            is ServerNotificationItemCompletedNotification -> {
+                val params = notification.params
+                completeUserShellItem(params.threadId, params.item)
+                updateItemActivity(params.threadId, params.turnId, params.item, started = false)
             }
 
-            "turn/completed" -> {
-                val sessionId = SessionId(params.requiredString("threadId"))
-                val turn = params.requiredObject("turn")
-                finishTurn(sessionId, turn.requiredString("id"))
-                if (turn.requiredString("status") == "failed") {
-                    val detail = (turn["error"] as? JsonObject)
-                        ?.get("message")
-                        ?.jsonPrimitive
-                        ?.contentOrNull
-                        ?: "Turn failed"
-                    emitBlocking(AgentEvent.Failure(sessionId, "turn_failed", detail, true))
+            is ServerNotificationTurnCompletedNotification -> {
+                val params = notification.params
+                val sessionId = SessionId(params.threadId)
+                finishTurn(sessionId, params.turn.id)
+                if (params.turn.status == TurnStatus.FAILED) {
+                    val detail = params.turn.error?.message ?: "Turn failed"
+                    eventsChannel.send(AgentEvent.Failure(sessionId, "turn_failed", detail, true))
                 } else {
-                    emitBlocking(AgentEvent.TurnCompleted(sessionId))
+                    eventsChannel.send(AgentEvent.TurnCompleted(sessionId))
                 }
             }
 
-            "error" -> {
-                if (params["willRetry"]?.jsonPrimitive?.booleanOrNull != true) {
-                    val sessionId = params["threadId"]?.jsonPrimitive?.contentOrNull?.let(::SessionId)
-                    val detail = (params["error"] as? JsonObject)
-                        ?.get("message")
-                        ?.jsonPrimitive
-                        ?.contentOrNull
-                        ?: "Codex turn failed"
-                    sessionId?.let {
-                        finishTurn(it, params["turnId"]?.jsonPrimitive?.contentOrNull)
-                    }
-                    emitBlocking(AgentEvent.Failure(sessionId, "turn_error", detail, true))
+            is ServerNotificationErrorNotification -> {
+                val params = notification.params
+                if (!params.willRetry) {
+                    val sessionId = SessionId(params.threadId)
+                    finishTurn(sessionId, params.turnId)
+                    eventsChannel.send(
+                        AgentEvent.Failure(sessionId, "turn_error", params.error.message, true),
+                    )
                 }
             }
+
+            else -> Unit
         }
     }
 
@@ -1370,15 +1408,11 @@ class CodexAgentClient(
         if (authenticated.compareAndSet(false, true)) eventsChannel.send(AgentEvent.Authenticated)
     }
 
-    private fun emitBlockingAuthenticated() {
-        if (authenticated.compareAndSet(false, true)) emitBlocking(AgentEvent.Authenticated)
-    }
-
-    private fun applyLoginCompletion(completion: LoginCompletion) {
+    private suspend fun applyLoginCompletion(completion: LoginCompletion) {
         if (completion.success) {
-            emitBlockingAuthenticated()
+            emitAuthenticated()
         } else {
-            emitBlocking(
+            eventsChannel.send(
                 AgentEvent.Failure(
                     null,
                     "authentication_failed",
@@ -1389,11 +1423,7 @@ class CodexAgentClient(
         }
     }
 
-    private fun emitBlocking(event: AgentEvent) {
-        runBlocking { eventsChannel.send(event) }
-    }
-
-    private fun finishTurn(sessionId: SessionId, turnId: String?) {
+    private suspend fun finishTurn(sessionId: SessionId, turnId: String?) {
         synchronized(turnStateLock) {
             if (turnId == null || activeTurns[sessionId] == turnId) activeTurns.remove(sessionId)
             if (turnId != null && sessionId in startingTurns) {
@@ -1404,32 +1434,40 @@ class CodexAgentClient(
         }
         cancelPendingBuiltInTools(sessionId, turnId, "Built-in tool call is no longer active")
         val removedWork = workItems.entries.removeIf { it.value.first == sessionId }
-        if (removedWork) emitBlocking(AgentEvent.WorkActivityChanged(sessionId, null))
+        if (removedWork) eventsChannel.send(AgentEvent.WorkActivityChanged(sessionId, null))
         if (pendingAvailabilityNotices.containsKey(sessionId)) {
             scope.launch { flushPluginAvailabilityNotice(sessionId) }
         }
     }
 
-    private fun updateItemActivity(params: JsonObject, started: Boolean) {
-        val sessionId = params.optionalString("threadId")?.let(::SessionId) ?: return
-        val item = params["item"] as? JsonObject ?: return
-        val itemId = item.optionalString("id") ?: return
-        if (started && item.optionalString("source") == "userShell") {
+    private suspend fun updateItemActivity(
+        threadId: String,
+        turnId: String,
+        item: ThreadItem,
+        started: Boolean,
+    ) {
+        val sessionId = SessionId(threadId)
+        val itemId = when (item) {
+            is ThreadItemCommandExecutionThreadItem -> item.id
+            is ThreadItemFileChangeThreadItem -> item.id
+            else -> return
+        }
+        if (
+            started && item is ThreadItemCommandExecutionThreadItem &&
+            item.source == CommandExecutionSource.USER_SHELL
+        ) {
             userShellItems += itemId
-            params.optionalString("turnId")?.let { turnId ->
-                synchronized(turnStateLock) { activeTurns[sessionId] = turnId }
-            }
+            synchronized(turnStateLock) { activeTurns[sessionId] = turnId }
         }
-        val activity = when (item.optionalString("type")) {
-            "commandExecution" -> AgentWorkActivity.RUNNING_COMMAND
-            "fileChange" -> AgentWorkActivity.WRITING_FILES
-            else -> null
+        val activity = when (item) {
+            is ThreadItemCommandExecutionThreadItem -> AgentWorkActivity.RUNNING_COMMAND
+            is ThreadItemFileChangeThreadItem -> AgentWorkActivity.WRITING_FILES
         }
-        if (started && activity != null) {
+        if (started) {
             workItems[itemId] = sessionId to activity
-            emitBlocking(AgentEvent.WorkActivityChanged(sessionId, activity))
+            eventsChannel.send(AgentEvent.WorkActivityChanged(sessionId, activity))
         } else if (!started && workItems.remove(itemId) != null) {
-            emitBlocking(
+            eventsChannel.send(
                 AgentEvent.WorkActivityChanged(
                     sessionId,
                     workItems.values.lastOrNull { it.first == sessionId }?.second,
@@ -1438,21 +1476,19 @@ class CodexAgentClient(
         }
     }
 
-    private fun completeUserShellItem(params: JsonObject) {
-        val sessionId = params.optionalString("threadId")?.let(::SessionId) ?: return
-        val item = params["item"] as? JsonObject ?: return
-        val itemId = item.optionalString("id") ?: return
-        if (userShellItems.remove(itemId)) {
-            emitBlocking(
+    private suspend fun completeUserShellItem(threadId: String, item: ThreadItem) {
+        if (item !is ThreadItemCommandExecutionThreadItem) return
+        if (userShellItems.remove(item.id)) {
+            eventsChannel.send(
                 AgentEvent.ShellCommandCompleted(
-                    sessionId = sessionId,
-                    exitCode = item["exitCode"]?.jsonPrimitive?.longOrNull?.toInt(),
+                    sessionId = SessionId(threadId),
+                    exitCode = item.exitCode?.toInt(),
                 ),
             )
         }
     }
 
-    private fun handleConnectionFailure(code: String, message: String) {
+    private suspend fun handleConnectionFailure(code: String, message: String) {
         authenticated.set(false)
         builtInEnablementLoaded.set(false)
         synchronized(loginStateLock) {
@@ -1477,53 +1513,68 @@ class CodexAgentClient(
         sessionRuntimeSettings.clear()
         pendingAvailabilityNotices.clear()
         threadProviderStates.clear()
-        emitBlocking(AgentEvent.Failure(null, code, message, recoverable = true))
+        eventsChannel.send(AgentEvent.Failure(null, code, message, recoverable = true))
     }
 
-    private suspend fun <T> requestAllPages(
-        method: String,
-        baseParams: JsonObject = buildJsonObject {},
-        transform: (JsonObject) -> T,
-    ): List<T> {
-        val values = mutableListOf<T>()
+    private suspend fun <P, R, T, U> requestAllPages(
+        method: AppServerMethod<P, R>,
+        params: (String?) -> P,
+        data: (R) -> List<T>,
+        nextCursor: (R) -> String?,
+        transform: (T) -> U,
+    ): List<U> {
+        val values = mutableListOf<U>()
         val seenCursors = mutableSetOf<String>()
         var cursor: String? = null
         do {
-            val page = request(
-                method,
-                buildJsonObject {
-                    baseParams.forEach { (name, value) -> put(name, value) }
-                    cursor?.let { put("cursor", it) }
-                },
-            ).jsonObject
-            values += page.requiredArray("data").map { transform(it.jsonObject) }
-            cursor = page.optionalString("nextCursor")
+            val page = connection.request(method, params(cursor))
+            values += data(page).map(transform)
+            cursor = nextCursor(page)
             check(cursor == null || seenCursors.add(cursor)) { "App-server repeated a pagination cursor" }
         } while (cursor != null)
         return values
     }
 
-    private fun pluginParams(plugin: AgentPluginReference) = buildJsonObject {
-        put("pluginName", plugin.name)
-        plugin.marketplacePath?.let { put("marketplacePath", it) }
-            ?: put("remoteMarketplaceName", plugin.marketplaceName)
-    }
+    private fun pluginReadParams(plugin: AgentPluginReference) = PluginReadParams(
+        pluginName = plugin.name,
+        marketplacePath = plugin.marketplacePath,
+        remoteMarketplaceName = plugin.marketplaceName.takeIf { plugin.marketplacePath == null },
+    )
 
-    private fun pluginEnablementParams(pluginId: String, enabled: Boolean) = buildJsonObject {
-        put("keyPath", "plugins.$pluginId.enabled")
-        put("value", enabled)
-        put("mergeStrategy", "upsert")
+    private fun pluginInstallParams(plugin: AgentPluginReference) = PluginInstallParams(
+        pluginName = plugin.name,
+        marketplacePath = plugin.marketplacePath,
+        remoteMarketplaceName = plugin.marketplaceName.takeIf { plugin.marketplacePath == null },
+    )
+
+    private fun pluginEnablementParams(pluginId: String, enabled: Boolean) = ConfigValueWriteParams(
+        keyPath = "plugins.$pluginId.enabled",
+        value = JsonPrimitive(enabled),
+        mergeStrategy = MergeStrategy.UPSERT,
+    )
+
+    private fun approvalsReviewer(preset: AgentApprovalPreset) = when (preset) {
+        AgentApprovalPreset.AUTO_REVIEW -> ApprovalsReviewer.AUTO_REVIEW
+        else -> ApprovalsReviewer.USER
     }
 
     private suspend fun disableManagedProviderMcp(pluginId: String) {
         providerHost?.mcpServerNames(pluginId).orEmpty().forEach { serverName ->
-            request(
-                "config/value/write",
-                buildJsonObject {
-                    put("keyPath", "mcp_servers.$serverName.enabled")
-                    put("value", false)
-                    put("mergeStrategy", "upsert")
-                },
+            connection.request(
+                AppServerClientMethods.ConfigValueWrite,
+                ConfigValueWriteParams(
+                    keyPath = "mcp_servers.$serverName",
+                    value = JsonNull,
+                    mergeStrategy = MergeStrategy.UPSERT,
+                ),
+            )
+            connection.request(
+                AppServerClientMethods.ConfigValueWrite,
+                ConfigValueWriteParams(
+                    keyPath = "plugins.$pluginId.mcp_servers.$serverName.enabled",
+                    value = JsonPrimitive(false),
+                    mergeStrategy = MergeStrategy.UPSERT,
+                ),
             )
         }
     }
@@ -1536,7 +1587,9 @@ class CodexAgentClient(
                 "Provider MCP configuration changed before activation"
             }
             disableManagedProviderMcp(plugin.id)
-            if (!detail.summary.installed) request("plugin/install", pluginParams(plugin))
+            if (!detail.summary.installed) {
+                connection.request(AppServerClientMethods.PluginInstall, pluginInstallParams(plugin))
+            }
             host.installCompleted(plugin.id)
         }
     }
@@ -1545,7 +1598,12 @@ class CodexAgentClient(
         val host = providerHost ?: return
         val installed = catalog.plugins.filter { it.installed }.map { it.reference.id }.toSet()
         host.preparedRemovals().forEach { plugin ->
-            if (plugin.id in installed) request("plugin/uninstall", buildJsonObject { put("pluginId", plugin.id) })
+            if (plugin.id in installed) {
+                connection.request(
+                    AppServerClientMethods.PluginUninstall,
+                    PluginUninstallParams(plugin.id),
+                )
+            }
             host.remove(plugin.id)
         }
     }
@@ -1565,7 +1623,7 @@ class CodexAgentClient(
         }
     }
 
-    private fun parseGitHubMarketplaceSource(value: String): GitHubMarketplaceSource {
+    private fun parseGitHubMarketplaceSource(value: String): MarketplaceSource {
         val uri = URI(value.trim())
         require(uri.scheme == "https" && uri.host.equals("github.com", ignoreCase = true)) {
             "Use a public https://github.com repository URL"
@@ -1578,7 +1636,7 @@ class CodexAgentClient(
         val repository = segments[1].removeSuffix(".git")
         require(repository.matches(Regex("[A-Za-z0-9][A-Za-z0-9_.-]{0,99}"))) { "Invalid repository name" }
         val repositoryUrl = "https://github.com/${segments[0]}/$repository.git"
-        if (segments.size == 2) return GitHubMarketplaceSource(repositoryUrl)
+        if (segments.size == 2) return MarketplaceSource(repositoryUrl)
         require(segments.size >= 4 && segments[2] == "tree") {
             "Use a GitHub repository or tree URL"
         }
@@ -1588,10 +1646,10 @@ class CodexAgentClient(
             require(path.all { it.matches(Regex("[A-Za-z0-9._-]+")) }) { "Invalid repository path" }
             listOf(path.joinToString("/"))
         }
-        return GitHubMarketplaceSource(repositoryUrl, refName, sparsePaths)
+        return MarketplaceSource(repositoryUrl, refName, sparsePaths)
     }
 
-    private fun RpcException.forPlugin(plugin: AgentPluginReference): Throwable =
+    private fun AppServerRpcException.forPlugin(plugin: AgentPluginReference): Throwable =
         if (detail.contains("Plugin not found", ignoreCase = true) ||
             detail.contains("status 404", ignoreCase = true) && detail.contains("/plugins/")) {
             AgentPluginUnavailableException(
@@ -1602,10 +1660,9 @@ class CodexAgentClient(
             this
         }
 
-    private fun elicitationResponse(response: AgentElicitationResponse) = buildJsonObject {
-        put("action", response.action.name.lowercase())
-        if (response.action == AgentElicitationAction.ACCEPT) {
-            putJsonObject("content") {
+    private fun elicitationResponse(response: AgentElicitationResponse): McpServerElicitationRequestResponse {
+        val content = if (response.action == AgentElicitationAction.ACCEPT) {
+            buildJsonObject {
                 response.content.forEach { (name, value) ->
                     put(
                         name,
@@ -1618,7 +1675,17 @@ class CodexAgentClient(
                     )
                 }
             }
+        } else {
+            null
         }
+        return McpServerElicitationRequestResponse(
+            action = when (response.action) {
+                AgentElicitationAction.ACCEPT -> McpServerElicitationAction.ACCEPT
+                AgentElicitationAction.DECLINE -> McpServerElicitationAction.DECLINE
+                AgentElicitationAction.CANCEL -> McpServerElicitationAction.CANCEL
+            },
+            content = content,
+        )
     }
 
     private data class LoginCompletion(
@@ -1635,24 +1702,31 @@ class CodexAgentClient(
     private data class PendingBuiltInApproval(
         val wireId: JsonElement,
         val call: BuiltInToolCall,
-        val deadlineEpochMillis: Long,
         val requiresPermit: Boolean,
         val permit: AtomicBoolean = AtomicBoolean(),
         val dispatch: AtomicBoolean = AtomicBoolean(),
     )
+
+    private data class PendingApproval(val wireId: JsonElement, val type: ApprovalType)
+
+    private enum class ApprovalType { COMMAND, FILE_CHANGE }
 
     private data class PendingAvailabilityNotice(
         val text: String,
         val availability: Map<String, Boolean>,
     )
 
-    private data class GitHubMarketplaceSource(
+    private data class MarketplaceSource(
         val repository: String,
         val refName: String? = null,
         val sparsePaths: List<String>? = null,
     )
 
     private companion object {
+        val PROTOCOL_JSON = Json {
+            encodeDefaults = true
+            explicitNulls = false
+        }
         const val EVENT_BUFFER_SIZE = 64
         const val MAX_PROMPT_CHARS = 100_000
         const val MAX_BUILT_IN_RESULT_CHARS = 250_000
@@ -1661,6 +1735,7 @@ class CodexAgentClient(
         const val PLUGIN_CATALOG_TIMEOUT_MILLIS = 20_000L
         const val CATALOG_CACHE_TTL_MILLIS = 6 * 60 * 60 * 1000L
         const val AVAILABILITY_MESSAGE_PREFIX = "codex-mobile:plugin-availability"
+        const val INTERNAL_APPS_MCP_SERVER = "codex_apps"
 
         fun completeUtf8Length(bytes: ByteArray, count: Int): Int {
             if (count == 0) return 0
@@ -1677,3 +1752,6 @@ class CodexAgentClient(
         }
     }
 }
+
+private fun Throwable.visibleMessage(): String =
+    message?.take(500)?.takeIf(String::isNotBlank) ?: this::class.simpleName ?: "Codex failure"

@@ -6,7 +6,7 @@ import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import android.util.Base64
 import io.github.ciurlaro.codexmobile.agent.codex.ProviderSecretStore
-import io.github.ciurlaro.codexmobile.agent.codex.ProviderSecrets
+import io.github.ciurlaro.codexmobile.provider.api.ProviderSecrets
 import java.io.File
 import java.security.KeyStore
 import java.security.MessageDigest
