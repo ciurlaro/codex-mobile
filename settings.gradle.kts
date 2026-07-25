@@ -20,7 +20,7 @@ includeBuild("app-server-client")
 includeBuild("provider-api")
 
 val providerBuild = providers.gradleProperty("codexMobile.providerBuild").orNull
-providerBuild?.let { includeBuild(it) }
+providerBuild?.let { includeBuild(it) { name = "codex-mobile-plugins" } }
 
 include(
     ":app:android",
