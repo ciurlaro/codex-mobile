@@ -17,6 +17,10 @@ import android.os.SystemClock
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.ciurlaro.codexmobile.app.lifecycle.CodexMobileApplication
+import io.github.ciurlaro.codexmobile.app.presentation.viewmodel.AppViewModel
+import io.github.ciurlaro.codexmobile.app.session.background.CodexForegroundService
+import io.github.ciurlaro.codexmobile.app.ui.shell.MainActivity
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.junit.Assert.assertEquals
@@ -71,11 +75,11 @@ class ForegroundLifecycleDeviceTest {
         }
 
         shell(
-            "am start-foreground-service -n ${context.packageName}/.app.CodexForegroundService " +
+            "am start-foreground-service -n ${context.packageName}/.app.session.background.CodexForegroundService " +
                 "-a ${CodexForegroundService.ACTION_START}",
         )
         SystemClock.sleep(100)
-        assertFalse(application.graph.wasBackgroundActive())
+        assertFalse(application.container.backgroundSessions.wasActive())
         assertTrue(activeNotifications().isEmpty())
         cleanup()
     }
@@ -101,7 +105,7 @@ class ForegroundLifecycleDeviceTest {
                 notification.actions.single().actionIntent.send()
                 await { bound.binder.controller.state.value.terminal }
                 await { activeNotifications().isEmpty() }
-                assertFalse(application.graph.wasBackgroundActive())
+                assertFalse(application.container.backgroundSessions.wasActive())
             }
         } finally {
             scenario.close()
@@ -171,10 +175,10 @@ class ForegroundLifecycleDeviceTest {
         }
 
         scenario.onActivity { it.finishAndRemoveTask() }
-        await { application.graph.wasBackgroundActive() }
+        await { application.container.backgroundSessions.wasActive() }
         assertEquals(instance, bind().use { it.binder.serviceInstanceId })
         scenario.close()
-        assertTrue(application.graph.wasBackgroundActive())
+        assertTrue(application.container.backgroundSessions.wasActive())
         assertEquals(1, activeNotifications().size)
 
         val services = packageInfo().services.orEmpty()
@@ -205,7 +209,7 @@ class ForegroundLifecycleDeviceTest {
                 assertTrue(
                     bound.binder.controller.state.value.statusMessage.contains("Android's time limit"),
                 )
-                assertFalse(application.graph.wasBackgroundActive())
+                assertFalse(application.container.backgroundSessions.wasActive())
                 assertTrue(activeNotifications().isEmpty())
             }
         } finally {
@@ -249,7 +253,7 @@ class ForegroundLifecycleDeviceTest {
                             "Session ready",
                         ),
                 )
-                assertTrue(application.graph.wasBackgroundActive())
+                assertTrue(application.container.backgroundSessions.wasActive())
 
                 if (wifiWasEnabled) {
                     shell("svc wifi enable")
@@ -307,7 +311,7 @@ class ForegroundLifecycleDeviceTest {
                 assertFalse(scenario.state == androidx.lifecycle.Lifecycle.State.RESUMED)
                 assertEquals(instance, bind().use { it.binder.serviceInstanceId })
                 assertTrue(bound.binder.isForegroundStarted)
-                assertTrue(application.graph.wasBackgroundActive())
+                assertTrue(application.container.backgroundSessions.wasActive())
                 assertEquals(
                     "Waiting for ChatGPT sign-in",
                     activeNotifications().single().notification.extras.getString(Notification.EXTRA_TEXT),
@@ -434,7 +438,7 @@ class ForegroundLifecycleDeviceTest {
             } else {
                 SystemClock.sleep(100)
             }
-            assertFalse(application.graph.wasBackgroundActive())
+            assertFalse(application.container.backgroundSessions.wasActive())
         } finally {
             context.unbindService(connection)
             cleanup()
@@ -452,7 +456,7 @@ class ForegroundLifecycleDeviceTest {
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         startFromVisibleActivity(scenario)
         scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
-        assertTrue(application.graph.wasBackgroundActive())
+        assertTrue(application.container.backgroundSessions.wasActive())
         assertEquals(1, activeNotifications().size)
         SystemClock.sleep(EXTERNAL_FAULT_WATCHDOG_MILLIS)
         throw AssertionError("Expected an external lifecycle fault")
@@ -464,7 +468,7 @@ class ForegroundLifecycleDeviceTest {
             "Run only with -e verifyLifecycleFault true after the external lifecycle fault",
             InstrumentationRegistry.getArguments().getString("verifyLifecycleFault") == "true",
         )
-        assertTrue(application.graph.wasBackgroundActive())
+        assertTrue(application.container.backgroundSessions.wasActive())
         assertTrue(activeNotifications().isEmpty())
         val scenario = ActivityScenario.launch(MainActivity::class.java)
         try {
@@ -473,27 +477,27 @@ class ForegroundLifecycleDeviceTest {
             assertFalse(viewModel.state.value.isBackgroundActive)
         } finally {
             scenario.close()
-            application.graph.markBackgroundActive(false)
+            application.container.backgroundSessions.markActive(false)
         }
     }
 
     private fun startFromVisibleActivity(scenario: ActivityScenario<MainActivity>) {
         scenario.onActivity { activity ->
-            val authorization = application.graph.authorizeForegroundStart()
+            val authorization = application.container.backgroundSessions.authorizeStart()
             activity.startForegroundService(
                 CodexForegroundService.startIntent(activity, authorization, authenticate = false),
             )
         }
         val deadline = SystemClock.elapsedRealtime() + 5_000
         while (
-            !application.graph.wasBackgroundActive() &&
-            application.graph.backgroundFailure.value == null &&
+            !application.container.backgroundSessions.wasActive() &&
+            application.container.backgroundSessions.failure.value == null &&
             SystemClock.elapsedRealtime() < deadline
         ) {
             SystemClock.sleep(25)
         }
-        assertNull(application.graph.backgroundFailure.value)
-        assertTrue(application.graph.wasBackgroundActive())
+        assertNull(application.container.backgroundSessions.failure.value)
+        assertTrue(application.container.backgroundSessions.wasActive())
         if (notifications.areNotificationsEnabled()) await { activeNotifications().size == 1 }
     }
 
@@ -519,9 +523,9 @@ class ForegroundLifecycleDeviceTest {
         return BoundService(binder, connection)
     }
 
-    private fun ActivityScenario<MainActivity>.viewModel(): MainViewModel {
-        lateinit var viewModel: MainViewModel
-        onActivity { viewModel = ViewModelProvider(it)[MainViewModel::class.java] }
+    private fun ActivityScenario<MainActivity>.viewModel(): AppViewModel {
+        lateinit var viewModel: AppViewModel
+        onActivity { viewModel = ViewModelProvider(it)[AppViewModel::class.java] }
         return viewModel
     }
 
@@ -549,7 +553,7 @@ class ForegroundLifecycleDeviceTest {
 
     private fun cleanup() {
         context.stopService(Intent(context, CodexForegroundService::class.java))
-        application.graph.markBackgroundActive(false)
+        application.container.backgroundSessions.markActive(false)
         await { activeNotifications().isEmpty() }
     }
 

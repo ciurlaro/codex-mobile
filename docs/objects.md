@@ -16,4 +16,4 @@
 | `ThreadProviderStateStore` | Preserve each thread's original provider schemas and last announced availability | Backup-excluded per-thread state |
 | `WorkspaceManager` | Validate all-files access and persist/select the shell `cwd` | Android permission plus selected path |
 | `BuiltInMutationJournal` | Bind mutation IDs to argument hashes, state, pre/post evidence, and exact results; compact removed providers to replay-prevention tombstones | Backup-excluded SQLite |
-| `ForegroundSessionController` | Keep one active client/session across UI visibility changes | Active foreground-service lifetime |
+| `CodexSessionController` | Keep one active client/session across UI visibility changes | Active foreground-service lifetime |

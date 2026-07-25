@@ -15,6 +15,10 @@ import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
+import io.github.ciurlaro.codexmobile.app.lifecycle.CodexMobileApplication
+import io.github.ciurlaro.codexmobile.app.security.navigation.toOfficialSignInUri
+import io.github.ciurlaro.codexmobile.app.session.background.CodexForegroundService
+import io.github.ciurlaro.codexmobile.app.ui.shell.MainActivity
 import io.github.ciurlaro.codexmobile.agent.codex.CodexAgentClient
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.platform.android.AndroidPlatform
@@ -137,7 +141,7 @@ class AppReadinessDeviceTest {
             val settingsTitle = findNode("Settings")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) assertTrue(settingsTitle.isHeading)
             val folderLabel = if (
-                (context.applicationContext as CodexMobileApplication).graph.platform.configuredWorkspacePath() == null
+                (context.applicationContext as CodexMobileApplication).container.platform.configuredWorkspacePath() == null
             ) {
                 "Select workspace"
             } else {
@@ -192,7 +196,7 @@ class AppReadinessDeviceTest {
             scenario.onActivity { activity -> assertTrue(activity.resources.configuration.fontScale >= 1.9f) }
             val minimumPixels = 48f * context.resources.displayMetrics.density - 1f
             val folderLabel = if (
-                (context.applicationContext as CodexMobileApplication).graph.platform.configuredWorkspacePath() == null
+                (context.applicationContext as CodexMobileApplication).container.platform.configuredWorkspacePath() == null
             ) {
                 "Select workspace"
             } else {
