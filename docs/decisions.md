@@ -16,5 +16,5 @@
 | Journal provider mutations only | Provider side effects need exact replay and no-resubmit recovery; shell work already has App Server semantics | App Server supplies equivalent recovery |
 | Encrypt user-supplied secrets per plugin with Android Keystore | Add-ons install independently, disablement retains configuration, and confirmed uninstall removes only that provider's namespace | Providers require isolation across independently signed Android UIDs |
 | Release through protected GitHub CI | Expensive builds run remotely and production signing secrets never enter pull-request jobs or local build processes | An external signer provides a smaller or stronger trust boundary |
-| Keep Auto-review mutations unavailable | App Server `0.144.6` dynamic tools have no equivalent Guardian bridge | The pinned protocol exposes equivalent authority |
+| Require one-use user approval for Auto-review typed mutations | App Server `0.144.6` dynamic tools have no equivalent Guardian bridge | The pinned protocol exposes equivalent authority |
 | Use Android package/data facilities as authority | Android owns split installation, removal, signing, and full app-data erasure | Platform contracts change |

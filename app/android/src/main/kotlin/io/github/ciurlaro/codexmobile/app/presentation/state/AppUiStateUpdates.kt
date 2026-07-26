@@ -36,6 +36,7 @@ internal fun AppUiState.withSubmittedTurn(
 internal fun AppUiState.withNewChat() = copy(
     statusMessage = if (isAuthenticated) "Ready" else statusMessage,
     streamedText = "",
+    streamedReasoning = "",
     sessionId = null,
     messages = emptyList(),
     draft = "",
@@ -64,16 +65,23 @@ internal fun AppUiState.withoutConversation(sessionId: SessionId): AppUiState {
 internal fun List<ChatMessage>.withStreamingAssistant(
     assistantMessageId: String,
     text: String,
+    reasoning: String = "",
     isStreaming: Boolean,
     exitCode: Int?,
 ): List<ChatMessage> = map { message ->
     if (message.id == assistantMessageId) {
-        message.copy(text = text, isStreaming = isStreaming, exitCode = exitCode)
+        message.copy(
+            text = text,
+            reasoning = reasoning.takeIf(String::isNotEmpty),
+            isStreaming = isStreaming,
+            exitCode = exitCode,
+        )
     } else {
         message
     }
 }.let { updated ->
     if (isStreaming) updated else updated.filterNot {
-        it.id == assistantMessageId && it.text.isEmpty() && it.shellCommand == null
+        it.id == assistantMessageId && it.text.isEmpty() &&
+            it.reasoning.isNullOrEmpty() && it.shellCommand == null
     }
 }

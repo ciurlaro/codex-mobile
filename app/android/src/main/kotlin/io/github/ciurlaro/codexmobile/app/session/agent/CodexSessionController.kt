@@ -140,6 +140,9 @@ internal class CodexSessionController(
             it.copy(
                 statusMessage = statusMessage,
                 streamedText = "",
+                streamedReasoning = "",
+                reasoningItemId = null,
+                reasoningSummaryIndex = null,
                 shellExitCode = null,
                 isTurnActive = true,
                 attentionRequired = false,
@@ -175,6 +178,9 @@ internal class CodexSessionController(
             it.copy(
                 statusMessage = "Ready",
                 streamedText = "",
+                streamedReasoning = "",
+                reasoningItemId = null,
+                reasoningSummaryIndex = null,
                 sessionId = null,
                 diagnosticCode = null,
                 attentionRequired = false,
@@ -189,7 +195,14 @@ internal class CodexSessionController(
     ): Boolean {
         if (!state.value.isAuthenticated || state.value.isTurnActive || closed.get()) return false
         mutableState.update {
-            it.copy(statusMessage = "Loading conversation…", streamedText = "", diagnosticCode = null)
+            it.copy(
+                statusMessage = "Loading conversation…",
+                streamedText = "",
+                streamedReasoning = "",
+                reasoningItemId = null,
+                reasoningSummaryIndex = null,
+                diagnosticCode = null,
+            )
         }
         launchVisibleFailure { agentClient.openSession(sessionId, settings) }
         return true
@@ -242,11 +255,13 @@ internal class CodexSessionController(
         forceRefresh: Boolean = false,
     ): AgentPluginCatalog = agentClient.listAvailablePlugins(workingDirectory, forceRefresh)
 
-    suspend fun addPluginMarketplace(sourceUrl: String) =
+    suspend fun addPluginMarketplace(sourceUrl: String): String =
         runExternalOperation("Adding plugin source") {
-            val snapshot = requireNotNull(pluginMarketplaces) { "Plugin marketplaces are unavailable" }
-                .snapshot(sourceUrl)
+            val marketplaces = requireNotNull(pluginMarketplaces) { "Plugin marketplaces are unavailable" }
+            val snapshot = marketplaces.snapshot(sourceUrl)
+            val marketplaceName = marketplaces.marketplaceName(snapshot)
             agentClient.addPluginMarketplace(snapshot)
+            marketplaceName
         }
 
     suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail =
@@ -388,6 +403,8 @@ internal class CodexSessionController(
 
             is AgentEvent.TextDelta -> appendStreamedText(event.sessionId, event.text)
 
+            is AgentEvent.ReasoningSummaryDelta -> appendReasoningSummary(event)
+
             is AgentEvent.ShellOutputDelta -> appendStreamedText(event.sessionId, event.text)
 
             is AgentEvent.ShellCommandCompleted -> mutableState.update {
@@ -490,6 +507,34 @@ internal class CodexSessionController(
                 } else {
                     it.copy(streamedText = it.streamedText + text.take(remaining) + TRUNCATION_MARKER)
                 }
+            }
+        }
+    }
+
+    private fun appendReasoningSummary(event: AgentEvent.ReasoningSummaryDelta) {
+        mutableState.update {
+            if (
+                it.sessionId != event.sessionId ||
+                it.streamedReasoning.endsWith(TRUNCATION_MARKER)
+            ) {
+                it
+            } else {
+                val separator = if (
+                    it.streamedReasoning.isNotEmpty() &&
+                    (it.reasoningItemId != event.itemId || it.reasoningSummaryIndex != event.summaryIndex)
+                ) "\n\n" else ""
+                val delta = separator + event.text
+                val remaining = MAX_STREAMED_TEXT_CHARS - it.streamedReasoning.length
+                val next = if (delta.length <= remaining) {
+                    it.streamedReasoning + delta
+                } else {
+                    it.streamedReasoning + delta.take(remaining) + TRUNCATION_MARKER
+                }
+                it.copy(
+                    streamedReasoning = next,
+                    reasoningItemId = event.itemId,
+                    reasoningSummaryIndex = event.summaryIndex,
+                )
             }
         }
     }

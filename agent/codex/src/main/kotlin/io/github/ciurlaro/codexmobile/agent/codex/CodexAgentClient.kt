@@ -18,6 +18,8 @@ import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentFormValue
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentMcpServer
+import io.github.ciurlaro.codexmobile.core.AgentMessage
+import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentModel
 import io.github.ciurlaro.codexmobile.core.AgentApprovalDecision
 import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
@@ -81,6 +83,7 @@ class CodexAgentClient(
     private val clientVersion: String = "test",
     private val pluginCacheDirectory: File? = null,
     threadProviderStateDirectory: File? = null,
+    shellTranscriptDirectory: File? = null,
     private val builtInToolDispatcher: BuiltInToolDispatcher? = null,
     private val providerHost: PluginProviderHost? = null,
     private val pluginRequestTimeoutMillis: Long = 120_000,
@@ -100,6 +103,7 @@ class CodexAgentClient(
     private val sessionRuntimeSettings = ConcurrentHashMap<SessionId, SessionRuntimeSettings>()
     private val pendingAvailabilityNotices = ConcurrentHashMap<SessionId, PendingAvailabilityNotice>()
     private val threadProviderStateStore = ThreadProviderStateStore(threadProviderStateDirectory)
+    private val shellTranscriptStore = ShellTranscriptStore(shellTranscriptDirectory)
     private val threadProviderStates = ConcurrentHashMap<SessionId, ThreadProviderState>()
     @Volatile
     private var builtInToolDefinitions = builtInToolDispatcher?.definitions().orEmpty()
@@ -604,7 +608,12 @@ class CodexAgentClient(
         },
         data = ThreadListResponse::data,
         nextCursor = ThreadListResponse::nextCursor,
-        transform = ::conversationSummary,
+        transform = { thread ->
+            conversationSummary(
+                thread,
+                shellTranscriptStore.read(thread.id).firstOrNull()?.let { "!${it.command}" },
+            )
+        },
     )
 
     override suspend fun readSession(sessionId: SessionId): AgentConversation {
@@ -613,12 +622,18 @@ class CodexAgentClient(
             ThreadReadParams(sessionId.value, includeTurns = true),
         ).thread
         check(thread.id == sessionId.value) { "App-server returned another thread" }
+        val transcripts = shellTranscriptStore.read(sessionId.value).groupBy(ShellTranscript::turnId)
         val messages = thread.turns.flatMap { turn ->
-            turn.items.mapNotNull { item ->
-                conversationMessage(PROTOCOL_JSON.encodeToJsonElement(ThreadItem.serializer(), item))
-            }
+            transcripts[turn.id].orEmpty().flatMap(::shellTranscriptMessages) + conversationMessages(
+                turn.items.map { item ->
+                    PROTOCOL_JSON.encodeToJsonElement(ThreadItem.serializer(), item)
+                },
+            )
         }
-        return AgentConversation(conversationSummary(thread), messages)
+        return AgentConversation(
+            conversationSummary(thread, transcripts.values.flatten().firstOrNull()?.let { "!${it.command}" }),
+            messages,
+        )
     }
 
     override suspend fun renameSession(sessionId: SessionId, name: String) {
@@ -640,6 +655,7 @@ class CodexAgentClient(
         pendingAvailabilityNotices -= sessionId
         threadProviderStates -= sessionId
         threadProviderStateStore.delete(sessionId.value)
+        shellTranscriptStore.delete(sessionId.value)
         synchronized(turnStateLock) {
             activeTurns -= sessionId
             startingTurns -= sessionId
@@ -809,6 +825,7 @@ class CodexAgentClient(
                     effort = snapshot.effort,
                     model = snapshot.model,
                     serviceTier = snapshot.serviceTier,
+                    summary = JsonPrimitive("auto"),
                 ),
             )
             val turnId = result.turn.id
@@ -1143,17 +1160,6 @@ class CodexAgentClient(
             )
         if (builtInToolsByName[pending.call.tool]?.mutation == true) {
             when (typedMutationAuthority(runtimeSettings.approvalPreset)) {
-                TypedMutationAuthority.UNAVAILABLE -> {
-                    respondBuiltInResult(
-                        pending.wireId,
-                        BuiltInToolResult.text(
-                            "This typed mutation is unavailable under Auto review because app-server 0.144.6 " +
-                                "does not expose an equivalent automatic-review bridge.",
-                            false,
-                        ),
-                    )
-                    return
-                }
                 TypedMutationAuthority.USER_APPROVAL -> {
                     val call = pending.call
                     val requestId = "builtin:${call.threadId}:${call.turnId}:${call.callId}"
@@ -1380,6 +1386,18 @@ class CodexAgentClient(
                 )
             }
 
+            is ServerNotificationItemReasoningSummaryTextDeltaNotification -> {
+                val params = notification.params
+                eventsChannel.send(
+                    AgentEvent.ReasoningSummaryDelta(
+                        sessionId = SessionId(params.threadId),
+                        text = params.delta,
+                        itemId = params.itemId,
+                        summaryIndex = params.summaryIndex,
+                    ),
+                )
+            }
+
             is ServerNotificationItemCommandExecutionOutputDeltaNotification -> {
                 val params = notification.params
                 if (params.itemId in userShellItems) {
@@ -1401,7 +1419,7 @@ class CodexAgentClient(
 
             is ServerNotificationItemCompletedNotification -> {
                 val params = notification.params
-                completeUserShellItem(params.threadId, params.item)
+                completeUserShellItem(params.threadId, params.turnId, params.item)
                 updateItemActivity(params.threadId, params.turnId, params.item, started = false)
             }
 
@@ -1507,9 +1525,21 @@ class CodexAgentClient(
         }
     }
 
-    private suspend fun completeUserShellItem(threadId: String, item: ThreadItem) {
+    private suspend fun completeUserShellItem(threadId: String, turnId: String, item: ThreadItem) {
         if (item !is ThreadItemCommandExecutionThreadItem) return
-        if (userShellItems.remove(item.id)) {
+        if (userShellItems.remove(item.id) || item.source == CommandExecutionSource.USER_SHELL) {
+            runCatching {
+                shellTranscriptStore.upsert(
+                    threadId,
+                    ShellTranscript(
+                        turnId = turnId,
+                        itemId = item.id,
+                        command = item.command,
+                        output = item.aggregatedOutput.orEmpty().boundedShellTranscript(),
+                        exitCode = item.exitCode?.toInt(),
+                    ),
+                )
+            }
             eventsChannel.send(
                 AgentEvent.ShellCommandCompleted(
                     sessionId = SessionId(threadId),
@@ -1546,6 +1576,27 @@ class CodexAgentClient(
         threadProviderStates.clear()
         eventsChannel.send(AgentEvent.Failure(null, code, message, recoverable = true))
     }
+
+    private fun shellTranscriptMessages(transcript: ShellTranscript): List<AgentMessage> = listOf(
+        AgentMessage(
+            id = "shell-user-${transcript.itemId}",
+            clientId = null,
+            role = AgentMessageRole.USER,
+            text = "!${transcript.command}",
+        ),
+        AgentMessage(
+            id = transcript.itemId,
+            clientId = null,
+            role = AgentMessageRole.CODEX,
+            text = transcript.output,
+            shellCommand = transcript.command,
+            exitCode = transcript.exitCode,
+        ),
+    )
+
+    private fun String.boundedShellTranscript(): String =
+        if (length <= MAX_SHELL_TRANSCRIPT_CHARS) this
+        else take(MAX_SHELL_TRANSCRIPT_CHARS) + TRUNCATION_MARKER
 
     private suspend fun <P, R, T, U> requestAllPages(
         method: AppServerMethod<P, R>,
@@ -1780,6 +1831,8 @@ class CodexAgentClient(
         }
         const val EVENT_BUFFER_SIZE = 64
         const val MAX_PROMPT_CHARS = 100_000
+        const val MAX_SHELL_TRANSCRIPT_CHARS = 256 * 1024
+        const val TRUNCATION_MARKER = "\n[Response truncated]"
         const val MAX_BUILT_IN_RESULT_CHARS = 250_000
         const val BUILT_IN_TOOL_DEADLINE_MILLIS = 120_000L
         const val SKILL_CHUNK_BYTES = 32 * 1024

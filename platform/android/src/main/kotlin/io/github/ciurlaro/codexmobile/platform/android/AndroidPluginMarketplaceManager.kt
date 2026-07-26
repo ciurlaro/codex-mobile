@@ -60,6 +60,8 @@ class AndroidPluginMarketplaceManager internal constructor(context: Context) {
         }
     }
 
+    fun marketplaceName(snapshotPath: String): String = readMarketplaceName(File(snapshotPath))
+
     private fun readJson(url: String): JSONObject = openConnection(url).apply {
         setRequestProperty("Accept", "application/vnd.github+json")
         setRequestProperty("X-GitHub-Api-Version", "2022-11-28")
@@ -96,6 +98,13 @@ class AndroidPluginMarketplaceManager internal constructor(context: Context) {
         const val MAX_DOWNLOAD_BYTES = 100L * 1024 * 1024
         const val MAX_MANIFEST_BYTES = 1L * 1024 * 1024
     }
+}
+
+internal fun readMarketplaceName(directory: File): String {
+    val manifest = File(directory, ".agents/plugins/marketplace.json")
+    val name = Json.parseToJsonElement(manifest.readText()).jsonObject["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+    require(name.isNotBlank() && name.length <= 120) { "The plugin marketplace has no valid name" }
+    return name
 }
 
 internal fun replaceMarketplaceSnapshot(staging: File, destination: File) {

@@ -42,13 +42,49 @@ internal fun conversationSummary(thread: JsonObject): AgentConversationSummary {
     )
 }
 
-internal fun conversationSummary(thread: Thread): AgentConversationSummary {
-    val preview = cleanTaggedPreview(thread.preview)
+internal fun conversationSummary(thread: Thread, fallbackPreview: String? = null): AgentConversationSummary {
+    val preview = cleanTaggedPreview(thread.preview).ifBlank { fallbackPreview.orEmpty() }
     return AgentConversationSummary(
         sessionId = SessionId(thread.id),
         title = deriveConversationTitle(thread.name, preview),
         updatedAtEpochSeconds = thread.updatedAt,
     )
+}
+
+internal fun conversationMessages(rawItems: List<JsonElement>): List<AgentMessage> {
+    val messages = mutableListOf<AgentMessage>()
+    val reasoning = mutableListOf<String>()
+    var reasoningId: String? = null
+    rawItems.forEach { rawItem ->
+        val item = rawItem.jsonObject
+        if (item.requiredString("type") == "reasoning") {
+            val parts = item.optionalArray("summary")
+                .mapNotNull { it.jsonPrimitive.contentOrNull?.trim()?.takeIf(String::isNotEmpty) }
+            if (parts.isNotEmpty()) {
+                reasoningId = item.requiredString("id")
+                reasoning += parts
+            }
+            return@forEach
+        }
+        val message = conversationMessage(rawItem) ?: return@forEach
+        if (message.role == AgentMessageRole.CODEX && reasoning.isNotEmpty()) {
+            messages += message.copy(reasoning = reasoning.joinToString("\n\n"))
+            reasoning.clear()
+            reasoningId = null
+        } else {
+            messages += message
+        }
+    }
+    if (reasoning.isNotEmpty()) {
+        messages += AgentMessage(
+            id = reasoningId ?: "reasoning",
+            clientId = null,
+            role = AgentMessageRole.CODEX,
+            text = "",
+            reasoning = reasoning.joinToString("\n\n"),
+        )
+    }
+    return messages
 }
 
 internal fun conversationMessage(rawItem: JsonElement): AgentMessage? {

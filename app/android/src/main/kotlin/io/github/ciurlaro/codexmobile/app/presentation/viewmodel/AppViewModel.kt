@@ -14,16 +14,19 @@ import io.github.ciurlaro.codexmobile.app.presentation.mapper.toChatMessage
 import io.github.ciurlaro.codexmobile.app.presentation.model.AppScreen
 import io.github.ciurlaro.codexmobile.app.presentation.state.AppUiState
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionActionError
-import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionFilter
+import io.github.ciurlaro.codexmobile.app.presentation.model.CustomExtensionSource
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionNotice
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionRemoval
-import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSection
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSourceSelection
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionStatus
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionType
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatSelector
 import io.github.ciurlaro.codexmobile.app.presentation.model.CODEX_MOBILE_PLUGIN_SOURCE_ID
 import io.github.ciurlaro.codexmobile.app.presentation.model.CODEX_MOBILE_PLUGIN_SOURCE_URL
 import io.github.ciurlaro.codexmobile.app.presentation.model.OPENAI_PLUGIN_SOURCE_ID
 import io.github.ciurlaro.codexmobile.app.presentation.model.canonicalPluginSourceId
-import io.github.ciurlaro.codexmobile.app.presentation.model.initialPluginSourceSelection
+import io.github.ciurlaro.codexmobile.app.presentation.model.enabledMarketplaceNames
+import io.github.ciurlaro.codexmobile.app.presentation.model.initialExtensionSourceSelection
 import io.github.ciurlaro.codexmobile.app.presentation.state.withNewChat
 import io.github.ciurlaro.codexmobile.app.presentation.state.withStreamingAssistant
 import io.github.ciurlaro.codexmobile.app.presentation.state.withSubmittedTurn
@@ -54,6 +57,7 @@ import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import java.util.ArrayDeque
 import java.util.UUID
+import kotlinx.coroutines.async
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -62,15 +66,18 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
     private val container = (application as CodexMobileApplication).container
     private val uiPreferences = AppPreferencesStore(appContext)
-    private val initialPluginSources = initialPluginSourceSelection(
-        savedKnownIds = uiPreferences.savedKnownPluginSourceIds,
-        savedEnabledIds = uiPreferences.savedEnabledPluginSourceIds,
+    private val initialExtensionSources = initialExtensionSourceSelection(
+        savedKnownIds = uiPreferences.savedKnownExtensionSourceIds,
+        savedEnabledIds = uiPreferences.savedEnabledExtensionSourceIds,
+        savedCustomSources = uiPreferences.savedCustomExtensionSources,
         appWasUpgraded = uiPreferences.appWasUpgraded,
     )
     private val mutableState = MutableStateFlow(
@@ -84,8 +91,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             recentInvocationKeys = uiPreferences.recentInvocationKeys,
             approvalPreset = uiPreferences.approvalPreset,
             providerSettings = container.platform.providerSettings(),
-            knownPluginSourceIds = initialPluginSources.knownIds,
-            enabledPluginSourceIds = initialPluginSources.enabledIds,
+            knownExtensionSourceIds = initialExtensionSources.knownIds,
+            enabledExtensionSourceIds = initialExtensionSources.enabledIds,
+            customExtensionSources = initialExtensionSources.customSources,
         ),
     )
     private var serviceController: CodexSessionController? = null
@@ -104,8 +112,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var availableSkillsJob: Job? = null
     private var installedPluginsJob: Job? = null
     private var availablePluginsJob: Job? = null
-    private var skillSourceJob: Job? = null
-    private var pluginSourceJob: Job? = null
+    private var extensionSourceJob: Job? = null
     private var codexMobilePluginSourceAdded = uiPreferences.codexMobilePluginSourceAdded
     private var integrationsLoaded = false
     private val pendingConnectorAuthentications = ArrayDeque<AgentConnector>()
@@ -121,7 +128,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<AppUiState> = mutableState.asStateFlow()
 
     init {
-        uiPreferences.savePluginSourceSelection(initialPluginSources.knownIds, initialPluginSources.enabledIds)
+        persistExtensionSourceSelection()
         viewModelScope.launch {
             container.backgroundSessions.failure.collect { failure ->
                 failure?.let { message ->
@@ -198,11 +205,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 screen = AppScreen.EXTENSIONS,
                 extensionsReturnScreen = AppScreen.SETTINGS,
-                extensionSection = ExtensionSection.INSTALLED,
-                extensionFilter = ExtensionFilter.PLUGINS,
+                extensionStatus = ExtensionStatus.INSTALLED,
+                extensionType = ExtensionType.PLUGINS,
                 extensionSearch = "",
                 extensionSourcesOpen = false,
-                selectedPlugin = null,
                 pendingExtensionRemoval = null,
                 installedPluginsLoaded = false,
                 availablePluginsLoaded = false,
@@ -227,7 +233,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun sendMessage() {
+    internal fun sendMessage(): SendMessageOutcome {
         val before = mutableState.value
         val shellCommand = before.draft.shellCommandOrNull()
         if (
@@ -235,18 +241,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             before.selectedInvocations.isEmpty()
         ) {
             mutableState.update { it.copy(statusMessage = "Enter a message or add a prompt tag") }
-            return
-        }
-        if (beginOnUseAuthentication(before)) return
-        val controller = serviceController
-        if (controller == null) {
-            mutableState.update { it.copy(statusMessage = "Start a background session first") }
-            return
+            return SendMessageOutcome.HANDLED
         }
         val workingDirectory = container.platform.activeWorkspacePath()
         if (workingDirectory == null) {
             mutableState.update { it.copy(statusMessage = "Select an accessible workspace in Settings") }
-            return
+            return SendMessageOutcome.WORKSPACE_REQUIRED
+        }
+        if (beginOnUseAuthentication(before)) return SendMessageOutcome.HANDLED
+        val controller = serviceController
+        if (controller == null) {
+            mutableState.update { it.copy(statusMessage = "Start a background session first") }
+            return SendMessageOutcome.HANDLED
         }
         val clientMessageId = UUID.randomUUID().toString()
         val request = AgentTurnRequest(
@@ -272,11 +278,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             controller.submit(request)
         }
-        if (!submitted) return
+        if (!submitted) return SendMessageOutcome.HANDLED
 
         val assistantId = "stream-$clientMessageId"
         activeAssistantMessageId = assistantId
         mutableState.update { it.withSubmittedTurn(request, assistantId, shellCommand) }
+        return SendMessageOutcome.HANDLED
     }
 
     fun updateDraft(value: String) {
@@ -440,13 +447,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update { it.copy(screen = AppScreen.CHAT, activeSelector = null) }
     }
 
-    fun openExtensions(filter: ExtensionFilter, returnScreen: AppScreen) {
+    fun openExtensions(type: ExtensionType, returnScreen: AppScreen) {
         mutableState.update {
             it.copy(
                 screen = AppScreen.EXTENSIONS,
                 extensionsReturnScreen = returnScreen,
-                extensionFilter = filter,
-                extensionSection = ExtensionSection.INSTALLED,
+                extensionType = type,
+                extensionStatus = ExtensionStatus.INSTALLED,
                 extensionSearch = "",
                 extensionSourcesOpen = false,
                 extensionNotice = null,
@@ -458,22 +465,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeExtensions() {
-        skillSourceJob?.cancel()
         mutableState.update {
             it.copy(
                 screen = it.extensionsReturnScreen,
-                selectedSkill = null,
-                selectedSkillPackage = null,
-                selectedPlugin = null,
                 pendingExtensionRemoval = null,
-                githubSkillCandidates = emptyList(),
-                githubSkillError = null,
-                isGitHubSkillLoading = false,
                 extensionActionError = null,
                 extensionNotice = null,
                 extensionSourcesOpen = false,
-                skillSourceChunks = emptyList(),
-                skillSourceNextOffset = null,
             )
         }
     }
@@ -489,13 +487,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         loadCurrentExtensions(forceReload = true)
     }
 
-    fun selectExtensionFilter(filter: ExtensionFilter) {
+    fun selectExtensionType(type: ExtensionType) {
         mutableState.update {
             it.copy(
-                extensionFilter = filter,
-                selectedSkill = null,
-                selectedSkillPackage = null,
-                selectedPlugin = null,
+                extensionType = type,
                 extensionSearch = "",
                 extensionActionError = null,
             )
@@ -503,13 +498,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         loadCurrentExtensions(forceReload = false)
     }
 
-    fun selectExtensionSection(section: ExtensionSection) {
+    fun selectExtensionStatus(status: ExtensionStatus) {
         mutableState.update {
             it.copy(
-                extensionSection = section,
-                selectedSkill = null,
-                selectedSkillPackage = null,
-                selectedPlugin = null,
+                extensionStatus = status,
                 extensionSearch = "",
                 extensionActionError = null,
             )
@@ -527,238 +519,110 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun closeExtensionSources() {
         mutableState.update { it.copy(extensionSourcesOpen = false) }
-        if (mutableState.value.extensionSection == ExtensionSection.DISCOVER) loadCurrentExtensions(forceReload = false)
+        if (mutableState.value.extensionStatus != ExtensionStatus.INSTALLED) {
+            loadCurrentExtensions(forceReload = false)
+        }
     }
 
-    fun togglePluginSource(sourceId: String, enabled: Boolean) {
+    fun toggleExtensionSource(sourceId: String, enabled: Boolean) {
         val normalized = canonicalPluginSourceId(sourceId)
         val current = mutableState.value
-        if (normalized !in current.knownPluginSourceIds) return
+        if (normalized !in current.knownExtensionSourceIds) return
         availablePluginsJob?.cancel()
         availableSkillsJob?.cancel()
         mutableState.update {
-            val enabledIds = if (enabled) it.enabledPluginSourceIds + normalized
-            else it.enabledPluginSourceIds - normalized
+            val enabledIds = if (enabled) it.enabledExtensionSourceIds + normalized
+            else it.enabledExtensionSourceIds - normalized
             it.copy(
-                enabledPluginSourceIds = enabledIds,
+                enabledExtensionSourceIds = enabledIds,
                 availablePlugins = it.availablePlugins.filter { plugin ->
-                    canonicalPluginSourceId(plugin.reference.marketplaceName) in enabledIds
+                    it.copy(enabledExtensionSourceIds = enabledIds).isPluginMarketplaceEnabled(
+                        plugin.reference.marketplaceName,
+                    )
                 },
-                availableSkills = if (OPENAI_PLUGIN_SOURCE_ID in enabledIds) it.availableSkills else emptyList(),
+                availableSkills = emptyList(),
                 availablePluginsLoaded = false,
                 availableSkillsLoaded = false,
                 availablePluginsError = null,
                 availableSkillsError = null,
             )
         }
-        persistPluginSourceSelection()
+        persistExtensionSourceSelection()
     }
 
-    fun closePluginDetails() {
-        mutableState.update { it.copy(selectedPlugin = null, extensionActionError = null) }
-    }
-
-    fun closeSkillDetails() {
-        skillSourceJob?.cancel()
-        mutableState.update {
-            it.copy(
-                selectedSkill = null,
-                selectedSkillPackage = null,
-                skillSourceChunks = emptyList(),
-                skillSourceNextOffset = null,
-                skillSourceTotalBytes = 0,
-                isSkillSourceLoading = false,
-                skillSourceError = null,
-                extensionActionError = null,
-            )
-        }
-    }
-
-    fun openSkill(skill: AgentSkill) {
-        mutableState.update {
-            it.copy(
-                selectedSkill = skill,
-                selectedSkillPackage = null,
-                skillSourceChunks = emptyList(),
-                skillSourceNextOffset = 0,
-                skillSourceTotalBytes = 0,
-                skillSourceError = null,
-                extensionActionError = null,
-            )
-        }
-        loadMoreSkillSource()
-    }
-
-    fun openSkillPackage(packageInfo: AgentSkillPackage) {
-        mutableState.update {
-            it.copy(
-                selectedSkill = null,
-                selectedSkillPackage = packageInfo,
-                githubSkillCandidates = emptyList(),
-                githubSkillError = null,
-                isGitHubSkillLoading = false,
-                skillSourceChunks = emptyList(),
-                skillSourceNextOffset = 0,
-                skillSourceTotalBytes = 0,
-                skillSourceError = null,
-                extensionActionError = null,
-            )
-        }
-        loadMoreSkillSource()
-    }
-
-    fun openGitHubSkill(url: String) {
-        val controller = serviceController ?: return
-        if (url.isBlank()) return
-        mutableState.update {
-            it.copy(
-                githubSkillCandidates = emptyList(),
-                githubSkillError = null,
-                isGitHubSkillLoading = true,
-            )
-        }
-        skillSourceJob?.cancel()
-        skillSourceJob = viewModelScope.launch {
-            runCatching { controller.discoverGitHubSkills(url) }
-                .onSuccess { packages ->
-                    skillSourceJob = null
-                    if (packages.size == 1) {
-                        openSkillPackage(packages.single())
-                    } else {
-                        mutableState.update {
-                            it.copy(
-                                githubSkillCandidates = packages,
-                                isGitHubSkillLoading = false,
-                            )
-                        }
-                    }
-                }
-                .onFailure { error ->
-                    if (error is CancellationException) throw error
-                    mutableState.update {
-                        it.copy(
-                            isGitHubSkillLoading = false,
-                            githubSkillError = error.message?.take(300) ?: "GitHub skill could not be opened",
-                        )
-                    }
-                }
-        }
-    }
-
-    fun selectGitHubSkill(packageInfo: AgentSkillPackage) = openSkillPackage(packageInfo)
-
-    fun dismissGitHubSkillImport() {
-        if (mutableState.value.isGitHubSkillLoading) skillSourceJob?.cancel()
-        mutableState.update {
-            it.copy(
-                githubSkillCandidates = emptyList(),
-                githubSkillError = null,
-                isGitHubSkillLoading = false,
-            )
-        }
-    }
-
-    fun addPluginSource(url: String) {
+    fun addExtensionSource(url: String) {
         val controller = serviceController ?: run {
-            mutableState.update { it.copy(pluginSourceError = "Codex is not ready") }
+            mutableState.update { it.copy(extensionSourceError = "Codex is not ready") }
             return
         }
-        if (url.isBlank() || pluginSourceJob?.isActive == true) return
-        mutableState.update { it.copy(pluginSourceError = null, isPluginSourceLoading = true) }
-        pluginSourceJob = viewModelScope.launch {
-            runCatching { controller.addPluginMarketplace(url) }
-                .onSuccess {
-                    pluginSourceJob = null
-                    mutableState.update { it.copy(isPluginSourceLoading = false) }
-                    loadAvailablePlugins(forceReload = true)
-                }
-                .onFailure { error ->
-                    if (error is CancellationException) throw error
-                    pluginSourceJob = null
-                    mutableState.update {
-                        it.copy(
-                            isPluginSourceLoading = false,
-                            pluginSourceError = error.message?.take(300) ?: "Plugin source could not be added",
-                        )
-                    }
-                }
-        }
-    }
-
-    fun dismissPluginSource() {
-        pluginSourceJob?.cancel()
-        pluginSourceJob = null
-        mutableState.update { it.copy(pluginSourceError = null, isPluginSourceLoading = false) }
-    }
-
-    fun loadMoreSkillSource() {
-        val controller = serviceController ?: return
-        val current = mutableState.value
-        val skill = current.selectedSkill
-        val packageInfo = current.selectedSkillPackage
-        if (skill == null && packageInfo == null) return
-        val offset = current.skillSourceNextOffset ?: return
-        if (skillSourceJob?.isActive == true) return
-        mutableState.update { it.copy(isSkillSourceLoading = true, skillSourceError = null) }
-        skillSourceJob = viewModelScope.launch {
-            runCatching {
-                if (skill != null) controller.readSkill(skill.path, offset)
-                else controller.readSkillPackage(requireNotNull(packageInfo), offset)
+        if (url.isBlank() || extensionSourceJob?.isActive == true) return
+        val normalizedUrl = url.trim().trimEnd('/')
+        mutableState.update { it.copy(extensionSourceError = null, isExtensionSourceLoading = true) }
+        extensionSourceJob = viewModelScope.launch {
+            val (skillResult, pluginResult) = coroutineScope {
+                val skills = async { runCatching { controller.discoverGitHubSkills(normalizedUrl) } }
+                val plugins = async { runCatching { controller.addPluginMarketplace(normalizedUrl) } }
+                skills.await() to plugins.await()
             }
-                .onSuccess { chunk ->
-                    mutableState.update {
-                        val stillSelected = if (skill != null) it.selectedSkill?.path == skill.path
-                        else it.selectedSkillPackage?.id == packageInfo?.id
-                        if (!stillSelected) it else it.copy(
-                            skillSourceChunks = it.skillSourceChunks + chunk.content,
-                            skillSourceNextOffset = chunk.nextOffset,
-                            skillSourceTotalBytes = chunk.totalBytes,
-                            isSkillSourceLoading = false,
-                        )
-                    }
+            ensureActive()
+            (skillResult.exceptionOrNull() as? CancellationException)?.let { throw it }
+            (pluginResult.exceptionOrNull() as? CancellationException)?.let { throw it }
+            val skills = skillResult.getOrDefault(emptyList())
+            val marketplaceName = pluginResult.getOrNull()
+            if (skills.isEmpty() && marketplaceName == null) {
+                extensionSourceJob = null
+                val skillError = skillResult.exceptionOrNull()?.message ?: "no SKILL.md folders found"
+                val pluginError = pluginResult.exceptionOrNull()?.message ?: "no plugin marketplace found"
+                mutableState.update {
+                    it.copy(
+                        isExtensionSourceLoading = false,
+                        extensionSourceError = "No extensions found. Skills: ${skillError.take(120)}. " +
+                            "Plugins: ${pluginError.take(120)}.",
+                    )
                 }
-                .onFailure { error ->
-                    if (error is CancellationException) throw error
-                    mutableState.update {
-                        it.copy(
-                            isSkillSourceLoading = false,
-                            skillSourceError = error.message?.take(300) ?: "Skill source could not be read",
-                        )
-                    }
-                }
-        }
-    }
-
-    fun openPlugin(plugin: AgentPluginReference) {
-        val controller = serviceController ?: return
-        mutableState.update {
-            it.copy(
-                isPluginDetailLoading = true,
-                extensionOperationId = "plugin:${plugin.id}",
-                extensionActionError = null,
+                return@launch
+            }
+            val existing = mutableState.value.customExtensionSources.firstOrNull {
+                it.url.equals(normalizedUrl, ignoreCase = true)
+            }
+            val source = CustomExtensionSource(
+                id = existing?.id ?: "github:${UUID.nameUUIDFromBytes(normalizedUrl.lowercase().toByteArray())}",
+                url = normalizedUrl,
+                marketplaceName = marketplaceName ?: existing?.marketplaceName,
+                supportsSkills = skills.isNotEmpty() || existing?.supportsSkills == true && skillResult.isFailure,
+                supportsPlugins = marketplaceName != null || existing?.supportsPlugins == true && pluginResult.isFailure,
             )
-        }
-        viewModelScope.launch {
-            runCatching { controller.readPlugin(plugin) }
-                .onSuccess { detail ->
-                    mutableState.update {
-                        it.copy(
-                            selectedPlugin = detail,
-                            isPluginDetailLoading = false,
-                            extensionOperationId = null,
-                        )
-                    }
-                }
-                .onFailure { error -> extensionFailure(error) }
+            extensionSourceJob = null
+            mutableState.update {
+                it.copy(
+                    knownExtensionSourceIds = it.knownExtensionSourceIds + source.id,
+                    enabledExtensionSourceIds = it.enabledExtensionSourceIds + source.id,
+                    customExtensionSources = it.customExtensionSources.filterNot { item -> item.id == source.id } + source,
+                    availableSkills = (it.availableSkills + skills).distinctBy(AgentSkillPackage::id),
+                    availableSkillsLoaded = false,
+                    availablePluginsLoaded = false,
+                    isExtensionSourceLoading = false,
+                    extensionSourceError = null,
+                    extensionNotice = ExtensionNotice(
+                        when {
+                            skills.isNotEmpty() && marketplaceName != null -> "Source added for skills and plugins"
+                            skills.isNotEmpty() -> "Source added for skills; plugin check failed: " +
+                                (pluginResult.exceptionOrNull()?.message ?: "no marketplace found").take(120)
+                            marketplaceName != null -> "Source added for plugins; skill check failed: " +
+                                (skillResult.exceptionOrNull()?.message ?: "no skills found").take(120)
+                            else -> "Source settings were preserved"
+                        },
+                    ),
+                )
+            }
+            persistExtensionSourceSelection()
         }
     }
 
-    fun toggleSkill(path: String, enabled: Boolean) = extensionMutation(
-        "skill:$path",
-        "Skill could not be updated",
-    ) {
-        serviceController?.setSkillEnabled(path, enabled)
-        loadSkills(forceReload = true)
+    fun dismissExtensionSource() {
+        extensionSourceJob?.cancel()
+        extensionSourceJob = null
+        mutableState.update { it.copy(extensionSourceError = null, isExtensionSourceLoading = false) }
     }
 
     fun installSkill(packageInfo: AgentSkillPackage) = extensionMutation(
@@ -769,8 +633,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update {
             it.copy(
                 availableSkills = it.availableSkills.filterNot { candidate -> candidate.id == packageInfo.id },
-                selectedSkillPackage = null,
-                extensionSection = ExtensionSection.INSTALLED,
             )
         }
         loadSkills(forceReload = true)
@@ -791,7 +653,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update {
                 it.copy(
                     statusMessage = result.message ?: "Restart Codex Mobile to finish installing the provider",
-                    selectedPlugin = null,
                     providerSettings = container.platform.providerSettings(),
                 )
             }
@@ -800,11 +661,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         resetChat()
         mutableState.update {
             it.copy(
-                selectedPlugin = null,
                 availablePlugins = it.availablePlugins.filterNot { candidate -> candidate.reference.id == plugin.id },
                 unavailablePluginIds = it.unavailablePluginIds - plugin.id,
                 extensionActionError = null,
-                extensionSection = ExtensionSection.INSTALLED,
             )
         }
         loadInstalledPlugins(forceReload = true)
@@ -821,7 +680,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         resetChat()
         mutableState.update {
             it.copy(
-                selectedPlugin = null,
                 statusMessage = result.message ?: if (result.completed) "Plugin removed" else it.statusMessage,
                 installedPlugins = if (result.restartRequired || result.completed) {
                     it.installedPlugins.filterNot { candidate -> candidate.reference.id == plugin.id }
@@ -856,7 +714,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     serviceController?.uninstallSkill(removal.skill)
                     mutableState.update {
                         it.copy(
-                            selectedSkill = null,
                             skills = it.skills.filterNot { candidate -> candidate.path == removal.skill.path },
                         )
                     }
@@ -869,36 +726,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 uninstallPlugin(removal.plugin)
             }
             null -> Unit
-        }
-    }
-
-    fun togglePlugin(pluginId: String, enabled: Boolean) = extensionMutation(
-        "plugin:$pluginId",
-        "Plugin could not be updated",
-    ) {
-        serviceController?.setPluginEnabled(pluginId, enabled)
-        resetChat()
-        loadInstalledPlugins(forceReload = true)
-    }
-
-    fun connectApp(connectorId: String) {
-        mutableState.value.connectors.firstOrNull { it.id == connectorId }?.let(::beginAppAuthentication)
-    }
-
-    fun connectMcp(serverName: String) {
-        val controller = serviceController ?: return
-        viewModelScope.launch {
-            runCatching { controller.startMcpOauth(serverName) }
-                .onSuccess { url ->
-                    mutableState.update {
-                        it.copy(connectorAuthUrl = url, connectorAuthName = serverName)
-                    }
-                }
-                .onFailure { error ->
-                    mutableState.update {
-                        it.copy(statusMessage = error.message?.take(300) ?: "Integration could not be connected")
-                    }
-                }
         }
     }
 
@@ -917,13 +744,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             beginNextConnectorAuthentication()
         } else {
             pendingConnectorAuthentications.clear()
-        }
-    }
-
-    fun refreshIntegrations() {
-        integrationsLoaded = true
-        serviceController?.let { controller ->
-            viewModelScope.launch { refreshConnectors(controller, forceReload = false) }
         }
     }
 
@@ -1122,29 +942,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { mutableState.update { state -> state.copy(statusMessage = "Workspace selection failed") } }
     }
 
-    fun clearWorkspace() {
-        runCatching { container.platform.clearWorkspace() }
-            .onSuccess {
-                mutableState.update {
-                    it.copy(
-                        statusMessage = "Workspace cleared",
-                        workspacePath = null,
-                        skills = emptyList(),
-                        availableSkills = emptyList(),
-                        installedPlugins = emptyList(),
-                        availablePlugins = emptyList(),
-                        unavailablePluginIds = emptySet(),
-                        extensionActionError = null,
-                        skillsLoaded = false,
-                        availableSkillsLoaded = false,
-                        installedPluginsLoaded = false,
-                        availablePluginsLoaded = false,
-                    )
-                }
-            }
-            .onFailure { mutableState.update { it.copy(statusMessage = "Workspace could not be cleared") } }
-    }
-
     fun refreshStorage() {
         mutableState.update {
             it.copy(
@@ -1164,7 +961,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         availableSkillsJob?.cancel()
         installedPluginsJob?.cancel()
         availablePluginsJob?.cancel()
-        skillSourceJob?.cancel()
         serviceConnection.unbind()
         serviceController = null
         notificationsEnabled = null
@@ -1240,14 +1036,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun loadCurrentExtensions(forceReload: Boolean) {
         val current = mutableState.value
-        when (current.extensionSection) {
-            ExtensionSection.INSTALLED -> {
-                if (current.extensionFilter != ExtensionFilter.PLUGINS) loadSkills(forceReload)
-                if (current.extensionFilter != ExtensionFilter.SKILLS) loadInstalledPlugins(forceReload)
+        when (current.extensionType) {
+            ExtensionType.SKILLS -> when (current.extensionStatus) {
+                ExtensionStatus.INSTALLED -> loadSkills(forceReload)
+                ExtensionStatus.UNINSTALLED -> loadAvailableSkills(forceReload)
+                ExtensionStatus.UNAVAILABLE -> Unit
             }
-            ExtensionSection.DISCOVER -> {
-                if (current.extensionFilter != ExtensionFilter.PLUGINS) loadAvailableSkills(forceReload)
-                if (current.extensionFilter != ExtensionFilter.SKILLS) loadAvailablePlugins(forceReload)
+            ExtensionType.PLUGINS -> when (current.extensionStatus) {
+                ExtensionStatus.INSTALLED -> loadInstalledPlugins(forceReload)
+                ExtensionStatus.UNINSTALLED, ExtensionStatus.UNAVAILABLE -> {
+                    loadInstalledPlugins(forceReload)
+                    loadAvailablePlugins(forceReload)
+                }
             }
         }
     }
@@ -1287,7 +1087,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadAvailableSkills(forceReload: Boolean) {
-        if (OPENAI_PLUGIN_SOURCE_ID !in mutableState.value.enabledPluginSourceIds) {
+        val selectedSources = mutableState.value
+        val openAiEnabled = OPENAI_PLUGIN_SOURCE_ID in selectedSources.enabledExtensionSourceIds
+        val customSources = selectedSources.customExtensionSources.filter {
+            it.supportsSkills && it.id in selectedSources.enabledExtensionSourceIds
+        }
+        if (!openAiEnabled && customSources.isEmpty()) {
             availableSkillsJob?.cancel()
             availableSkillsJob = null
             mutableState.update {
@@ -1307,33 +1112,48 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update { it.copy(isAvailableSkillsLoading = true, availableSkillsError = null) }
         availableSkillsJob = viewModelScope.launch {
             val installed = mutableState.value.skills.map(AgentSkill::name).toSet()
-            runCatching { controller.listAvailableSkills(installed, forceReload) }
-                .onSuccess { catalog ->
-                    if (serviceController !== controller) return@onSuccess
-                    mutableState.update {
-                        it.copy(
-                            availableSkills = catalog.skills,
-                            availableSkillsLoaded = true,
-                            isAvailableSkillsLoading = false,
-                            availableSkillsError = catalog.errors.distinct().joinToString("\n").ifBlank { null },
-                        )
-                    }
-                    if (!forceReload && catalog.freshness == AgentCatalogFreshness.STALE_CACHE) {
-                        availableSkillsJob = null
-                        loadAvailableSkills(forceReload = true)
-                    }
+            val (openAiResult, customResults) = coroutineScope {
+                val openAi = async {
+                    if (openAiEnabled) runCatching {
+                        controller.listAvailableSkills(installed, forceReload)
+                    } else null
                 }
-                .onFailure { error ->
-                    if (error is CancellationException) throw error
-                    if (serviceController !== controller) return@onFailure
-                    mutableState.update {
-                        it.copy(
-                            availableSkillsLoaded = true,
-                            isAvailableSkillsLoading = false,
-                            availableSkillsError = error.message?.take(300) ?: "Available skills could not be loaded",
-                        )
-                    }
+                val custom = customSources.map { source ->
+                    async { source to runCatching { controller.discoverGitHubSkills(source.url) } }
                 }
+                openAi.await() to custom.map { it.await() }
+            }
+            ensureActive()
+            (openAiResult?.exceptionOrNull() as? CancellationException)?.let { throw it }
+            customResults.forEach { (_, result) ->
+                (result.exceptionOrNull() as? CancellationException)?.let { throw it }
+            }
+            if (serviceController !== controller) return@launch
+            val errors = buildList {
+                openAiResult?.exceptionOrNull()?.message?.let(::add)
+                openAiResult?.getOrNull()?.errors?.let(::addAll)
+                customResults.forEach { (source, result) ->
+                    result.exceptionOrNull()?.message?.let { add("${source.url}: $it") }
+                }
+            }
+            val packages = buildList {
+                openAiResult?.getOrNull()?.skills?.let(::addAll)
+                customResults.forEach { (_, result) -> result.getOrNull()?.let(::addAll) }
+            }.filterNot { it.name in installed }.distinctBy(AgentSkillPackage::name)
+            val refreshAfterCache = !forceReload &&
+                openAiResult?.getOrNull()?.freshness == AgentCatalogFreshness.STALE_CACHE
+            mutableState.update {
+                it.copy(
+                    availableSkills = packages,
+                    availableSkillsLoaded = true,
+                    isAvailableSkillsLoading = refreshAfterCache,
+                    availableSkillsError = errors.distinct().joinToString("\n").ifBlank { null },
+                )
+            }
+            if (refreshAfterCache) {
+                availableSkillsJob = null
+                loadAvailableSkills(forceReload = true)
+            }
         }
     }
 
@@ -1349,8 +1169,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 .onSuccess { catalog ->
                     if (serviceController !== controller) return@onSuccess
                     mutableState.update {
+                        val installedIds = catalog.plugins.map { plugin -> plugin.reference.id }.toSet()
                         it.copy(
                             installedPlugins = catalog.plugins,
+                            availablePlugins = it.availablePlugins.filterNot { plugin ->
+                                plugin.reference.id in installedIds
+                            },
                             installedPluginsLoaded = true,
                             isInstalledPluginsLoading = false,
                             installedPluginsError = catalog.errors.distinct().joinToString("\n").ifBlank { null },
@@ -1396,7 +1220,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         it.copy(
                             availablePlugins = catalog.plugins.filter { plugin ->
                                 plugin.reference.id !in installedIds &&
-                                    canonicalPluginSourceId(plugin.reference.marketplaceName) in it.enabledPluginSourceIds
+                                    it.isPluginMarketplaceEnabled(plugin.reference.marketplaceName)
                             },
                             availablePluginsLoaded = true,
                             isAvailablePluginsLoading = refreshAfterCache,
@@ -1426,7 +1250,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun ensureCodexMobilePluginSource(controller: CodexSessionController): Boolean {
         if (
             codexMobilePluginSourceAdded ||
-            CODEX_MOBILE_PLUGIN_SOURCE_ID !in mutableState.value.enabledPluginSourceIds
+            CODEX_MOBILE_PLUGIN_SOURCE_ID !in mutableState.value.enabledExtensionSourceIds
         ) return false
         controller.addPluginMarketplace(CODEX_MOBILE_PLUGIN_SOURCE_URL)
         codexMobilePluginSourceAdded = true
@@ -1435,23 +1259,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun registerDiscoveredPluginSources(plugins: List<AgentPluginSummary>) {
+        val mappedMarketplaceNames = mutableState.value.customExtensionSources
+            .mapNotNull(CustomExtensionSource::marketplaceName)
+            .map(::canonicalPluginSourceId)
+            .toSet()
         val discovered = plugins.map { canonicalPluginSourceId(it.reference.marketplaceName) }
             .filter(String::isNotBlank)
+            .filterNot { it in mappedMarketplaceNames }
             .toSet()
         if (discovered.isEmpty()) return
         mutableState.update {
-            val newIds = discovered - it.knownPluginSourceIds
+            val newIds = discovered - it.knownExtensionSourceIds
             it.copy(
-                knownPluginSourceIds = it.knownPluginSourceIds + discovered,
-                enabledPluginSourceIds = it.enabledPluginSourceIds + (newIds - OPENAI_PLUGIN_SOURCE_ID),
+                knownExtensionSourceIds = it.knownExtensionSourceIds + discovered,
+                enabledExtensionSourceIds = it.enabledExtensionSourceIds + (newIds - OPENAI_PLUGIN_SOURCE_ID),
             )
         }
-        persistPluginSourceSelection()
+        persistExtensionSourceSelection()
     }
 
-    private fun persistPluginSourceSelection() {
+    private fun persistExtensionSourceSelection() {
         val current = mutableState.value
-        uiPreferences.savePluginSourceSelection(current.knownPluginSourceIds, current.enabledPluginSourceIds)
+        uiPreferences.saveExtensionSourceSelection(
+            current.knownExtensionSourceIds,
+            current.enabledExtensionSourceIds,
+            current.customExtensionSources,
+        )
     }
 
     private suspend fun refreshConnectors(
@@ -1500,7 +1333,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 isExtensionMutationLoading = false,
                 extensionOperationId = null,
-                isPluginDetailLoading = false,
                 extensionActionError = ExtensionActionError(operationId, message),
                 unavailablePluginIds = unavailable?.let { failure ->
                     it.unavailablePluginIds + failure.pluginId
@@ -1591,6 +1423,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 current.messages.withStreamingAssistant(
                     assistantMessageId = it,
                     text = session.streamedText,
+                    reasoning = session.streamedReasoning,
                     isStreaming = session.isTurnActive,
                     exitCode = session.shellExitCode,
                 )
@@ -1598,6 +1431,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             current.copy(
                 statusMessage = session.statusMessage,
                 streamedText = session.streamedText,
+                streamedReasoning = session.streamedReasoning,
                 sessionId = session.sessionId,
                 isAuthenticated = session.isAuthenticated,
                 messages = messages,
@@ -1666,12 +1500,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 isAvailableSkillsLoading = false,
                 isInstalledPluginsLoading = false,
                 isAvailablePluginsLoading = false,
-                isGitHubSkillLoading = false,
-                isPluginSourceLoading = false,
-                isSkillSourceLoading = false,
+                isExtensionSourceLoading = false,
                 isExtensionMutationLoading = false,
                 extensionOperationId = null,
-                isPluginDetailLoading = false,
                 isConversationLoading = false,
                 skillsError = null,
                 availableSkillsError = null,
@@ -1693,14 +1524,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         availableSkillsJob?.cancel()
         installedPluginsJob?.cancel()
         availablePluginsJob?.cancel()
-        skillSourceJob?.cancel()
-        pluginSourceJob?.cancel()
+        extensionSourceJob?.cancel()
         skillsJob = null
         availableSkillsJob = null
         installedPluginsJob = null
         availablePluginsJob = null
-        skillSourceJob = null
-        pluginSourceJob = null
+        extensionSourceJob = null
     }
 
     private fun authenticationHandoffPending(): Boolean = uiPreferences.authenticationHandoffPending()
@@ -1713,5 +1542,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         const val MAX_CONVERSATION_TITLE_LENGTH = 80
         const val EXISTING_SERVICE_BIND_TIMEOUT_MILLIS = 1_000L
         const val AUTHENTICATION_RECOVERY_DELAY_MILLIS = 150L
+    }
+}
+
+internal enum class SendMessageOutcome { HANDLED, WORKSPACE_REQUIRED }
+
+private fun AppUiState.isPluginMarketplaceEnabled(marketplaceName: String): Boolean {
+    val canonical = canonicalPluginSourceId(marketplaceName)
+    return ExtensionSourceSelection(
+        knownExtensionSourceIds,
+        enabledExtensionSourceIds,
+        customExtensionSources,
+    ).enabledMarketplaceNames().any {
+        it == marketplaceName || canonicalPluginSourceId(it) == canonical
     }
 }

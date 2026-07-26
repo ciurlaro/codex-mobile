@@ -237,7 +237,7 @@ class BuiltInToolsProtocolTest {
     }
 
     @Test
-    fun `manual mutation approval is one use and auto review mutations fail closed`(): Unit = runBlocking {
+    fun `typed mutations require one manual approval including under auto review`(): Unit = runBlocking {
         val dispatches = AtomicInteger()
         val secondBoundaryRejected = java.util.concurrent.atomic.AtomicBoolean()
         val response = CountDownLatch(1)
@@ -300,6 +300,9 @@ class BuiltInToolsProtocolTest {
             val session = autoClient.openSession(
                 settings = AgentRuntimeSettings(AgentApprovalPreset.AUTO_REVIEW, workingDirectory = "/workspace"),
             )
+            val approval = async {
+                withTimeout(1_000) { autoClient.events.filterIsInstance<AgentEvent.ApprovalRequested>().first() }
+            }
             autoClient.sendTurn(
                 session,
                 AgentTurnRequest(
@@ -308,8 +311,11 @@ class BuiltInToolsProtocolTest {
                     workingDirectory = "/workspace",
                 ),
             )
-            assertTrue(autoResponse.await(1, TimeUnit.SECONDS))
+            val event = approval.await()
             assertEquals(0, autoDispatches.get())
+            autoClient.resolveApproval(event.requestId, AgentApprovalDecision.ACCEPT)
+            assertTrue(autoResponse.await(1, TimeUnit.SECONDS))
+            assertEquals(1, autoDispatches.get())
         }
     }
 

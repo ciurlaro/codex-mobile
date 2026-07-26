@@ -34,7 +34,9 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -223,10 +225,13 @@ private fun ConversationList(
             !state.isAuthenticated -> SignInState(state, onEvent, Modifier.align(Alignment.Center))
 
             else -> {
+                var reasoningExpandedByDefault by rememberSaveable { mutableStateOf(true) }
                 val listState = rememberLazyListState()
                 val extraThinking = state.isTurnActive && state.messages.none(ChatMessage::isStreaming)
                 val itemCount = state.messages.size + if (extraThinking) 1 else 0
-                val lastLength = state.messages.lastOrNull()?.text?.length ?: 0
+                val lastLength = state.messages.lastOrNull()?.let {
+                    it.text.length + it.reasoning.orEmpty().length
+                } ?: 0
                 LaunchedEffect(itemCount, lastLength) {
                     if (itemCount == 0) return@LaunchedEffect
                     val lastIndex = itemCount - 1
@@ -249,7 +254,11 @@ private fun ConversationList(
                     items(state.messages, key = ChatMessage::id) { message ->
                         when (message.role) {
                             AgentMessageRole.USER -> UserMessage(message, state)
-                            AgentMessageRole.CODEX -> CodexMessage(message)
+                            AgentMessageRole.CODEX -> CodexMessage(
+                                message = message,
+                                expandedByDefault = reasoningExpandedByDefault,
+                                onExpansionChanged = { reasoningExpandedByDefault = it },
+                            )
                         }
                     }
                     if (extraThinking) {

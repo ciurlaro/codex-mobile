@@ -22,10 +22,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
@@ -49,6 +51,7 @@ import io.github.ciurlaro.codexmobile.app.ui.icons.CircleIconButton
 import io.github.ciurlaro.codexmobile.app.ui.icons.IconGlyph
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatColors
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatDimensions
+import io.github.ciurlaro.codexmobile.platform.android.ProviderSettingsEntry
 
 @Composable
 internal fun SettingsScreen(
@@ -94,7 +97,7 @@ internal fun SettingsScreen(
             item("model-settings") {
                 SettingsGroup("Codex") {
                     SettingsRow(
-                        glyph = IconGlyph.SETTINGS,
+                        glyph = IconGlyph.BRAIN,
                         title = "Default model",
                         subtitle = state.selectedModelOrNull()?.displayName ?: state.selectedModel ?: "Unavailable",
                         onClick = { onEvent(AppUiEvent.OpenSelector(ChatSelector.MODEL)) },
@@ -139,49 +142,22 @@ internal fun SettingsScreen(
                         subtitle = state.workspacePath ?: "No folder selected",
                         onClick = { onEvent(AppUiEvent.SelectScope) },
                     )
-                    SettingsDivider()
-                    SettingsRow(
-                        glyph = IconGlyph.STORAGE,
-                        title = "Manage storage permission",
-                        subtitle = if (state.hasStorageAccess) {
-                            "All-files access enabled; workspace is the shell starting folder"
-                        } else {
-                            "All-files access is required for shell file operations"
-                        },
-                        onClick = { onEvent(AppUiEvent.ManageStorage) },
-                    )
-                    if (state.workspacePath != null) {
-                        SettingsDivider()
-                        SettingsRow(
-                            glyph = IconGlyph.CLOSE,
-                            title = "Clear workspace selection",
-                            danger = true,
-                            onClick = { onEvent(AppUiEvent.ClearWorkspace) },
-                        )
-                    }
                 }
             }
-            item("integration-settings") {
-                SettingsGroup("Integrations") {
-                    state.providerSettings.forEach { provider ->
-                        SettingsRow(
-                            glyph = IconGlyph.PUZZLE,
-                            title = provider.displayName,
-                            subtitle = provider.message ?: if (provider.removalNeedsRetry) {
-                                "Removal needs retry"
-                            } else {
-                                "Configure provider"
-                            },
-                            onClick = { onEvent(AppUiEvent.OpenProviderSettings(provider.pluginId)) },
-                        )
-                        SettingsDivider()
-                    }
+            item("plugin-settings") {
+                SettingsGroup("Plugins") {
                     SettingsRow(
-                        glyph = IconGlyph.LINK,
-                        title = "Integrations",
-                        subtitle = "${state.connectors.count { it.isAccessible }} apps · " +
-                            "${state.mcpServers.count { it.authStatus.name != "NOT_LOGGED_IN" }} MCP servers",
-                        onClick = { onEvent(AppUiEvent.ShowIntegrations) },
+                        glyph = IconGlyph.SETTINGS,
+                        title = "Plugin settings",
+                        subtitle = if (state.providerSettings.isEmpty()) {
+                            "Available when an installed plugin requires specific settings"
+                        } else {
+                            "Configure ${state.providerSettings.size} installed " +
+                                if (state.providerSettings.size == 1) "plugin" else "plugins"
+                        },
+                        enabled = state.providerSettings.isNotEmpty(),
+                        onClick = { onEvent(AppUiEvent.ShowPluginSettings) }
+                            .takeIf { state.providerSettings.isNotEmpty() },
                     )
                 }
             }
@@ -287,9 +263,15 @@ private fun SettingsRow(
     title: String,
     subtitle: String? = null,
     danger: Boolean = false,
+    enabled: Boolean = true,
     onClick: (() -> Unit)? = null,
 ) {
-    val action = if (onClick == null) Modifier else Modifier.clickable(onClick = onClick)
+    val action = if (onClick == null || !enabled) Modifier else Modifier.clickable(onClick = onClick)
+    val contentColor = when {
+        !enabled -> ChatColors.Secondary.copy(alpha = 0.5f)
+        danger -> ChatColors.Danger
+        else -> ChatColors.Primary
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -302,26 +284,26 @@ private fun SettingsRow(
         AppIcon(
             glyph,
             Modifier.size(25.dp),
-            if (danger) ChatColors.Danger else ChatColors.Primary,
+            contentColor,
         )
         Spacer(Modifier.width(16.dp))
         Column(Modifier.weight(1f)) {
             Text(
                 title,
-                color = if (danger) ChatColors.Danger else ChatColors.Primary,
+                color = contentColor,
                 style = MaterialTheme.typography.bodyLarge,
             )
             subtitle?.let {
                 Text(
                     it,
-                    color = ChatColors.Secondary,
+                    color = if (enabled) ChatColors.Secondary else ChatColors.Secondary.copy(alpha = 0.5f),
                     style = MaterialTheme.typography.bodyMedium,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
         }
-        if (onClick != null) {
+        if (onClick != null && enabled) {
             Spacer(Modifier.width(8.dp))
             AppIcon(IconGlyph.CHEVRON_RIGHT, Modifier.size(18.dp), ChatColors.Secondary)
         }
@@ -334,5 +316,35 @@ private fun SettingsDivider() {
         color = ChatColors.Background,
         thickness = 2.dp,
         modifier = Modifier.padding(start = 60.dp),
+    )
+}
+
+@Composable
+internal fun PluginSettingsDialog(
+    providers: List<ProviderSettingsEntry>,
+    onSelect: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Plugin settings") },
+        text = {
+            Column {
+                providers.forEachIndexed { index, provider ->
+                    SettingsRow(
+                        glyph = IconGlyph.PUZZLE,
+                        title = provider.displayName,
+                        subtitle = provider.message ?: if (provider.removalNeedsRetry) {
+                            "Removal needs retry"
+                        } else {
+                            "Configure plugin"
+                        },
+                        onClick = { onSelect(provider.pluginId) },
+                    )
+                    if (index < providers.lastIndex) SettingsDivider()
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
 }

@@ -20,15 +20,19 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import io.github.ciurlaro.codexmobile.app.presentation.event.AppUiEvent
 import io.github.ciurlaro.codexmobile.app.presentation.viewmodel.AppViewModel
+import io.github.ciurlaro.codexmobile.app.presentation.viewmodel.SendMessageOutcome
 import io.github.ciurlaro.codexmobile.app.security.navigation.toOfficialSignInUri
 import io.github.ciurlaro.codexmobile.app.ui.authentication.ConnectorAuthActivity
-import io.github.ciurlaro.codexmobile.app.ui.extensions.IntegrationsDialog
 import io.github.ciurlaro.codexmobile.app.ui.session.CodexApprovalDialog
 import io.github.ciurlaro.codexmobile.app.ui.session.ElicitationDialog
 import io.github.ciurlaro.codexmobile.app.ui.settings.EraseDataDialog
 import io.github.ciurlaro.codexmobile.app.ui.settings.PrivacyDialog
+import io.github.ciurlaro.codexmobile.app.ui.settings.PluginSettingsDialog
 import io.github.ciurlaro.codexmobile.app.ui.settings.WorkspacePickerDialog
 import io.github.ciurlaro.codexmobile.app.ui.theme.AppTheme
 
@@ -45,7 +49,8 @@ class MainActivity : ComponentActivity() {
             val state by viewModel.state.collectAsState()
             var showEraseConfirmation by rememberSaveable { mutableStateOf(false) }
             var showPrivacyDisclosure by rememberSaveable { mutableStateOf(false) }
-            var showIntegrations by rememberSaveable { mutableStateOf(false) }
+            var showPluginSettings by rememberSaveable { mutableStateOf(false) }
+            var showWorkspaceRequired by rememberSaveable { mutableStateOf(false) }
             var showWorkspaceBrowser by rememberSaveable { mutableStateOf(false) }
             var workspaceBrowserPath by rememberSaveable { mutableStateOf<String?>(null) }
             var pendingWorkspaceSelection by rememberSaveable { mutableStateOf(false) }
@@ -142,6 +147,14 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
+            fun requestWorkspaceSelection() {
+                if (state.hasStorageAccess) {
+                    workspaceBrowserPath = state.workspacePath ?: viewModel.workspaceRoots().firstOrNull()
+                    showWorkspaceBrowser = workspaceBrowserPath != null
+                } else {
+                    openStorageSettings(selectAfter = true)
+                }
+            }
             AppTheme {
                 AppShell(state) { event ->
                     when (event) {
@@ -151,17 +164,16 @@ class MainActivity : ComponentActivity() {
                         AppUiEvent.OpenSettings -> viewModel.openSettings()
                         AppUiEvent.CloseSettings -> viewModel.closeSettings()
                         is AppUiEvent.OpenExtensions ->
-                            viewModel.openExtensions(event.filter, event.returnScreen)
+                            viewModel.openExtensions(event.type, event.returnScreen)
                         AppUiEvent.CloseExtensions -> viewModel.closeExtensions()
                         AppUiEvent.RefreshExtensions -> viewModel.refreshExtensions()
                         AppUiEvent.OpenExtensionSources -> viewModel.openExtensionSources()
                         AppUiEvent.CloseExtensionSources -> viewModel.closeExtensionSources()
-                        AppUiEvent.CloseSkillDetails -> viewModel.closeSkillDetails()
-                        AppUiEvent.LoadMoreSkillSource -> viewModel.loadMoreSkillSource()
-                        AppUiEvent.ClosePluginDetails -> viewModel.closePluginDetails()
                         is AppUiEvent.OpenSelector -> viewModel.openSelector(event.selector)
                         AppUiEvent.DismissSelector -> viewModel.dismissSelector()
-                        AppUiEvent.Send -> viewModel.sendMessage()
+                        AppUiEvent.Send -> if (viewModel.sendMessage() == SendMessageOutcome.WORKSPACE_REQUIRED) {
+                            showWorkspaceRequired = true
+                        }
                         AppUiEvent.Stop -> viewModel.cancelTurn()
                         AppUiEvent.Authenticate -> {
                             if (
@@ -179,19 +191,13 @@ class MainActivity : ComponentActivity() {
                         AppUiEvent.StopBackground -> viewModel.stopBackgroundWork()
                         AppUiEvent.SignOut -> viewModel.signOut()
                         AppUiEvent.ShowPrivacy -> showPrivacyDisclosure = true
-                        AppUiEvent.ShowIntegrations -> {
-                            showIntegrations = true
-                            viewModel.refreshIntegrations()
+                        AppUiEvent.ShowPluginSettings -> {
+                            state.providerSettings.singleOrNull()?.let {
+                                viewModel.openProviderSettings(it.pluginId)
+                            } ?: run { showPluginSettings = state.providerSettings.isNotEmpty() }
                         }
                         AppUiEvent.ShowEraseConfirmation -> showEraseConfirmation = true
-                        AppUiEvent.SelectScope -> if (state.hasStorageAccess) {
-                            workspaceBrowserPath = state.workspacePath ?: viewModel.workspaceRoots().firstOrNull()
-                            showWorkspaceBrowser = workspaceBrowserPath != null
-                        } else {
-                            openStorageSettings(selectAfter = true)
-                        }
-                        AppUiEvent.ManageStorage -> openStorageSettings(selectAfter = false)
-                        AppUiEvent.ClearWorkspace -> viewModel.clearWorkspace()
+                        AppUiEvent.SelectScope -> requestWorkspaceSelection()
                         is AppUiEvent.SearchHistory -> viewModel.updateHistorySearch(event.query)
                         is AppUiEvent.OpenConversation -> viewModel.openConversation(event.id)
                         is AppUiEvent.TogglePinConversation -> viewModel.togglePinConversation(event.id)
@@ -202,31 +208,21 @@ class MainActivity : ComponentActivity() {
                         is AppUiEvent.SelectEffort -> viewModel.selectEffort(event.effort)
                         is AppUiEvent.SelectSpeed -> viewModel.selectSpeed(event.tier)
                         is AppUiEvent.SelectApproval -> viewModel.selectApproval(event.preset)
-                        is AppUiEvent.SelectExtensionFilter -> viewModel.selectExtensionFilter(event.filter)
-                        is AppUiEvent.SelectExtensionSection -> viewModel.selectExtensionSection(event.section)
+                        is AppUiEvent.SelectExtensionType -> viewModel.selectExtensionType(event.type)
+                        is AppUiEvent.SelectExtensionStatus -> viewModel.selectExtensionStatus(event.status)
                         is AppUiEvent.SearchExtensions -> viewModel.searchExtensions(event.query)
-                        is AppUiEvent.TogglePluginSource ->
-                            viewModel.togglePluginSource(event.sourceId, event.enabled)
-                        is AppUiEvent.ToggleSkill -> viewModel.toggleSkill(event.path, event.enabled)
-                        is AppUiEvent.OpenSkill -> viewModel.openSkill(event.skill)
-                        is AppUiEvent.OpenSkillPackage -> viewModel.openSkillPackage(event.skill)
-                        is AppUiEvent.OpenGitHubSkill -> viewModel.openGitHubSkill(event.url)
-                        is AppUiEvent.SelectGitHubSkill -> viewModel.selectGitHubSkill(event.skill)
-                        AppUiEvent.DismissGitHubSkillImport -> viewModel.dismissGitHubSkillImport()
-                        is AppUiEvent.AddPluginSource -> viewModel.addPluginSource(event.url)
-                        AppUiEvent.DismissPluginSource -> viewModel.dismissPluginSource()
+                        is AppUiEvent.ToggleExtensionSource ->
+                            viewModel.toggleExtensionSource(event.sourceId, event.enabled)
+                        is AppUiEvent.AddExtensionSource -> viewModel.addExtensionSource(event.url)
+                        AppUiEvent.DismissExtensionSource -> viewModel.dismissExtensionSource()
                         is AppUiEvent.InstallSkill -> viewModel.installSkill(event.skill)
                         is AppUiEvent.RequestUninstallSkill -> viewModel.requestUninstallSkill(event.skill)
-                        is AppUiEvent.OpenPlugin -> viewModel.openPlugin(event.plugin)
                         is AppUiEvent.InstallPlugin -> viewModel.installPlugin(event.plugin)
                         is AppUiEvent.RequestUninstallPlugin ->
                             viewModel.requestUninstallPlugin(event.plugin, event.displayName)
                         AppUiEvent.ConfirmExtensionRemoval -> viewModel.confirmExtensionRemoval()
                         AppUiEvent.DismissExtensionRemoval -> viewModel.dismissExtensionRemoval()
-                        is AppUiEvent.TogglePlugin -> viewModel.togglePlugin(event.pluginId, event.enabled)
                         is AppUiEvent.OpenProviderSettings -> viewModel.openProviderSettings(event.pluginId)
-                        is AppUiEvent.ConnectApp -> viewModel.connectApp(event.connectorId)
-                        is AppUiEvent.ConnectMcp -> viewModel.connectMcp(event.serverName)
                         is AppUiEvent.ResolveElicitation ->
                             viewModel.resolveElicitation(event.requestId, event.response)
                         is AppUiEvent.ResolveCodexApproval -> viewModel.resolveCodexApproval(
@@ -245,6 +241,22 @@ class MainActivity : ComponentActivity() {
                     codexApproval != null -> CodexApprovalDialog(codexApproval) { decision ->
                         viewModel.resolveCodexApproval(codexApproval.requestId, decision)
                     }
+                    showWorkspaceRequired -> AlertDialog(
+                        onDismissRequest = { showWorkspaceRequired = false },
+                        title = { Text("Choose a workspace") },
+                        text = {
+                            Text("Codex needs a workspace before it can send this message. Your draft will stay here.")
+                        },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                showWorkspaceRequired = false
+                                requestWorkspaceSelection()
+                            }) { Text("Choose workspace") }
+                        },
+                        dismissButton = {
+                            TextButton(onClick = { showWorkspaceRequired = false }) { Text("Not now") }
+                        },
+                    )
                     showWorkspaceBrowser -> WorkspacePickerDialog(
                         currentPath = workspaceBrowserPath,
                         directories = viewModel.workspaceDirectories(workspaceBrowserPath),
@@ -256,11 +268,13 @@ class MainActivity : ComponentActivity() {
                         },
                         onDismiss = { showWorkspaceBrowser = false },
                     )
-                    showIntegrations -> IntegrationsDialog(
-                        state = state,
-                        onDismiss = { showIntegrations = false },
-                        onConnectApp = viewModel::connectApp,
-                        onConnectMcp = viewModel::connectMcp,
+                    showPluginSettings -> PluginSettingsDialog(
+                        providers = state.providerSettings,
+                        onSelect = {
+                            showPluginSettings = false
+                            viewModel.openProviderSettings(it)
+                        },
+                        onDismiss = { showPluginSettings = false },
                     )
                     showEraseConfirmation -> EraseDataDialog(
                         onConfirm = {

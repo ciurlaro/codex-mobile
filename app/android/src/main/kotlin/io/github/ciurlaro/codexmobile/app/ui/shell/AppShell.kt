@@ -47,9 +47,6 @@ internal fun AppShell(
             state.isHistoryOpen -> onEvent(AppUiEvent.CloseHistory)
             state.screen == AppScreen.SETTINGS -> onEvent(AppUiEvent.CloseSettings)
             state.extensionSourcesOpen -> onEvent(AppUiEvent.CloseExtensionSources)
-            state.selectedSkill != null || state.selectedSkillPackage != null ->
-                onEvent(AppUiEvent.CloseSkillDetails)
-            state.selectedPlugin != null -> onEvent(AppUiEvent.ClosePluginDetails)
             state.screen == AppScreen.EXTENSIONS -> onEvent(AppUiEvent.CloseExtensions)
         }
     }

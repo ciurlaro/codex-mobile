@@ -28,7 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ciurlaro.codexmobile.app.presentation.event.AppUiEvent
-import io.github.ciurlaro.codexmobile.app.presentation.model.PluginSourceUi
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSourceUi
 import io.github.ciurlaro.codexmobile.app.presentation.state.AppUiState
 import io.github.ciurlaro.codexmobile.app.ui.icons.AppIcon
 import io.github.ciurlaro.codexmobile.app.ui.icons.IconGlyph
@@ -52,23 +52,26 @@ internal fun ExtensionSourcesScreen(
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text("Extension sources", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Choose which catalogs appear in Discover. Installed extensions remain available.",
+                        "Choose which skill and plugin catalogs are available. Installed extensions remain available.",
                         color = ChatColors.Secondary,
                     )
                 }
             }
             item("add-source") { AddSourceCard(onAddSource) }
-            items(state.pluginSources, key = PluginSourceUi::id) { source ->
-                PluginSourceCard(
+            items(state.extensionSources, key = ExtensionSourceUi::id) { source ->
+                ExtensionSourceCard(
                     source = source,
-                    enabled = !state.isPluginSourceLoading,
-                    onToggle = { onEvent(AppUiEvent.TogglePluginSource(source.id, it)) },
+                    enabled = !state.isExtensionSourceLoading,
+                    onToggle = { onEvent(AppUiEvent.ToggleExtensionSource(source.id, it)) },
                 )
             }
-            state.pluginSourceError?.let { error ->
+            state.extensionSourceError?.let { error ->
                 item("source-error") {
                     Text(error, color = ChatColors.Danger, style = MaterialTheme.typography.bodySmall)
                 }
+            }
+            state.extensionNotice?.let { notice ->
+                item("source-notice") { ExtensionNoticeCard(notice.message, notice.isError) }
             }
         }
     }
@@ -99,8 +102,8 @@ private fun AddSourceCard(onClick: () -> Unit) {
 }
 
 @Composable
-private fun PluginSourceCard(
-    source: PluginSourceUi,
+private fun ExtensionSourceCard(
+    source: ExtensionSourceUi,
     enabled: Boolean,
     onToggle: (Boolean) -> Unit,
 ) {
@@ -133,6 +136,7 @@ private fun PluginSourceCard(
                     }
                 }
                 Text(source.description, color = ChatColors.Secondary, style = MaterialTheme.typography.bodySmall)
+                Text(source.capabilityLabel, color = ChatColors.Accent, style = MaterialTheme.typography.labelSmall)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Surface(color = accent, shape = CircleShape, modifier = Modifier.size(7.dp)) {}
                     Spacer(Modifier.size(6.dp))

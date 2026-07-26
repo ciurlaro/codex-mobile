@@ -41,7 +41,7 @@ The selected shared-storage path is each turn's starting `cwd` for the ordinary 
 
 A SQLite journal covers provider mutations only. `(thread_id, turn_id, call_id)` is unique and bound to a canonical arguments hash. While a provider is installed, a terminal duplicate replays its exact result and a dispatched operation is reconciled or becomes indeterminate without another provider submission. Confirmed uninstall deletes undispatched rows and strips results and reconciliation evidence from the remaining replay-prevention tombstones. One mutex closes execution, disablement, deadline, and approval races.
 
-With App Server `0.144.6`, Never dispatches typed mutations directly; Ask me and Strict use a one-use approval permit; Auto review mutations remain unavailable because dynamic tools have no equivalent automatic-review bridge.
+With App Server `0.144.6`, Never dispatches typed mutations directly; Ask me, Strict, and Auto review use a one-use approval permit because dynamic tools have no equivalent automatic-review bridge.
 
 ## Portability
 

@@ -15,7 +15,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -34,6 +33,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import io.github.ciurlaro.codexmobile.app.ui.icons.AppIcon
+import io.github.ciurlaro.codexmobile.app.ui.icons.CircleIconButton
 import io.github.ciurlaro.codexmobile.app.ui.icons.IconGlyph
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatColors
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatDimensions
@@ -42,14 +42,14 @@ import io.github.ciurlaro.codexmobile.app.ui.theme.ChatDimensions
 internal fun PrivacyDialog(onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Privacy details", fontWeight = FontWeight.SemiBold) },
-        text = { PrivacyDisclosure() },
-        confirmButton = {
-            Button(
-                onClick = onDismiss,
-                modifier = Modifier.fillMaxWidth().heightIn(min = ChatDimensions.TouchTarget),
-            ) { Text("Close") }
+        title = {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("Privacy details", Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                CircleIconButton("Close privacy details", IconGlyph.CLOSE, onClick = onDismiss)
+            }
         },
+        text = { PrivacyDisclosure() },
+        confirmButton = {},
         containerColor = ChatColors.Elevated,
         shape = RoundedCornerShape(ChatDimensions.CardCorner),
     )
@@ -57,6 +57,7 @@ internal fun PrivacyDialog(onDismiss: () -> Unit) {
 
 @Composable
 private fun PrivacyDisclosure() {
+    var expandedTitle by rememberSaveable { mutableStateOf<String?>("OpenAI") }
     Surface(
         color = ChatColors.ElevatedStrong,
         shape = RoundedCornerShape(ChatDimensions.CardCorner),
@@ -64,20 +65,14 @@ private fun PrivacyDisclosure() {
         modifier = Modifier.fillMaxWidth().heightIn(max = 520.dp),
     ) {
         Column(Modifier.verticalScroll(rememberScrollState())) {
-            Column(Modifier.padding(18.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    PrivacyIcon(IconGlyph.SPARKLES)
-                    Spacer(Modifier.size(12.dp))
-                    Text("OpenAI", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                }
-                Text(
-                    "Prompts, responses, shell output, file text or bytes requested by Codex, rendered pages, " +
-                        "images, and tool results are sent to OpenAI as part of the Codex session.",
-                    modifier = Modifier.padding(top = 12.dp),
-                    color = ChatColors.Secondary,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
+            PrivacySection(
+                "OpenAI",
+                IconGlyph.SPARKLES,
+                "Prompts, responses, shell output, file text or bytes requested by Codex, rendered pages, " +
+                    "images, and tool results are sent to OpenAI as part of the Codex session.",
+                expanded = expandedTitle == "OpenAI",
+                onToggle = { expandedTitle = "OpenAI".takeUnless { expandedTitle == it } },
+            )
             HorizontalDivider(color = ChatColors.Border)
             PrivacySection(
                 "Storage access",
@@ -85,6 +80,8 @@ private fun PrivacyDisclosure() {
                 "The selected workspace is Codex's starting folder, not a sandbox. With all-files access, " +
                     "ordinary Codex shell commands can navigate to other accessible shared-storage locations; " +
                     "provider file tools stay inside the selected workspace. Manage the permission in Android Settings.",
+                expanded = expandedTitle == "Storage access",
+                onToggle = { expandedTitle = "Storage access".takeUnless { expandedTitle == it } },
             )
             HorizontalDivider(color = ChatColors.Border)
             PrivacySection(
@@ -93,6 +90,8 @@ private fun PrivacyDisclosure() {
                 "ChatGPT credentials, conversation state, mutation recovery state, settings, and integration data " +
                     "stay in app-private storage excluded from Android backup. Prompt and provider contents are " +
                     "not written to Codex Mobile logs.",
+                expanded = expandedTitle == "Local storage and logs",
+                onToggle = { expandedTitle = "Local storage and logs".takeUnless { expandedTitle == it } },
             )
             HorizontalDivider(color = ChatColors.Border)
             PrivacySection(
@@ -100,6 +99,8 @@ private fun PrivacyDisclosure() {
                 IconGlyph.LINK,
                 "Enabled plugins receive only their typed requests. Connected services keep their own authorization " +
                     "until you disconnect them; erasing app data removes local state but does not prove remote logout.",
+                expanded = expandedTitle == "Integrations",
+                onToggle = { expandedTitle = "Integrations".takeUnless { expandedTitle == it } },
             )
             HorizontalDivider(color = ChatColors.Border)
             PrivacySection(
@@ -108,18 +109,25 @@ private fun PrivacyDisclosure() {
                 "Installed plugins and connectors may send the prompt and selected context needed for a request " +
                     "to external providers under their own privacy policies and terms. Codex Mobile lists the " +
                     "plugin catalogs made available by its bundled Codex server.",
+                expanded = expandedTitle == "Plugins and external providers",
+                onToggle = { expandedTitle = "Plugins and external providers".takeUnless { expandedTitle == it } },
             )
         }
     }
 }
 
 @Composable
-private fun PrivacySection(title: String, glyph: IconGlyph, body: String) {
-    var expanded by rememberSaveable(title) { mutableStateOf(false) }
+private fun PrivacySection(
+    title: String,
+    glyph: IconGlyph,
+    body: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+) {
     Column(
         Modifier
             .fillMaxWidth()
-            .clickable { expanded = !expanded }
+            .clickable(onClick = onToggle)
             .semantics {
                 role = Role.Button
                 stateDescription = if (expanded) "Expanded" else "Collapsed"

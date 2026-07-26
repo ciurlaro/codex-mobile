@@ -8,6 +8,7 @@ import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 import io.github.ciurlaro.codexmobile.core.deriveConversationTitle
 import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -23,6 +24,7 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonArray
@@ -66,6 +68,7 @@ class ChatRuntimeContractTest {
 
     @Test
     fun `runs a leading bang through the native user shell stream`(): Unit = runBlocking {
+        val transcriptDirectory = Files.createTempDirectory("shell-transcript-test").toFile()
         var startParams: JsonObject? = null
         var shellParams: JsonObject? = null
         val process = FakeCodexRuntime { message, server ->
@@ -88,6 +91,9 @@ class ChatRuntimeContractTest {
                             put("threadId", "thread-shell")
                             put("turnId", "turn-shell")
                             putJsonObject("item") {
+                                put("command", "printf 'one\\ntwo\\n'")
+                                put("commandActions", buildJsonArray {})
+                                put("cwd", "/storage/emulated/0/Documents")
                                 put("id", "command-shell")
                                 put("type", "commandExecution")
                                 put("source", "userShell")
@@ -110,10 +116,14 @@ class ChatRuntimeContractTest {
                             put("threadId", "thread-shell")
                             put("turnId", "turn-shell")
                             putJsonObject("item") {
+                                put("command", "printf 'one\\ntwo\\n'")
+                                put("commandActions", buildJsonArray {})
+                                put("cwd", "/storage/emulated/0/Documents")
                                 put("id", "command-shell")
                                 put("type", "commandExecution")
                                 put("source", "userShell")
                                 put("status", "completed")
+                                put("aggregatedOutput", "one\ntwo\n")
                                 put("exitCode", 0)
                             }
                         },
@@ -129,9 +139,37 @@ class ChatRuntimeContractTest {
                         },
                     )
                 }
+
+                "thread/list" -> server.respond(
+                    message.id,
+                    page(listOf(thread("thread-shell", null, "", 30)), null),
+                )
+
+                "thread/read" -> server.respond(
+                    message.id,
+                    buildJsonObject {
+                        put("thread", thread(
+                            id = "thread-shell",
+                            name = null,
+                            preview = "",
+                            updatedAt = 30,
+                            turns = buildJsonArray {
+                                add(buildJsonObject {
+                                    put("id", "turn-shell")
+                                    put("items", buildJsonArray {})
+                                    put("status", "completed")
+                                })
+                            },
+                        ))
+                    },
+                )
             }
         }
-        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
+        val client = CodexAgentClient(
+            { process },
+            requestTimeoutMillis = 1_000,
+            shellTranscriptDirectory = transcriptDirectory,
+        )
         try {
             val session = client.openSession(
                 settings = AgentRuntimeSettings(workingDirectory = "/storage/emulated/0/Documents"),
@@ -155,8 +193,17 @@ class ChatRuntimeContractTest {
             assertEquals("one\ntwo\n", assertIs<AgentEvent.ShellOutputDelta>(received[0]).text)
             assertEquals(0, assertIs<AgentEvent.ShellCommandCompleted>(received[1]).exitCode)
             assertIs<AgentEvent.TurnCompleted>(received[2])
+
+            assertEquals("!printf 'one\\ntwo\\n'", client.listSessions().single().title)
+            val history = client.readSession(session)
+            assertEquals(listOf(AgentMessageRole.USER, AgentMessageRole.CODEX), history.messages.map { it.role })
+            assertEquals("!printf 'one\\ntwo\\n'", history.messages[0].text)
+            assertEquals("printf 'one\\ntwo\\n'", history.messages[1].shellCommand)
+            assertEquals("one\ntwo\n", history.messages[1].text)
+            assertEquals(0, history.messages[1].exitCode)
         } finally {
             client.close()
+            transcriptDirectory.deleteRecursively()
         }
     }
 
@@ -226,6 +273,15 @@ class ChatRuntimeContractTest {
                                                         add(taggedUserMessage("user-1", "client-1", "Question"))
                                                         add(
                                                             buildJsonObject {
+                                                                put("id", "reasoning-1")
+                                                                put("type", "reasoning")
+                                                                put("summary", buildJsonArray {
+                                                                    add(JsonPrimitive("Checked the sources"))
+                                                                })
+                                                            },
+                                                        )
+                                                        add(
+                                                            buildJsonObject {
                                                                 put("id", "search-1")
                                                                 put("type", "webSearch")
                                                                 put("query", "Question")
@@ -274,6 +330,7 @@ class ChatRuntimeContractTest {
             assertEquals(setOf(AgentCapability.WEB_SEARCH), user.capabilities)
             assertEquals(AgentMessageRole.CODEX, conversation.messages[1].role)
             assertEquals("Answer", conversation.messages[1].text)
+            assertEquals("Checked the sources", conversation.messages[1].reasoning)
         } finally {
             client.close()
         }
@@ -303,6 +360,16 @@ class ChatRuntimeContractTest {
                         message.id,
                         buildJsonObject { putJsonObject("turn") { put("id", "turn-1") } },
                     )
+                    server.notify(
+                        "item/reasoning/summaryTextDelta",
+                        buildJsonObject {
+                            put("threadId", "thread-1")
+                            put("turnId", "turn-1")
+                            put("itemId", "reasoning-1")
+                            put("summaryIndex", 0)
+                            put("delta", "Inspecting")
+                        },
+                    )
                 }
             }
         }
@@ -326,6 +393,11 @@ class ChatRuntimeContractTest {
             assertFalse("web_search_cached" in features)
             assertFalse(features.requiredBoolean("standalone_web_search"))
 
+            val reasoning = async {
+                withTimeout(1_000) {
+                    client.events.filterIsInstance<AgentEvent.ReasoningSummaryDelta>().first()
+                }
+            }
             client.sendTurn(
                 SessionId("thread-1"),
                 AgentTurnRequest(
@@ -343,6 +415,8 @@ class ChatRuntimeContractTest {
             assertEquals("runtime-model-next", turn.requiredString("model"))
             assertEquals("xhigh", turn.requiredString("effort"))
             assertEquals("/storage/emulated/0/Documents", turn.requiredString("cwd"))
+            assertEquals("auto", turn.requiredString("summary"))
+            assertEquals("Inspecting", reasoning.await().text)
             val input = turn["input"]!!.jsonArray.single().jsonObject
             val expectedText = "${AgentCapability.WEB_SEARCH.promptLabel}\n\nFind the current answer"
             assertEquals(expectedText, input.requiredString("text"))

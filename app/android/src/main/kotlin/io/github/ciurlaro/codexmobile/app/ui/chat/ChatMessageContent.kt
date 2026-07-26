@@ -7,6 +7,8 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,11 +22,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
@@ -35,7 +40,10 @@ import androidx.compose.ui.platform.UriHandler
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -51,6 +59,7 @@ import io.github.ciurlaro.codexmobile.app.presentation.invocation.promptInvocati
 import io.github.ciurlaro.codexmobile.app.presentation.state.AppUiState
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatMessage
 import io.github.ciurlaro.codexmobile.app.ui.icons.AppIcon
+import io.github.ciurlaro.codexmobile.app.ui.icons.IconGlyph
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatColors
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatDimensions
 import io.github.ciurlaro.codexmobile.core.AgentCapability
@@ -159,7 +168,11 @@ private fun capabilityPrompt(capability: AgentCapability): AnnotatedString = bui
 }
 
 @Composable
-internal fun CodexMessage(message: ChatMessage) {
+internal fun CodexMessage(
+    message: ChatMessage,
+    expandedByDefault: Boolean = true,
+    onExpansionChanged: (Boolean) -> Unit = {},
+) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -167,12 +180,72 @@ internal fun CodexMessage(message: ChatMessage) {
             .padding(horizontal = 4.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        when {
-            message.shellCommand != null -> ShellCommandOutput(message)
+        if (message.shellCommand != null) {
+            ShellCommandOutput(message)
+        } else {
+            message.reasoning?.takeIf(String::isNotBlank)?.let { reasoning ->
+                ReasoningPanel(
+                    messageId = message.id,
+                    reasoning = reasoning,
+                    isStreaming = message.isStreaming && message.text.isEmpty(),
+                    expandedByDefault = expandedByDefault,
+                    onExpansionChanged = onExpansionChanged,
+                )
+            }
+            when {
+                message.text.isNotEmpty() -> MessageText(message.text)
+                message.isStreaming && message.reasoning.isNullOrBlank() -> ThinkingMessage()
+            }
+        }
+    }
+}
 
-            message.text.isNotEmpty() -> MessageText(message.text)
-
-            message.isStreaming -> ThinkingMessage()
+@Composable
+private fun ReasoningPanel(
+    messageId: String,
+    reasoning: String,
+    isStreaming: Boolean,
+    expandedByDefault: Boolean,
+    onExpansionChanged: (Boolean) -> Unit,
+) {
+    var expanded by rememberSaveable(messageId) { mutableStateOf(expandedByDefault) }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable {
+                expanded = !expanded
+                onExpansionChanged(expanded)
+            }
+            .semantics {
+                role = Role.Button
+                stateDescription = if (expanded) "Expanded" else "Collapsed"
+            },
+        color = ChatColors.Elevated,
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, ChatColors.Border),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = if (isStreaming) "Thinking…" else "Reasoning summary",
+                    modifier = Modifier.weight(1f),
+                    color = ChatColors.Secondary,
+                    fontWeight = FontWeight.SemiBold,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+                AppIcon(
+                    glyph = if (expanded) IconGlyph.CHEVRON_DOWN else IconGlyph.CHEVRON_RIGHT,
+                    modifier = Modifier.size(18.dp),
+                    tint = ChatColors.Secondary,
+                )
+            }
+            if (expanded) {
+                HorizontalDivider(color = ChatColors.Border)
+                MessageText(reasoning)
+            }
         }
     }
 }
