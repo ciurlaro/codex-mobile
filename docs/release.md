@@ -7,7 +7,7 @@
 - Android **All files access** plus one selected shared-storage directory used as each turn's starting `cwd`.
 - Standard GitHub marketplace plugins and explicitly confirmed signed feature splits.
 - Ordinary shell work through App Server, four approval policies, model speed tiers, and foreground execution.
-- Typed Auto-review mutations remain unavailable on App Server `0.144.6`.
+- Typed mutations under Auto review fall back to explicit one-use user approval on App Server `0.144.6`.
 
 The host release is independent of any provider checkout. The base APK contains App Server and host code only. Provider repositories build and publish exact-host-version feature APKs separately with the same package name, version code, and signing certificate.
 

@@ -25,6 +25,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatColors
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatDimensions
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.sin
 
 @Composable
 internal fun CircleIconButton(
@@ -65,7 +68,9 @@ internal enum class IconGlyph {
     STOP,
     CLOSE,
     SETTINGS,
+    FILTER_SLIDERS,
     SPEED,
+    BRAIN,
     INTELLIGENCE,
     FOLDER,
     STORAGE,
@@ -186,21 +191,24 @@ internal fun AppIcon(
             IconGlyph.SETTINGS -> {
                 drawCircle(tint, size.minDimension * .29f, center, style = Stroke(stroke))
                 drawCircle(tint, size.minDimension * .08f, center, style = Stroke(stroke))
-                repeat(4) { index ->
-                    val horizontal = index % 2 == 0
-                    val direction = if (index < 2) -1f else 1f
-                    if (horizontal) {
-                        line(
-                            Offset(center.x + direction * size.width * .29f, center.y),
-                            Offset(center.x + direction * size.width * .42f, center.y),
-                        )
-                    } else {
-                        line(
-                            Offset(center.x, center.y + direction * size.height * .29f),
-                            Offset(center.x, center.y + direction * size.height * .42f),
-                        )
-                    }
+                repeat(8) { index ->
+                    val angle = index * PI.toFloat() / 4f
+                    val x = cos(angle)
+                    val y = sin(angle)
+                    line(
+                        Offset(center.x + x * size.width * .29f, center.y + y * size.height * .29f),
+                        Offset(center.x + x * size.width * .42f, center.y + y * size.height * .42f),
+                    )
                 }
+            }
+
+            IconGlyph.FILTER_SLIDERS -> {
+                line(Offset(size.width * .16f, size.height * .28f), Offset(size.width * .84f, size.height * .28f))
+                line(Offset(size.width * .16f, size.height * .50f), Offset(size.width * .84f, size.height * .50f))
+                line(Offset(size.width * .16f, size.height * .72f), Offset(size.width * .84f, size.height * .72f))
+                drawCircle(tint, size.minDimension * .07f, Offset(size.width * .37f, size.height * .28f))
+                drawCircle(tint, size.minDimension * .07f, Offset(size.width * .66f, size.height * .50f))
+                drawCircle(tint, size.minDimension * .07f, Offset(size.width * .46f, size.height * .72f))
             }
 
             IconGlyph.SPEED -> {
@@ -214,6 +222,27 @@ internal fun AppIcon(
                     style = Stroke(stroke, cap = StrokeCap.Round),
                 )
                 line(center, Offset(size.width * .70f, size.height * .36f))
+            }
+
+            IconGlyph.BRAIN -> {
+                val left = Path().apply {
+                    moveTo(center.x, size.height * .82f)
+                    cubicTo(size.width * .34f, size.height * .88f, size.width * .20f, size.height * .72f, size.width * .28f, size.height * .59f)
+                    cubicTo(size.width * .12f, size.height * .50f, size.width * .19f, size.height * .29f, size.width * .34f, size.height * .30f)
+                    cubicTo(size.width * .31f, size.height * .13f, center.x, size.height * .11f, center.x, size.height * .27f)
+                    lineTo(center.x, size.height * .82f)
+                }
+                val right = Path().apply {
+                    moveTo(center.x, size.height * .82f)
+                    cubicTo(size.width * .66f, size.height * .88f, size.width * .80f, size.height * .72f, size.width * .72f, size.height * .59f)
+                    cubicTo(size.width * .88f, size.height * .50f, size.width * .81f, size.height * .29f, size.width * .66f, size.height * .30f)
+                    cubicTo(size.width * .69f, size.height * .13f, center.x, size.height * .11f, center.x, size.height * .27f)
+                    lineTo(center.x, size.height * .82f)
+                }
+                drawPath(left, tint, style = Stroke(stroke, cap = StrokeCap.Round))
+                drawPath(right, tint, style = Stroke(stroke, cap = StrokeCap.Round))
+                line(Offset(size.width * .28f, size.height * .59f), Offset(size.width * .42f, size.height * .55f))
+                line(Offset(size.width * .72f, size.height * .59f), Offset(size.width * .58f, size.height * .55f))
             }
 
             IconGlyph.INTELLIGENCE -> {

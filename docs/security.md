@@ -29,6 +29,6 @@ Secret namespaces prevent accidental cross-plugin configuration and lifecycle co
 
 GitHub-installed splits require Android's user-confirmed package-installer permission. Distribution channels that prohibit general package installation cannot offer this source flow; they need channel-managed feature delivery instead of weakening the installer or signature checks.
 
-Typed mutations under Auto review remain unavailable because pinned dynamic tools expose no equivalent automatic-review bridge.
+Typed mutations under Auto review require explicit one-use user approval because pinned dynamic tools expose no equivalent automatic-review bridge.
 
 The optional Documents provider links the exact Google ML Kit OCR closure recorded in its release SBOM under Google's terms. Distribution uses the narrow GPLv3 section-7 permission in `LICENSES/MLKIT-EXCEPTION.txt`; it grants no permission for another proprietary provider or dependency.

@@ -11,6 +11,7 @@ data class ChatMessage(
     val id: String,
     val role: AgentMessageRole,
     val text: String,
+    val reasoning: String? = null,
     val capabilities: Set<AgentCapability> = emptySet(),
     val invocations: List<AgentInvocation> = emptyList(),
     val model: String? = null,

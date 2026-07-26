@@ -94,21 +94,23 @@ class ProviderInstallDeviceTest {
             assertTrue(wordText.success)
             assertTrue((wordText.content.single() as ProviderContent.Text).value.contains(DOCUMENT_SENTINEL))
 
-            val pdf = File(workspace, "provider-e2e.pdf").also(::writePdf)
-            val pdfText = executeDocumentTool(
-                platform, workspace, "$runId-read-pdf", "documents_read", readArguments(pdf.name),
-            )
-            assertTrue(pdfText.success)
-            assertTrue((pdfText.content.single() as ProviderContent.Text).value.contains(DOCUMENT_SENTINEL))
-            val rendered = executeDocumentTool(
-                platform, workspace, "$runId-render-pdf", "documents_view_pages",
-                buildJsonObject {
-                    put("path", pdf.name)
-                    put("pages", buildJsonArray { add(JsonPrimitive(1)) })
-                },
-            )
-            assertTrue(rendered.success)
-            assertTrue((rendered.content.single() as ProviderContent.Image).dataUrl.startsWith("data:image/png;base64,"))
+            if (arguments.getString("wordOnly") != "true") {
+                val pdf = File(workspace, "provider-e2e.pdf").also(::writePdf)
+                val pdfText = executeDocumentTool(
+                    platform, workspace, "$runId-read-pdf", "documents_read", readArguments(pdf.name),
+                )
+                assertTrue(pdfText.success)
+                assertTrue((pdfText.content.single() as ProviderContent.Text).value.contains(DOCUMENT_SENTINEL))
+                val rendered = executeDocumentTool(
+                    platform, workspace, "$runId-render-pdf", "documents_view_pages",
+                    buildJsonObject {
+                        put("path", pdf.name)
+                        put("pages", buildJsonArray { add(JsonPrimitive(1)) })
+                    },
+                )
+                assertTrue(rendered.success)
+                assertTrue((rendered.content.single() as ProviderContent.Image).dataUrl.startsWith("data:image/png;base64,"))
+            }
         } finally {
             client.close()
         }

@@ -7,6 +7,9 @@ internal fun AgentMessage.toChatMessage(): ChatMessage = ChatMessage(
     id = id,
     role = role,
     text = text,
+    reasoning = reasoning,
+    shellCommand = shellCommand,
+    exitCode = exitCode,
     capabilities = capabilities,
     invocations = invocations,
 )

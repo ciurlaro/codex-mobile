@@ -77,6 +77,20 @@ class AndroidPluginMarketplaceManagerTest {
     }
 
     @Test
+    fun `reads the marketplace identity used by the app server`() {
+        val marketplace = Files.createTempDirectory("marketplace-name-").toFile()
+        try {
+            val manifest = File(marketplace, ".agents/plugins/marketplace.json")
+            checkNotNull(manifest.parentFile).mkdirs()
+            manifest.writeText("""{"name":"team-marketplace","plugins":[]}""")
+
+            assertEquals("team-marketplace", readMarketplaceName(marketplace))
+        } finally {
+            marketplace.deleteRecursively()
+        }
+    }
+
+    @Test
     fun `replaces a stale snapshot at the stable marketplace path`() {
         val root = Files.createTempDirectory("marketplaces-").toFile()
         try {

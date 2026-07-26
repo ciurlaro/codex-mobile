@@ -124,8 +124,8 @@ class CodexProtocolContractTest {
             }
             assertEquals(1, launches.get())
             val params = checkNotNull(threadParams)
-            assertEquals("never", params["approvalPolicy"]!!.jsonPrimitive.content)
-            assertEquals("user", params["approvalsReviewer"]!!.jsonPrimitive.content)
+            assertEquals("on-request", params["approvalPolicy"]!!.jsonPrimitive.content)
+            assertEquals("auto_review", params["approvalsReviewer"]!!.jsonPrimitive.content)
             assertEquals("danger-full-access", params["sandbox"]!!.jsonPrimitive.content)
             val instructions = params["developerInstructions"]!!.jsonPrimitive.content
             assertFalse("raw argv" in instructions)

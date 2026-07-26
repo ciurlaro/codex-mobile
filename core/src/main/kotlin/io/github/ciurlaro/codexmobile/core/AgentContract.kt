@@ -105,7 +105,7 @@ enum class AgentApprovalDecision {
 }
 
 data class AgentRuntimeSettings(
-    val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.NEVER,
+    val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.AUTO_REVIEW,
     val serviceTier: String? = null,
     val workingDirectory: String? = null,
 )
@@ -128,6 +128,9 @@ data class AgentMessage(
     val clientId: String?,
     val role: AgentMessageRole,
     val text: String,
+    val reasoning: String? = null,
+    val shellCommand: String? = null,
+    val exitCode: Int? = null,
     val capabilities: Set<AgentCapability> = emptySet(),
     val invocations: List<AgentInvocation> = emptyList(),
 )
@@ -147,7 +150,7 @@ data class AgentTurnRequest(
     val model: String? = null,
     val effort: String? = null,
     val serviceTier: String? = null,
-    val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.NEVER,
+    val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.AUTO_REVIEW,
     val capabilities: Set<AgentCapability> = emptySet(),
     val invocations: List<AgentInvocation> = emptyList(),
     val workingDirectory: String? = null,
@@ -185,6 +188,13 @@ sealed interface AgentEvent {
         val sessionId: SessionId,
         val text: String,
         val itemId: String? = null,
+    ) : AgentEvent
+
+    data class ReasoningSummaryDelta(
+        val sessionId: SessionId,
+        val text: String,
+        val itemId: String,
+        val summaryIndex: Long,
     ) : AgentEvent
 
     data class ShellOutputDelta(

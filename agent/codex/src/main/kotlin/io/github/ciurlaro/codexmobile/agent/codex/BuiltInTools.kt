@@ -38,12 +38,14 @@ fun interface BuiltInToolDispatcher {
     suspend fun replay(call: BuiltInToolCall): BuiltInToolResult? = null
 }
 
-enum class TypedMutationAuthority { DIRECT, USER_APPROVAL, UNAVAILABLE }
+enum class TypedMutationAuthority { DIRECT, USER_APPROVAL }
 
 fun typedMutationAuthority(preset: AgentApprovalPreset): TypedMutationAuthority = when (preset) {
     AgentApprovalPreset.NEVER -> TypedMutationAuthority.DIRECT
-    AgentApprovalPreset.ASK_ME, AgentApprovalPreset.STRICT -> TypedMutationAuthority.USER_APPROVAL
-    AgentApprovalPreset.AUTO_REVIEW -> TypedMutationAuthority.UNAVAILABLE
+    AgentApprovalPreset.AUTO_REVIEW,
+    AgentApprovalPreset.ASK_ME,
+    AgentApprovalPreset.STRICT,
+    -> TypedMutationAuthority.USER_APPROVAL
 }
 
 fun builtInDynamicTools(

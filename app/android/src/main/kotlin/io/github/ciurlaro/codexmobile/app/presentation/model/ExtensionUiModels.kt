@@ -2,14 +2,15 @@ package io.github.ciurlaro.codexmobile.app.presentation.model
 
 import io.github.ciurlaro.codexmobile.app.presentation.invocation.readableTitle
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentPluginSummary
 import io.github.ciurlaro.codexmobile.core.AgentSkill
 
-enum class ExtensionFilter(val label: String) {
-    ALL("All"), SKILLS("Skills"), PLUGINS("Plugins"),
+enum class ExtensionType(val label: String) {
+    SKILLS("Skills"), PLUGINS("Plugins"),
 }
 
-enum class ExtensionSection(val label: String) {
-    INSTALLED("Installed"), DISCOVER("Discover"),
+enum class ExtensionStatus(val label: String) {
+    INSTALLED("Installed"), UNINSTALLED("Uninstalled"), UNAVAILABLE("Unavailable"),
 }
 
 sealed interface ExtensionRemoval {
@@ -29,15 +30,25 @@ data class ExtensionActionError(val operationId: String, val message: String)
 
 data class ExtensionNotice(val message: String, val isError: Boolean = false)
 
-data class PluginSourceSelection(
-    val knownIds: Set<String>,
-    val enabledIds: Set<String>,
+data class CustomExtensionSource(
+    val id: String,
+    val url: String,
+    val marketplaceName: String?,
+    val supportsSkills: Boolean,
+    val supportsPlugins: Boolean,
 )
 
-data class PluginSourceUi(
+data class ExtensionSourceSelection(
+    val knownIds: Set<String>,
+    val enabledIds: Set<String>,
+    val customSources: List<CustomExtensionSource> = emptyList(),
+)
+
+data class ExtensionSourceUi(
     val id: String,
     val displayName: String,
     val description: String,
+    val capabilityLabel: String,
     val enabled: Boolean,
     val isDefault: Boolean = false,
     val isCustom: Boolean = false,
@@ -49,18 +60,27 @@ internal const val CODEX_MOBILE_PLUGIN_SOURCE_URL = "https://github.com/ciurlaro
 
 private val BUILT_IN_PLUGIN_SOURCE_IDS = setOf(CODEX_MOBILE_PLUGIN_SOURCE_ID, OPENAI_PLUGIN_SOURCE_ID)
 
-internal fun initialPluginSourceSelection(
+internal fun initialExtensionSourceSelection(
     savedKnownIds: Set<String>?,
     savedEnabledIds: Set<String>?,
+    savedCustomSources: List<CustomExtensionSource> = emptyList(),
     appWasUpgraded: Boolean,
-): PluginSourceSelection {
+): ExtensionSourceSelection {
     if (savedKnownIds != null && savedEnabledIds != null) {
-        val known = savedKnownIds.map(::canonicalPluginSourceId).toSet() + BUILT_IN_PLUGIN_SOURCE_IDS
-        return PluginSourceSelection(known, savedEnabledIds.map(::canonicalPluginSourceId).toSet() intersect known)
+        val known = savedKnownIds.map(::canonicalPluginSourceId).toSet() +
+            savedCustomSources.map(CustomExtensionSource::id) + BUILT_IN_PLUGIN_SOURCE_IDS
+        return ExtensionSourceSelection(
+            known,
+            savedEnabledIds.map(::canonicalPluginSourceId).toSet() intersect known,
+            savedCustomSources.distinctBy(CustomExtensionSource::id),
+        )
     }
-    return PluginSourceSelection(
-        knownIds = BUILT_IN_PLUGIN_SOURCE_IDS,
-        enabledIds = if (appWasUpgraded) BUILT_IN_PLUGIN_SOURCE_IDS else setOf(CODEX_MOBILE_PLUGIN_SOURCE_ID),
+    val customIds = savedCustomSources.map(CustomExtensionSource::id).toSet()
+    return ExtensionSourceSelection(
+        knownIds = BUILT_IN_PLUGIN_SOURCE_IDS + customIds,
+        enabledIds = (if (appWasUpgraded) BUILT_IN_PLUGIN_SOURCE_IDS else setOf(CODEX_MOBILE_PLUGIN_SOURCE_ID)) +
+            customIds,
+        customSources = savedCustomSources.distinctBy(CustomExtensionSource::id),
     )
 }
 
@@ -70,36 +90,67 @@ internal fun canonicalPluginSourceId(marketplaceName: String): String = when {
     else -> marketplaceName
 }
 
-internal fun pluginSourceItems(selection: PluginSourceSelection): List<PluginSourceUi> =
+internal fun extensionSourceItems(selection: ExtensionSourceSelection): List<ExtensionSourceUi> =
     selection.knownIds.mapNotNull { id ->
         when (id) {
-            CODEX_MOBILE_PLUGIN_SOURCE_ID -> PluginSourceUi(
+            CODEX_MOBILE_PLUGIN_SOURCE_ID -> ExtensionSourceUi(
                 id = id,
                 displayName = "Codex Mobile",
                 description = "Official extensions curated for Codex Mobile.",
+                capabilityLabel = "Plugins",
                 enabled = id in selection.enabledIds,
                 isDefault = true,
             )
-            OPENAI_PLUGIN_SOURCE_ID -> PluginSourceUi(
+            OPENAI_PLUGIN_SOURCE_ID -> ExtensionSourceUi(
                 id = id,
                 displayName = "OpenAI curated",
                 description = "High-quality extensions and skills curated by OpenAI.",
+                capabilityLabel = "Skills + Plugins",
                 enabled = id in selection.enabledIds,
             )
-            else -> id.takeIf(String::isNotBlank)?.let {
-                PluginSourceUi(
-                    id = it,
-                    displayName = it.replace('-', ' ').replace('_', ' ').replaceFirstChar(Char::uppercase),
-                    description = "Custom GitHub plugin marketplace.",
-                    enabled = it in selection.enabledIds,
+            else -> id.takeIf(String::isNotBlank)?.let { sourceId ->
+                val custom = selection.customSources.firstOrNull { it.id == sourceId }
+                ExtensionSourceUi(
+                    id = sourceId,
+                    displayName = custom?.url?.githubRepositoryName()
+                        ?: sourceId.replace('-', ' ').replace('_', ' ').replaceFirstChar(Char::uppercase),
+                    description = custom?.url ?: "Custom GitHub plugin marketplace.",
+                    capabilityLabel = when {
+                        custom == null -> "Plugins"
+                        custom.supportsSkills && custom.supportsPlugins -> "Skills + Plugins"
+                        custom.supportsSkills -> "Skills"
+                        else -> "Plugins"
+                    },
+                    enabled = sourceId in selection.enabledIds,
                     isCustom = true,
                 )
             }
         }
-    }.sortedWith(compareBy<PluginSourceUi> {
+    }.sortedWith(compareBy<ExtensionSourceUi> {
         when (it.id) {
             CODEX_MOBILE_PLUGIN_SOURCE_ID -> 0
             OPENAI_PLUGIN_SOURCE_ID -> 1
             else -> 2
         }
-    }.thenBy(PluginSourceUi::displayName))
+    }.thenBy(ExtensionSourceUi::displayName))
+
+internal fun ExtensionSourceSelection.enabledMarketplaceNames(): Set<String> = buildSet {
+    enabledIds.forEach { id ->
+        when (id) {
+            CODEX_MOBILE_PLUGIN_SOURCE_ID, OPENAI_PLUGIN_SOURCE_ID -> add(id)
+            else -> customSources.firstOrNull { it.id == id }?.marketplaceName?.let(::add) ?: add(id)
+        }
+    }
+}
+
+internal fun AgentPluginSummary.uninstalledStatus(
+    installedIds: Set<String>,
+    unavailableIds: Set<String>,
+): ExtensionStatus? = when {
+    reference.id in installedIds -> null
+    !available || reference.id in unavailableIds -> ExtensionStatus.UNAVAILABLE
+    else -> ExtensionStatus.UNINSTALLED
+}
+
+private fun String.githubRepositoryName(): String = trimEnd('/').substringAfterLast('/').removeSuffix(".git")
+    .replace('-', ' ').replace('_', ' ').replaceFirstChar(Char::uppercase)

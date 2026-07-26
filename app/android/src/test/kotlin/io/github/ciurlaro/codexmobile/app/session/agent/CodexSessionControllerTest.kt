@@ -197,6 +197,28 @@ class CodexSessionControllerTest {
     }
 
     @Test
+    fun reasoningSummariesStreamSeparatelyAndPreserveParts(): Unit = runBlocking {
+        val fake = FakeAgentClient()
+        val controller = controller(fake)
+        try {
+            fake.emit(AgentEvent.Authenticated)
+            await { controller.state.value.isAuthenticated }
+            assertTrue(controller.submit("explain"))
+            await { controller.state.value.sessionId == SESSION }
+
+            fake.emit(AgentEvent.ReasoningSummaryDelta(SESSION, "Inspecting", "reasoning-1", 0))
+            fake.emit(AgentEvent.ReasoningSummaryDelta(SESSION, " files", "reasoning-1", 0))
+            fake.emit(AgentEvent.ReasoningSummaryDelta(SESSION, "Comparing results", "reasoning-1", 1))
+            fake.emit(AgentEvent.TextDelta(SESSION, "Final answer"))
+
+            await { controller.state.value.streamedText == "Final answer" }
+            assertEquals("Inspecting files\n\nComparing results", controller.state.value.streamedReasoning)
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
     fun stopRequestedDuringLazySessionCreationCancelsTheStartedTurn(): Unit = runBlocking {
         val fake = FakeAgentClient().apply { blockOpenSession = true }
         val controller = controller(fake)

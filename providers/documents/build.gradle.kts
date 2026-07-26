@@ -6,6 +6,7 @@ android {
     namespace = "io.github.ciurlaro.codexmobile.features.documents"
     compileSdk = 37
     defaultConfig { minSdk = 26 }
+    packaging.jniLibs.useLegacyPackaging = true
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

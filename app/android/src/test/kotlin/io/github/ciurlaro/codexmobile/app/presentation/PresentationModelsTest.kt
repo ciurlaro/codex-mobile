@@ -12,16 +12,23 @@ import io.github.ciurlaro.codexmobile.app.presentation.state.AppUiState
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatMessage
 import io.github.ciurlaro.codexmobile.app.presentation.model.CODEX_MOBILE_PLUGIN_SOURCE_ID
 import io.github.ciurlaro.codexmobile.app.presentation.model.OPENAI_PLUGIN_SOURCE_ID
+import io.github.ciurlaro.codexmobile.app.presentation.model.CustomExtensionSource
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSourceSelection
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionStatus
 import io.github.ciurlaro.codexmobile.app.presentation.model.canonicalPluginSourceId
+import io.github.ciurlaro.codexmobile.app.presentation.model.enabledMarketplaceNames
+import io.github.ciurlaro.codexmobile.app.presentation.model.extensionSourceItems
 import io.github.ciurlaro.codexmobile.app.presentation.model.groupedByPins
-import io.github.ciurlaro.codexmobile.app.presentation.model.initialPluginSourceSelection
-import io.github.ciurlaro.codexmobile.app.presentation.model.pluginSourceItems
+import io.github.ciurlaro.codexmobile.app.presentation.model.initialExtensionSourceSelection
+import io.github.ciurlaro.codexmobile.app.presentation.model.uninstalledStatus
 import io.github.ciurlaro.codexmobile.app.presentation.state.withStreamingAssistant
 import io.github.ciurlaro.codexmobile.app.presentation.state.withSubmittedTurn
 import io.github.ciurlaro.codexmobile.app.presentation.state.withoutConversation
 import io.github.ciurlaro.codexmobile.app.presentation.state.connectorsNeedingOnUseAuthentication
 import io.github.ciurlaro.codexmobile.app.presentation.validation.isValidElicitationAnswer
 import io.github.ciurlaro.codexmobile.app.ui.chat.shellCommandVisualTransformation
+import io.github.ciurlaro.codexmobile.app.ui.extensions.extensionPageSize
+import io.github.ciurlaro.codexmobile.app.ui.extensions.pageTokens
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentConnector
@@ -45,19 +52,19 @@ import kotlin.test.assertTrue
 class PresentationModelsTest {
     @Test
     fun freshPluginSourcesEnableOnlyCodexMobile() {
-        val selection = initialPluginSourceSelection(null, null, appWasUpgraded = false)
+        val selection = initialExtensionSourceSelection(null, null, appWasUpgraded = false)
 
         assertEquals(setOf(CODEX_MOBILE_PLUGIN_SOURCE_ID, OPENAI_PLUGIN_SOURCE_ID), selection.knownIds)
         assertEquals(setOf(CODEX_MOBILE_PLUGIN_SOURCE_ID), selection.enabledIds)
         assertEquals(
             listOf("Codex Mobile" to true, "OpenAI curated" to false),
-            pluginSourceItems(selection).map { it.displayName to it.enabled },
+            extensionSourceItems(selection).map { it.displayName to it.enabled },
         )
     }
 
     @Test
     fun savedPluginSourceChoicesSurviveUpgradesAndOpenAiAliasesNormalize() {
-        val selection = initialPluginSourceSelection(
+        val selection = initialExtensionSourceSelection(
             savedKnownIds = setOf("codex-mobile", "openai-curated", "team-marketplace"),
             savedEnabledIds = setOf("team-marketplace"),
             appWasUpgraded = true,
@@ -65,7 +72,67 @@ class PresentationModelsTest {
 
         assertEquals(OPENAI_PLUGIN_SOURCE_ID, canonicalPluginSourceId("openai-curated"))
         assertEquals(setOf("team-marketplace"), selection.enabledIds)
-        assertEquals(3, pluginSourceItems(selection).size)
+        assertEquals(3, extensionSourceItems(selection).size)
+    }
+
+    @Test
+    fun customExtensionSourceControlsItsSkillAndPluginCatalogsTogether() {
+        val custom = CustomExtensionSource(
+            id = "github:documents",
+            url = "https://github.com/team/documents",
+            marketplaceName = "team-marketplace",
+            supportsSkills = true,
+            supportsPlugins = true,
+        )
+        val selection = ExtensionSourceSelection(
+            knownIds = setOf(custom.id),
+            enabledIds = setOf(custom.id),
+            customSources = listOf(custom),
+        )
+
+        assertEquals(setOf("team-marketplace"), selection.enabledMarketplaceNames())
+        assertEquals("Skills + Plugins", extensionSourceItems(selection).single().capabilityLabel)
+    }
+
+    @Test
+    fun customExtensionSourcesSurviveMissingLegacyPreferenceKeys() {
+        val custom = CustomExtensionSource(
+            id = "github:documents",
+            url = "https://github.com/team/documents",
+            marketplaceName = "team-marketplace",
+            supportsSkills = true,
+            supportsPlugins = true,
+        )
+
+        val selection = initialExtensionSourceSelection(
+            savedKnownIds = null,
+            savedEnabledIds = null,
+            savedCustomSources = listOf(custom),
+            appWasUpgraded = false,
+        )
+
+        assertTrue(custom.id in selection.knownIds)
+        assertTrue(custom.id in selection.enabledIds)
+    }
+
+    @Test
+    fun extensionStatusAndPaginationStayDeterministic() {
+        val plugin = AgentPluginSummary(
+            reference = AgentPluginReference("documents", "documents", "codex-mobile"),
+            displayName = "Documents",
+            description = "Read documents",
+            installed = false,
+            enabled = false,
+            installPolicy = AgentPluginInstallPolicy.AVAILABLE,
+            authPolicy = AgentPluginAuthPolicy.ON_USE,
+            available = true,
+        )
+
+        assertEquals(ExtensionStatus.UNINSTALLED, plugin.uninstalledStatus(emptySet(), emptySet()))
+        assertEquals(ExtensionStatus.UNAVAILABLE, plugin.uninstalledStatus(emptySet(), setOf("documents")))
+        assertEquals(null, plugin.uninstalledStatus(setOf("documents"), emptySet()))
+        assertEquals(4, extensionPageSize(420f))
+        assertEquals(listOf(0, 1, 2, null, 9), pageTokens(page = 1, pageCount = 10))
     }
 
     @Test

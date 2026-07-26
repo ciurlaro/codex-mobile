@@ -62,7 +62,7 @@ import io.github.ciurlaro.codexmobile.app.presentation.invocation.availablePromp
 import io.github.ciurlaro.codexmobile.app.presentation.invocation.recentPromptInvocations
 import io.github.ciurlaro.codexmobile.app.presentation.state.AppUiState
 import io.github.ciurlaro.codexmobile.app.presentation.model.AppScreen
-import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionFilter
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionType
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatSelector
 import io.github.ciurlaro.codexmobile.app.presentation.state.selectedModelOrNull
 import io.github.ciurlaro.codexmobile.app.ui.icons.AppIcon
@@ -274,8 +274,8 @@ private fun ApprovalSelector(
             SelectorRow(
                 title = preset.displayName,
                 subtitle = when (preset) {
-                    AgentApprovalPreset.NEVER -> "Run without asking (default)"
-                    AgentApprovalPreset.AUTO_REVIEW -> "Let the model review risky actions"
+                    AgentApprovalPreset.NEVER -> "Run without asking"
+                    AgentApprovalPreset.AUTO_REVIEW -> "Let the model review risky actions (default)"
                     AgentApprovalPreset.ASK_ME -> "Ask when Codex requests permission"
                     AgentApprovalPreset.STRICT -> "Ask for commands outside the trusted set"
                 },
@@ -358,7 +358,7 @@ private fun PromptInvocationSelector(
     val title = if (kind == PromptInvocationKind.SKILL) "Skills" else "Plugins"
     val singular = if (kind == PromptInvocationKind.SKILL) "skill" else "plugin"
     val loading = if (kind == PromptInvocationKind.SKILL) state.isSkillsLoading else state.isInstalledPluginsLoading
-    val filter = if (kind == PromptInvocationKind.SKILL) ExtensionFilter.SKILLS else ExtensionFilter.PLUGINS
+    val type = if (kind == PromptInvocationKind.SKILL) ExtensionType.SKILLS else ExtensionType.PLUGINS
 
     LazyColumn(
         modifier = Modifier.heightIn(min = 500.dp, max = 500.dp).padding(vertical = 8.dp),
@@ -416,7 +416,7 @@ private fun PromptInvocationSelector(
                 selected = false,
                 trailing = IconGlyph.CHEVRON_RIGHT,
                 onClick = {
-                    onEvent(AppUiEvent.OpenExtensions(filter = filter, returnScreen = AppScreen.CHAT))
+                    onEvent(AppUiEvent.OpenExtensions(type = type, returnScreen = AppScreen.CHAT))
                 },
             )
         }

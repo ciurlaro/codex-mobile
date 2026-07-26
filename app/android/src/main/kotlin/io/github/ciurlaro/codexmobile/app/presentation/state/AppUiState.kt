@@ -4,13 +4,14 @@ import io.github.ciurlaro.codexmobile.app.presentation.model.AppScreen
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatMessage
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatSelector
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionActionError
+import io.github.ciurlaro.codexmobile.app.presentation.model.CustomExtensionSource
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionNotice
-import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionFilter
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionStatus
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionRemoval
-import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSection
-import io.github.ciurlaro.codexmobile.app.presentation.model.PluginSourceSelection
-import io.github.ciurlaro.codexmobile.app.presentation.model.PluginSourceUi
-import io.github.ciurlaro.codexmobile.app.presentation.model.pluginSourceItems
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSourceSelection
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSourceUi
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionType
+import io.github.ciurlaro.codexmobile.app.presentation.model.extensionSourceItems
 import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
@@ -20,7 +21,6 @@ import io.github.ciurlaro.codexmobile.core.AgentElicitation
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentMcpServer
 import io.github.ciurlaro.codexmobile.core.AgentModel
-import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
 import io.github.ciurlaro.codexmobile.core.AgentPluginSummary
 import io.github.ciurlaro.codexmobile.core.AgentSkill
 import io.github.ciurlaro.codexmobile.core.AgentSkillPackage
@@ -30,6 +30,7 @@ import io.github.ciurlaro.codexmobile.platform.android.ProviderSettingsEntry
 data class AppUiState(
     val statusMessage: String = "Ready to sign in",
     val streamedText: String = "",
+    val streamedReasoning: String = "",
     val sessionId: SessionId? = null,
     val isAuthenticated: Boolean = false,
     val conversations: List<AgentConversationSummary> = emptyList(),
@@ -47,20 +48,11 @@ data class AppUiState(
     val connectors: List<AgentConnector> = emptyList(),
     val mcpServers: List<AgentMcpServer> = emptyList(),
     val providerSettings: List<ProviderSettingsEntry> = emptyList(),
-    val selectedSkill: AgentSkill? = null,
-    val selectedSkillPackage: AgentSkillPackage? = null,
-    val githubSkillCandidates: List<AgentSkillPackage> = emptyList(),
-    val githubSkillError: String? = null,
-    val isGitHubSkillLoading: Boolean = false,
-    val pluginSourceError: String? = null,
-    val isPluginSourceLoading: Boolean = false,
-    val skillSourceChunks: List<String> = emptyList(),
-    val skillSourceNextOffset: Long? = null,
-    val skillSourceTotalBytes: Long = 0,
-    val selectedPlugin: AgentPluginDetail? = null,
+    val extensionSourceError: String? = null,
+    val isExtensionSourceLoading: Boolean = false,
     val extensionSearch: String = "",
-    val extensionFilter: ExtensionFilter = ExtensionFilter.ALL,
-    val extensionSection: ExtensionSection = ExtensionSection.INSTALLED,
+    val extensionType: ExtensionType = ExtensionType.PLUGINS,
+    val extensionStatus: ExtensionStatus = ExtensionStatus.INSTALLED,
     val skillsLoaded: Boolean = false,
     val availableSkillsLoaded: Boolean = false,
     val installedPluginsLoaded: Boolean = false,
@@ -69,21 +61,19 @@ data class AppUiState(
     val isAvailableSkillsLoading: Boolean = false,
     val isInstalledPluginsLoading: Boolean = false,
     val isAvailablePluginsLoading: Boolean = false,
-    val isSkillSourceLoading: Boolean = false,
     val isExtensionMutationLoading: Boolean = false,
     val extensionOperationId: String? = null,
     val extensionActionError: ExtensionActionError? = null,
     val extensionNotice: ExtensionNotice? = null,
     val extensionSourcesOpen: Boolean = false,
-    val knownPluginSourceIds: Set<String> = emptySet(),
-    val enabledPluginSourceIds: Set<String> = emptySet(),
+    val knownExtensionSourceIds: Set<String> = emptySet(),
+    val enabledExtensionSourceIds: Set<String> = emptySet(),
+    val customExtensionSources: List<CustomExtensionSource> = emptyList(),
     val unavailablePluginIds: Set<String> = emptySet(),
-    val isPluginDetailLoading: Boolean = false,
     val skillsError: String? = null,
     val availableSkillsError: String? = null,
     val installedPluginsError: String? = null,
     val availablePluginsError: String? = null,
-    val skillSourceError: String? = null,
     val pendingExtensionRemoval: ExtensionRemoval? = null,
     val connectorAuthUrl: String? = null,
     val connectorAuthName: String? = null,
@@ -91,7 +81,7 @@ data class AppUiState(
     val selectedModel: String? = null,
     val selectedEffort: String? = null,
     val selectedSpeedTier: String? = null,
-    val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.NEVER,
+    val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.AUTO_REVIEW,
     val isHistoryOpen: Boolean = false,
     val screen: AppScreen = AppScreen.CHAT,
     val extensionsReturnScreen: AppScreen = AppScreen.SETTINGS,
@@ -119,6 +109,12 @@ data class AppUiState(
             .joinToString("\n")
             .ifBlank { null }
 
-    val pluginSources: List<PluginSourceUi>
-        get() = pluginSourceItems(PluginSourceSelection(knownPluginSourceIds, enabledPluginSourceIds))
+    val extensionSources: List<ExtensionSourceUi>
+        get() = extensionSourceItems(
+            ExtensionSourceSelection(
+                knownExtensionSourceIds,
+                enabledExtensionSourceIds,
+                customExtensionSources,
+            ),
+        )
 }

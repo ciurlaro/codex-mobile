@@ -8,6 +8,9 @@ import io.github.ciurlaro.codexmobile.core.SessionId
 internal data class CodexSessionState(
     val statusMessage: String = "Starting background session…",
     val streamedText: String = "",
+    val streamedReasoning: String = "",
+    val reasoningItemId: String? = null,
+    val reasoningSummaryIndex: Long? = null,
     val shellExitCode: Int? = null,
     val sessionId: SessionId? = null,
     val isAuthenticated: Boolean = false,
