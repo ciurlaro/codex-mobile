@@ -4,9 +4,13 @@ import io.github.ciurlaro.codexmobile.app.presentation.model.AppScreen
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatMessage
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatSelector
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionActionError
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionNotice
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionFilter
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionRemoval
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSection
+import io.github.ciurlaro.codexmobile.app.presentation.model.PluginSourceSelection
+import io.github.ciurlaro.codexmobile.app.presentation.model.PluginSourceUi
+import io.github.ciurlaro.codexmobile.app.presentation.model.pluginSourceItems
 import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
@@ -69,6 +73,10 @@ data class AppUiState(
     val isExtensionMutationLoading: Boolean = false,
     val extensionOperationId: String? = null,
     val extensionActionError: ExtensionActionError? = null,
+    val extensionNotice: ExtensionNotice? = null,
+    val extensionSourcesOpen: Boolean = false,
+    val knownPluginSourceIds: Set<String> = emptySet(),
+    val enabledPluginSourceIds: Set<String> = emptySet(),
     val unavailablePluginIds: Set<String> = emptySet(),
     val isPluginDetailLoading: Boolean = false,
     val skillsError: String? = null,
@@ -76,7 +84,6 @@ data class AppUiState(
     val installedPluginsError: String? = null,
     val availablePluginsError: String? = null,
     val skillSourceError: String? = null,
-    val pluginChangesNeedNewChat: Boolean = false,
     val pendingExtensionRemoval: ExtensionRemoval? = null,
     val connectorAuthUrl: String? = null,
     val connectorAuthName: String? = null,
@@ -111,4 +118,7 @@ data class AppUiState(
             .distinct()
             .joinToString("\n")
             .ifBlank { null }
+
+    val pluginSources: List<PluginSourceUi>
+        get() = pluginSourceItems(PluginSourceSelection(knownPluginSourceIds, enabledPluginSourceIds))
 }

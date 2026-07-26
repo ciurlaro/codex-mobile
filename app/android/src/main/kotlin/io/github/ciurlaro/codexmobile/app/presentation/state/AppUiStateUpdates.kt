@@ -46,7 +46,6 @@ internal fun AppUiState.withNewChat() = copy(
     activeSelector = null,
     historySearch = "",
     isConversationLoading = false,
-    pluginChangesNeedNewChat = false,
 )
 
 internal fun AppUiState.withoutConversation(sessionId: SessionId): AppUiState {

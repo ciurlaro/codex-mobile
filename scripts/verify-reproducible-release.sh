@@ -9,8 +9,14 @@ build() {
     "$root/gradlew" --no-build-cache clean :app:android:assembleRelease
 }
 
-build
-cp "$root/app/android/build/outputs/apk/release/android-release.apk" "$evidence/first.apk"
+baseline=${1:-}
+if [[ -n "$baseline" ]]; then
+    [[ -f "$baseline" ]] || { echo "baseline release APK does not exist: $baseline" >&2; exit 1; }
+    cp "$baseline" "$evidence/first.apk"
+else
+    build
+    cp "$root/app/android/build/outputs/apk/release/android-release.apk" "$evidence/first.apk"
+fi
 build
 cp "$root/app/android/build/outputs/apk/release/android-release.apk" "$evidence/second.apk"
 

@@ -25,6 +25,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -120,6 +121,27 @@ class CodexSessionControllerTest {
             assertTrue(controller.submit("second"))
             await { fake.promptCount.get() == 2 }
             assertEquals(2, fake.openSessionCount.get())
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun pluginChangesWaitForTheCurrentReply(): Unit = runBlocking {
+        val fake = FakeAgentClient()
+        val controller = controller(fake)
+        try {
+            fake.emit(AgentEvent.Authenticated)
+            await { controller.state.value.isAuthenticated }
+            assertTrue(controller.submit("keep responding"))
+            await { controller.state.value.isTurnActive }
+
+            val error = assertFailsWith<IllegalStateException> {
+                controller.setPluginEnabled("documents@codex-mobile", true)
+            }
+
+            assertEquals("Wait for the current reply before changing plugins", error.message)
+            assertNull(controller.state.value.externalOperation)
         } finally {
             controller.close()
         }

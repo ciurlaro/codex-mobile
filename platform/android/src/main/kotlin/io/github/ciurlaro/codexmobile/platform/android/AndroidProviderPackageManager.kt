@@ -28,9 +28,11 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -70,13 +72,17 @@ class AndroidProviderPackageManager(
             registry.restoreInstallRecord(plugin.id, previous)
             throw descriptor.verificationFailure(verificationError)
         }
-        requireInstallerPermission()
+        awaitInstallerPermission()
 
         val apk = download(descriptor)
         val contentSha256 = apk.apkContentSha256()
         try {
             registry.recordInstalling(candidate.copy(contentSha256 = contentSha256))
-            installSplit(splitName, apk)
+            installSplit(
+                splitName,
+                apk,
+                ProviderPackageOperation(ProviderPackageOperationKind.INSTALL, plugin.id, descriptor.displayName),
+            )
             runCatching { registry.requireVerified(plugin.id) }
                 .getOrElse { throw descriptor.verificationFailure(it) }
         } catch (error: Exception) {
@@ -124,7 +130,13 @@ class AndroidProviderPackageManager(
         val record = registry.installedRecord(pluginId) ?: return
         registry.markSplitRemovalPending(pluginId)
         try {
-            record.splitNames.filter { it in installedSplits() }.forEach { removeSplit(it) }
+            record.splitNames.filter { it in installedSplits() }.forEach { splitName ->
+                removeSplit(
+                    splitName,
+                    ProviderPackageOperation(ProviderPackageOperationKind.REMOVE, pluginId, record.displayName),
+                )
+            }
+            registry.reconcileRemovedSplits()
         } catch (error: Exception) {
             registry.markSplitRemovalPending(pluginId, error.message ?: "Provider code removal needs retry")
             throw error
@@ -156,14 +168,16 @@ class AndroidProviderPackageManager(
         return ProviderPackageInfo(ProviderPackageDescriptor.parse(manifest.readText()), repository)
     }
 
-    private fun requireInstallerPermission() {
-        if (!appContext.packageManager.canRequestPackageInstalls()) {
-            appContext.startActivity(
-                Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${appContext.packageName}"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
-            error("Allow Codex Mobile to install provider add-ons, then retry")
-        }
+    private suspend fun awaitInstallerPermission() {
+        if (appContext.packageManager.canRequestPackageInstalls()) return
+        appContext.startActivity(
+            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${appContext.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+        check(withTimeoutOrNull(INSTALL_PERMISSION_TIMEOUT_MILLIS) {
+            while (!appContext.packageManager.canRequestPackageInstalls()) delay(250)
+            true
+        } == true) { "Allow Codex Mobile to install provider add-ons" }
     }
 
     private suspend fun download(descriptor: ProviderPackageDescriptor): File = withContext(Dispatchers.IO) {
@@ -208,12 +222,15 @@ class AndroidProviderPackageManager(
         error("Provider download failed")
     }
 
-    private suspend fun installSplit(splitName: String, apk: File) {
+    private suspend fun installSplit(splitName: String, apk: File, operation: ProviderPackageOperation) {
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_INHERIT_EXISTING).apply {
             setAppPackageName(appContext.packageName)
+            if (Build.VERSION.SDK_INT >= 31) {
+                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+            }
             if (Build.VERSION.SDK_INT >= 34) setDontKillApp(true)
         }
-        commit(installer.createSession(params)) { session ->
+        commit(installer.createSession(params), operation) { session ->
             session.openWrite(splitName, 0, apk.length()).use { output ->
                 apk.inputStream().use { it.copyTo(output) }
                 session.fsync(output)
@@ -221,18 +238,26 @@ class AndroidProviderPackageManager(
         }
     }
 
-    private suspend fun removeSplit(splitName: String) {
+    private suspend fun removeSplit(splitName: String, operation: ProviderPackageOperation) {
         val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_INHERIT_EXISTING).apply {
             setAppPackageName(appContext.packageName)
-            removeSplit(splitName)
+            if (Build.VERSION.SDK_INT >= 31) {
+                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
+            }
+            if (Build.VERSION.SDK_INT >= 34) setDontKillApp(true)
         }
-        commit(installer.createSession(params)) {}
+        commit(installer.createSession(params), operation) { session -> session.removeSplit(splitName) }
     }
 
-    private suspend fun commit(sessionId: Int, write: (PackageInstaller.Session) -> Unit) {
+    private suspend fun commit(
+        sessionId: Int,
+        operation: ProviderPackageOperation,
+        write: (PackageInstaller.Session) -> Unit,
+    ) {
         val token = UUID.randomUUID().toString()
         val result = CompletableDeferred<Result<Unit>>()
         ProviderPackageCallbacks.register(token, result)
+        var committed = false
         try {
             installer.openSession(sessionId).use { session ->
                 write(session)
@@ -243,14 +268,21 @@ class AndroidProviderPackageManager(
                         .putExtra(ProviderPackageResultReceiver.EXTRA_TOKEN, token),
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
                 )
+                ProviderPackageOperationStore.begin(appContext, token, operation)
                 session.commit(callback.intentSender)
+                committed = true
             }
             try {
-                withTimeout(PACKAGE_TIMEOUT_MILLIS) { result.await() }.getOrThrow()
+                val completed = withTimeout(PACKAGE_TIMEOUT_MILLIS) { result.await() }
+                ProviderPackageOperationStore.clear(appContext, token)
+                completed.getOrThrow()
             } catch (_: TimeoutCancellationException) {
                 currentCoroutineContext().ensureActive()
                 throw IllegalStateException("Android provider installation timed out")
             }
+        } catch (error: Exception) {
+            if (!committed) ProviderPackageOperationStore.clear(appContext, token)
+            throw error
         } finally {
             ProviderPackageCallbacks.remove(token)
             runCatching { installer.abandonSession(sessionId) }
@@ -276,6 +308,7 @@ class AndroidProviderPackageManager(
         const val MAX_APK_BYTES = 512L * 1024 * 1024
         const val NETWORK_TIMEOUT_MILLIS = 30_000
         const val PACKAGE_TIMEOUT_MILLIS = 15L * 60 * 1_000
+        const val INSTALL_PERMISSION_TIMEOUT_MILLIS = 2L * 60 * 1_000
     }
 }
 
@@ -304,8 +337,9 @@ class ProviderPackageResultReceiver : BroadcastReceiver() {
 
     private fun finish(context: Context, token: String, result: Result<Unit>) {
         if (!ProviderPackageCallbacks.complete(token, result)) {
-            if (result.isSuccess) ProviderInstallRestart.mark(context)
-            notifyAfterRestart(context, result)
+            val completion = ProviderPackageOperationStore.complete(context, token, result)
+            notifyAfterRestart(context, completion, result)
+            reopenApp(context)
         }
     }
 
@@ -316,10 +350,14 @@ class ProviderPackageResultReceiver : BroadcastReceiver() {
         intent.getParcelableExtra(Intent.EXTRA_INTENT)
     }
 
-    private fun notifyAfterRestart(context: Context, result: Result<Unit>) {
+    private fun notifyAfterRestart(
+        context: Context,
+        completion: ProviderPackageCompletion?,
+        result: Result<Unit>,
+    ) {
         val notifications = context.getSystemService(NotificationManager::class.java)
         notifications.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Provider installation", NotificationManager.IMPORTANCE_DEFAULT),
+            NotificationChannel(CHANNEL_ID, "Provider changes", NotificationManager.IMPORTANCE_DEFAULT),
         )
         val openApp = context.packageManager.getLaunchIntentForPackage(context.packageName)?.let {
             PendingIntent.getActivity(context, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -329,21 +367,26 @@ class ProviderPackageResultReceiver : BroadcastReceiver() {
             Notification.Builder(context, CHANNEL_ID)
                 .setSmallIcon(if (result.isSuccess) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_notify_error)
                 .setContentTitle("Codex Mobile")
-                .setContentText(if (result.isSuccess) {
-                    "Provider installed. Open Codex Mobile to finish setup."
-                } else {
-                    result.exceptionOrNull()?.message ?: "Provider installation failed"
-                })
+                .setContentText(completion?.message ?: result.exceptionOrNull()?.message ?: "Provider update finished")
                 .setContentIntent(openApp)
                 .setAutoCancel(true)
                 .build(),
         )
     }
 
+    private fun reopenApp(context: Context) {
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
+        runCatching {
+            context.startActivity(
+                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            )
+        }
+    }
+
     companion object {
         const val EXTRA_TOKEN = "providerPackageToken"
         private const val CHANNEL_ID = "provider-installation"
-        private const val NOTIFICATION_ID = 5002
+        internal const val NOTIFICATION_ID = 5002
     }
 }
 
@@ -358,23 +401,6 @@ internal object ProviderPackageCallbacks {
 
     fun remove(token: String) {
         callbacks.remove(token)
-    }
-}
-
-internal object ProviderInstallRestart {
-    private const val PREFERENCES = "provider-installation"
-    private const val PENDING = "resume"
-
-    fun mark(context: Context) {
-        check(context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit().putBoolean(PENDING, true).commit())
-    }
-
-    @Synchronized
-    fun consume(context: Context): Boolean {
-        val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
-        if (!preferences.getBoolean(PENDING, false)) return false
-        check(preferences.edit().remove(PENDING).commit())
-        return true
     }
 }
 

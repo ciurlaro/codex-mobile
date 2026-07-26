@@ -26,6 +26,8 @@ sealed interface AppUiEvent {
     ) : AppUiEvent
     data object CloseExtensions : AppUiEvent
     data object RefreshExtensions : AppUiEvent
+    data object OpenExtensionSources : AppUiEvent
+    data object CloseExtensionSources : AppUiEvent
     data object CloseSkillDetails : AppUiEvent
     data object LoadMoreSkillSource : AppUiEvent
     data object ClosePluginDetails : AppUiEvent
@@ -57,6 +59,7 @@ sealed interface AppUiEvent {
     data class SelectExtensionFilter(val filter: ExtensionFilter) : AppUiEvent
     data class SelectExtensionSection(val section: ExtensionSection) : AppUiEvent
     data class SearchExtensions(val query: String) : AppUiEvent
+    data class TogglePluginSource(val sourceId: String, val enabled: Boolean) : AppUiEvent
     data class ToggleSkill(val path: String, val enabled: Boolean) : AppUiEvent
     data class OpenSkill(val skill: AgentSkill) : AppUiEvent
     data class OpenSkillPackage(val skill: AgentSkillPackage) : AppUiEvent

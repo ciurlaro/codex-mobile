@@ -38,6 +38,7 @@ required=(
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/BuiltInMutationJournal.kt
   scripts/generate-sbom.py scripts/verify-release.sh scripts/release-local.sh scripts/install-device-fast.sh
+  scripts/verify-provider-uninstall-device.sh
 )
 for path in "${required[@]}"; do test -f "$path" || { echo "missing required file: $path" >&2; exit 1; }; done
 
@@ -78,8 +79,11 @@ reject_matches -n -i \
   app platform agent core docs gradle/verification-metadata.xml \
   --glob '!**/build/**' --glob '!**/src/test/**' --glob '!**/src/androidTest/**'
 grep -q 'REQUEST_INSTALL_PACKAGES' app/android/src/main/AndroidManifest.xml
+grep -q 'UPDATE_PACKAGES_WITHOUT_USER_ACTION' app/android/src/main/AndroidManifest.xml
 grep -q 'MODE_INHERIT_EXISTING' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
-grep -q 'removeSplit' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
+grep -q 'USER_ACTION_NOT_REQUIRED' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
+grep -q 'session.removeSplit(splitName)' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
+test "$(grep -c 'setDontKillApp(true)' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt)" = 2
 grep -q 'const val PROVIDER_API = 2' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
 grep -q 'AndroidKeyStore' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
 grep -q 'AES/GCM/NoPadding' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
