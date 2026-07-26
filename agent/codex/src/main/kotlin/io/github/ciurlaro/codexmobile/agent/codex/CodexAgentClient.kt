@@ -3,6 +3,7 @@ package io.github.ciurlaro.codexmobile.agent.codex
 import io.github.ciurlaro.codexmobile.appserver.client.AppServerConnection
 import io.github.ciurlaro.codexmobile.appserver.client.AppServerEvent
 import io.github.ciurlaro.codexmobile.appserver.client.AppServerRpcException
+import io.github.ciurlaro.codexmobile.appserver.client.AppServerTimeoutException
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.*
 import io.github.ciurlaro.codexmobile.appserver.transport.CodexRuntimeFactory
 import io.github.ciurlaro.codexmobile.core.AgentClient
@@ -82,6 +83,7 @@ class CodexAgentClient(
     threadProviderStateDirectory: File? = null,
     private val builtInToolDispatcher: BuiltInToolDispatcher? = null,
     private val providerHost: PluginProviderHost? = null,
+    private val pluginRequestTimeoutMillis: Long = 120_000,
 ) : AgentClient {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val eventsChannel = Channel<AgentEvent>(capacity = EVENT_BUFFER_SIZE)
@@ -107,6 +109,7 @@ class CodexAgentClient(
         builtInToolDefinitions.map(BuiltInToolDefinition::pluginId).distinct().forEach { put(it, true) }
     }
     private val builtInToolGate = Mutex()
+    private val pluginRequestMutex = Mutex()
     private val builtInEnablementLoaded = AtomicBoolean(false)
     private val pendingProviderCompletionRunning = AtomicBoolean(false)
     private val turnStateLock = Any()
@@ -128,6 +131,10 @@ class CodexAgentClient(
         ),
         requestTimeoutMillis = requestTimeoutMillis,
     )
+
+    init {
+        require(pluginRequestTimeoutMillis > 0) { "Plugin request timeout must be positive" }
+    }
 
     init {
         scope.launch {
@@ -329,6 +336,7 @@ class CodexAgentClient(
             workingDirectory,
             AppServerClientMethods.PluginInstalled,
             PluginInstalledParams(cwds = listOf(workingDirectory)),
+            timeoutMillis = pluginRequestTimeoutMillis,
             marketplaces = PluginInstalledResponse::marketplaces,
             loadErrors = PluginInstalledResponse::marketplaceLoadErrors,
         ).copy(errors = emptyList())
@@ -348,7 +356,7 @@ class CodexAgentClient(
                 workingDirectory,
                 AppServerClientMethods.PluginList,
                 PluginListParams(cwds = listOf(workingDirectory)),
-                PLUGIN_CATALOG_TIMEOUT_MILLIS,
+                pluginRequestTimeoutMillis,
                 marketplaces = PluginListResponse::marketplaces,
                 loadErrors = PluginListResponse::marketplaceLoadErrors,
             ) { writePluginCache(cache, it) }
@@ -371,11 +379,7 @@ class CodexAgentClient(
         onResponse: (R) -> Unit = {},
     ): AgentPluginCatalog {
         require(workingDirectory.startsWith('/')) { "Working directory must be absolute" }
-        val result = if (timeoutMillis == null) {
-            connection.request(method, params)
-        } else {
-            connection.request(method, params, timeoutMillis)
-        }
+        val result = pluginRequest(method, params, timeoutMillis ?: pluginRequestTimeoutMillis)
         val errors = loadErrors(result).orEmpty().map { it.message }.distinct()
         val catalog = AgentPluginCatalog(parsePluginMarketplaces(marketplaces(result)), errors)
         if (builtInToolDispatcher != null) {
@@ -386,6 +390,20 @@ class CodexAgentClient(
         }
         runCatching { onResponse(result) }
         return catalog
+    }
+
+    private suspend fun <P, R> pluginRequest(
+        method: AppServerMethod<P, R>,
+        params: P,
+        timeoutMillis: Long = pluginRequestTimeoutMillis,
+        retryOnTimeout: Boolean = false,
+    ): R = pluginRequestMutex.withLock {
+        try {
+            connection.request(method, params, timeoutMillis)
+        } catch (error: AppServerTimeoutException) {
+            if (!retryOnTimeout) throw error
+            connection.request(method, params, timeoutMillis)
+        }
     }
 
     private fun pluginCacheFile(workingDirectory: String): File? {
@@ -431,7 +449,7 @@ class CodexAgentClient(
     override suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail {
         return try {
             parsePluginDetail(
-                connection.request(AppServerClientMethods.PluginRead, pluginReadParams(plugin)).plugin,
+                pluginRequest(AppServerClientMethods.PluginRead, pluginReadParams(plugin)).plugin,
             ).let { detail ->
                 detail.copy(providerManaged = providerHost?.manages(plugin.id) == true)
             }
@@ -447,9 +465,10 @@ class CodexAgentClient(
         } else {
             parseGitHubMarketplaceSource(source)
         }
-        connection.request(
+        pluginRequest(
             AppServerClientMethods.MarketplaceAdd,
             MarketplaceAddParams(marketplace.repository, marketplace.refName, marketplace.sparsePaths),
+            retryOnTimeout = true,
         )
         eventsChannel.send(AgentEvent.PluginsChanged)
     }
@@ -477,7 +496,11 @@ class CodexAgentClient(
             return AgentPluginInstallResult(detail.summary.authPolicy, emptyList())
         }
         val result = try {
-            connection.request(AppServerClientMethods.PluginInstall, pluginInstallParams(plugin))
+            pluginRequest(
+                AppServerClientMethods.PluginInstall,
+                pluginInstallParams(plugin),
+                retryOnTimeout = true,
+            )
         } catch (error: AppServerRpcException) {
             throw error.forPlugin(plugin)
         }
@@ -504,7 +527,7 @@ class CodexAgentClient(
             }
             removalWarning = preparation.message
         }
-        connection.request(
+        pluginRequest(
             AppServerClientMethods.PluginUninstall,
             PluginUninstallParams(plugin.id),
         )
@@ -512,12 +535,8 @@ class CodexAgentClient(
             host.remove(plugin.id)
             eventsChannel.send(AgentEvent.PluginsChanged)
             return AgentPluginRemovalResult(
-                completed = false,
-                restartRequired = true,
-                message = listOfNotNull(
-                    removalWarning,
-                    "Restart Codex Mobile to verify that the provider code was removed.",
-                ).joinToString(" "),
+                completed = true,
+                message = removalWarning,
             )
         }
         eventsChannel.send(AgentEvent.PluginsChanged)
@@ -528,15 +547,20 @@ class CodexAgentClient(
         require(pluginId.isNotBlank() && '.' !in pluginId) { "Invalid plugin ID" }
         if (builtInPluginEnabled.containsKey(pluginId)) {
             builtInToolGate.withLock {
-                connection.request(
+                pluginRequest(
                     AppServerClientMethods.ConfigValueWrite,
                     pluginEnablementParams(pluginId, enabled),
+                    retryOnTimeout = true,
                 )
                 builtInPluginEnabled[pluginId] = enabled
             }
             notifyOpenSessionsOfPluginAvailability()
         } else {
-            connection.request(AppServerClientMethods.ConfigValueWrite, pluginEnablementParams(pluginId, enabled))
+            pluginRequest(
+                AppServerClientMethods.ConfigValueWrite,
+                pluginEnablementParams(pluginId, enabled),
+                retryOnTimeout = true,
+            )
         }
     }
 
@@ -996,10 +1020,9 @@ class CodexAgentClient(
         builtInToolGate.withLock {
             if (builtInEnablementLoaded.get()) return
             runCatching {
-                val result = connection.request(
+                val result = pluginRequest(
                     AppServerClientMethods.PluginInstalled,
                     PluginInstalledParams(cwds = listOf(workingDirectory)),
-                    PLUGIN_CATALOG_TIMEOUT_MILLIS,
                 )
                 applyBuiltInPluginEnablement(
                     AgentPluginCatalog(parsePluginMarketplaces(result.marketplaces), emptyList()),
@@ -1410,7 +1433,10 @@ class CodexAgentClient(
     }
 
     private suspend fun emitAuthenticated() {
-        if (authenticated.compareAndSet(false, true)) eventsChannel.send(AgentEvent.Authenticated)
+        if (authenticated.compareAndSet(false, true)) {
+            eventsChannel.send(AgentEvent.Authenticated)
+            reconcileProvidersInBackground()
+        }
     }
 
     private suspend fun applyLoginCompletion(completion: LoginCompletion) {
@@ -1565,21 +1591,23 @@ class CodexAgentClient(
 
     private suspend fun disableManagedProviderMcp(pluginId: String) {
         providerHost?.mcpServerNames(pluginId).orEmpty().forEach { serverName ->
-            connection.request(
+            pluginRequest(
                 AppServerClientMethods.ConfigValueWrite,
                 ConfigValueWriteParams(
                     keyPath = "mcp_servers.$serverName",
                     value = JsonNull,
                     mergeStrategy = MergeStrategy.UPSERT,
                 ),
+                retryOnTimeout = true,
             )
-            connection.request(
+            pluginRequest(
                 AppServerClientMethods.ConfigValueWrite,
                 ConfigValueWriteParams(
                     keyPath = "plugins.$pluginId.mcp_servers.$serverName.enabled",
                     value = JsonPrimitive(false),
                     mergeStrategy = MergeStrategy.UPSERT,
                 ),
+                retryOnTimeout = true,
             )
         }
     }
@@ -1593,6 +1621,7 @@ class CodexAgentClient(
 
     private suspend fun completePendingProviderInstalls() {
         val host = providerHost ?: return
+        refreshBuiltInTools()
         host.pendingInstalls().forEach { plugin ->
             val detail = readPlugin(plugin)
             check(detail.mcpServers.toSet() == host.mcpServerNames(plugin.id)) {
@@ -1600,7 +1629,11 @@ class CodexAgentClient(
             }
             disableManagedProviderMcp(plugin.id)
             if (!detail.summary.installed) {
-                connection.request(AppServerClientMethods.PluginInstall, pluginInstallParams(plugin))
+                pluginRequest(
+                    AppServerClientMethods.PluginInstall,
+                    pluginInstallParams(plugin),
+                    retryOnTimeout = true,
+                )
             }
             host.installCompleted(plugin.id)
         }
@@ -1611,7 +1644,7 @@ class CodexAgentClient(
         val installed = catalog.plugins.filter { it.installed }.map { it.reference.id }.toSet()
         host.preparedRemovals().forEach { plugin ->
             if (plugin.id in installed) {
-                connection.request(
+                pluginRequest(
                     AppServerClientMethods.PluginUninstall,
                     PluginUninstallParams(plugin.id),
                 )
@@ -1620,15 +1653,21 @@ class CodexAgentClient(
         }
     }
 
-    private fun reconcileProvidersInBackground(catalog: AgentPluginCatalog) {
+    private fun reconcileProvidersInBackground(catalog: AgentPluginCatalog? = null) {
         val host = providerHost ?: return
-        if (host.pendingInstalls().isEmpty() && host.preparedRemovals().isEmpty()) return
+        if (host.pendingInstalls().isEmpty() && (catalog == null || host.preparedRemovals().isEmpty())) return
         if (!pendingProviderCompletionRunning.compareAndSet(false, true)) return
         scope.launch {
             try {
                 completePendingProviderInstalls()
-                completePreparedProviderRemovals(catalog)
+                if (catalog != null) completePreparedProviderRemovals(catalog)
                 eventsChannel.send(AgentEvent.PluginsChanged)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                eventsChannel.send(
+                    AgentEvent.Failure(null, "provider_install_recovery_failed", error.visibleMessage(), true),
+                )
             } finally {
                 pendingProviderCompletionRunning.set(false)
             }
@@ -1744,7 +1783,6 @@ class CodexAgentClient(
         const val MAX_BUILT_IN_RESULT_CHARS = 250_000
         const val BUILT_IN_TOOL_DEADLINE_MILLIS = 120_000L
         const val SKILL_CHUNK_BYTES = 32 * 1024
-        const val PLUGIN_CATALOG_TIMEOUT_MILLIS = 20_000L
         const val CATALOG_CACHE_TTL_MILLIS = 6 * 60 * 60 * 1000L
         const val AVAILABILITY_MESSAGE_PREFIX = "codex-mobile:plugin-availability"
         const val INTERNAL_APPS_MCP_SERVER = "codex_apps"

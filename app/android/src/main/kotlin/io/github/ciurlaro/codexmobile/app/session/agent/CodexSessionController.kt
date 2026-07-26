@@ -128,6 +128,10 @@ internal class CodexSessionController(
             mutableState.update { it.copy(statusMessage = "Sign in before sending a message") }
             return false
         }
+        if (state.value.externalOperation != null) {
+            mutableState.update { it.copy(statusMessage = "Wait for the extension change to finish") }
+            return false
+        }
         if (closed.get() || !turnClaimed.compareAndSet(false, true)) return false
         cancellationStarted.set(false)
         cancellationDispatched.set(false)
@@ -249,13 +253,13 @@ internal class CodexSessionController(
         agentClient.readPlugin(plugin)
 
     suspend fun installPlugin(plugin: AgentPluginReference): AgentPluginInstallResult =
-        runExternalOperation("Installing ${plugin.name}") { agentClient.installPlugin(plugin) }
+        runPluginOperation("Installing ${plugin.name}") { agentClient.installPlugin(plugin) }
 
     suspend fun uninstallPlugin(plugin: AgentPluginReference): AgentPluginRemovalResult =
-        runExternalOperation("Removing plugin") { agentClient.uninstallPlugin(plugin) }
+        runPluginOperation("Removing plugin") { agentClient.uninstallPlugin(plugin) }
 
     suspend fun setPluginEnabled(pluginId: String, enabled: Boolean) =
-        runExternalOperation("Updating plugin") { agentClient.setPluginEnabled(pluginId, enabled) }
+        runPluginOperation("Updating plugin") { agentClient.setPluginEnabled(pluginId, enabled) }
 
     suspend fun listConnectors(forceReload: Boolean = false): List<AgentConnector> =
         agentClient.listConnectors(state.value.sessionId, forceReload)
@@ -500,6 +504,12 @@ internal class CodexSessionController(
             }
         }
     }
+
+    private suspend fun <T> runPluginOperation(label: String, block: suspend () -> T): T =
+        runExternalOperation(label) {
+            check(!state.value.isTurnActive) { "Wait for the current reply before changing plugins" }
+            block()
+        }
 
     private fun dispatchCancellation(sessionId: SessionId) {
         if (!cancellationDispatched.compareAndSet(false, true)) return

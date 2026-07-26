@@ -154,6 +154,8 @@ class MainActivity : ComponentActivity() {
                             viewModel.openExtensions(event.filter, event.returnScreen)
                         AppUiEvent.CloseExtensions -> viewModel.closeExtensions()
                         AppUiEvent.RefreshExtensions -> viewModel.refreshExtensions()
+                        AppUiEvent.OpenExtensionSources -> viewModel.openExtensionSources()
+                        AppUiEvent.CloseExtensionSources -> viewModel.closeExtensionSources()
                         AppUiEvent.CloseSkillDetails -> viewModel.closeSkillDetails()
                         AppUiEvent.LoadMoreSkillSource -> viewModel.loadMoreSkillSource()
                         AppUiEvent.ClosePluginDetails -> viewModel.closePluginDetails()
@@ -203,6 +205,8 @@ class MainActivity : ComponentActivity() {
                         is AppUiEvent.SelectExtensionFilter -> viewModel.selectExtensionFilter(event.filter)
                         is AppUiEvent.SelectExtensionSection -> viewModel.selectExtensionSection(event.section)
                         is AppUiEvent.SearchExtensions -> viewModel.searchExtensions(event.query)
+                        is AppUiEvent.TogglePluginSource ->
+                            viewModel.togglePluginSource(event.sourceId, event.enabled)
                         is AppUiEvent.ToggleSkill -> viewModel.toggleSkill(event.path, event.enabled)
                         is AppUiEvent.OpenSkill -> viewModel.openSkill(event.skill)
                         is AppUiEvent.OpenSkillPackage -> viewModel.openSkillPackage(event.skill)
@@ -281,8 +285,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        viewModel.resumeAfterProviderInstall()
+        viewModel.resumeAfterProviderPackageUpdate()
         viewModel.refreshStorage()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        viewModel.resumeAfterProviderPackageUpdate()
     }
 
 }

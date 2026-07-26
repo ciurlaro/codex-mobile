@@ -10,7 +10,12 @@ import io.github.ciurlaro.codexmobile.app.presentation.invocation.suggestedInvoc
 import io.github.ciurlaro.codexmobile.app.presentation.invocation.withRecentInvocation
 import io.github.ciurlaro.codexmobile.app.presentation.state.AppUiState
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatMessage
+import io.github.ciurlaro.codexmobile.app.presentation.model.CODEX_MOBILE_PLUGIN_SOURCE_ID
+import io.github.ciurlaro.codexmobile.app.presentation.model.OPENAI_PLUGIN_SOURCE_ID
+import io.github.ciurlaro.codexmobile.app.presentation.model.canonicalPluginSourceId
 import io.github.ciurlaro.codexmobile.app.presentation.model.groupedByPins
+import io.github.ciurlaro.codexmobile.app.presentation.model.initialPluginSourceSelection
+import io.github.ciurlaro.codexmobile.app.presentation.model.pluginSourceItems
 import io.github.ciurlaro.codexmobile.app.presentation.state.withStreamingAssistant
 import io.github.ciurlaro.codexmobile.app.presentation.state.withSubmittedTurn
 import io.github.ciurlaro.codexmobile.app.presentation.state.withoutConversation
@@ -38,6 +43,31 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PresentationModelsTest {
+    @Test
+    fun freshPluginSourcesEnableOnlyCodexMobile() {
+        val selection = initialPluginSourceSelection(null, null, appWasUpgraded = false)
+
+        assertEquals(setOf(CODEX_MOBILE_PLUGIN_SOURCE_ID, OPENAI_PLUGIN_SOURCE_ID), selection.knownIds)
+        assertEquals(setOf(CODEX_MOBILE_PLUGIN_SOURCE_ID), selection.enabledIds)
+        assertEquals(
+            listOf("Codex Mobile" to true, "OpenAI curated" to false),
+            pluginSourceItems(selection).map { it.displayName to it.enabled },
+        )
+    }
+
+    @Test
+    fun savedPluginSourceChoicesSurviveUpgradesAndOpenAiAliasesNormalize() {
+        val selection = initialPluginSourceSelection(
+            savedKnownIds = setOf("codex-mobile", "openai-curated", "team-marketplace"),
+            savedEnabledIds = setOf("team-marketplace"),
+            appWasUpgraded = true,
+        )
+
+        assertEquals(OPENAI_PLUGIN_SOURCE_ID, canonicalPluginSourceId("openai-curated"))
+        assertEquals(setOf("team-marketplace"), selection.enabledIds)
+        assertEquals(3, pluginSourceItems(selection).size)
+    }
+
     @Test
     fun effortLabelsAreCentralizedAndUnknownValuesRemainReadable() {
         assertEquals("Extra High", effortLabel("xhigh"))

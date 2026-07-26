@@ -2,21 +2,18 @@ name: Verify
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
   contents: read
 
-jobs:
-  structure:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - run: sudo apt-get update && sudo apt-get install --yes ripgrep
-      - run: bash scripts/verify-structure.sh
+concurrency:
+  group: codex-mobile-verify-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
+jobs:
   build:
-    needs: structure
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -31,23 +28,31 @@ jobs:
           sudo apt-get install --yes libarchive-tools ninja-build patchelf ripgrep zip
           sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865"
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+      - name: Verify structure, tests, debug builds, and lint
+        run: |
+          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
+          bash scripts/verify-structure.sh
+          ./gradlew test assembleDebug assembleDebugAndroidTest lint --stacktrace
       - name: Create ephemeral release key
+        if: github.event_name == 'push'
         run: >-
           keytool -genkeypair -noprompt -keystore "$RUNNER_TEMP/release.jks"
           -storepass android -keypass android -alias ci-release -keyalg RSA
           -keysize 3072 -validity 1 -dname "CN=Codex Mobile CI"
-      - name: Verify debug and signed release builds
+      - name: Build and verify the main release candidate
+        if: github.event_name == 'push'
         env:
           CODEX_MOBILE_RELEASE_STORE_FILE: ${{ runner.temp }}/release.jks
           CODEX_MOBILE_RELEASE_STORE_PASSWORD: android
           CODEX_MOBILE_RELEASE_KEY_ALIAS: ci-release
           CODEX_MOBILE_RELEASE_KEY_PASSWORD: android
         run: |
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
-          ./gradlew test assembleDebug assembleDebugAndroidTest lint assembleRelease bundleRelease --stacktrace
+          ./gradlew assembleRelease bundleRelease --stacktrace
           scripts/verify-release.sh
-          scripts/verify-reproducible-release.sh
+          scripts/verify-reproducible-release.sh app/android/build/outputs/apk/release/android-release.apk
+          printf '%s\n' "$GITHUB_SHA" > source-revision.txt
       - name: Upload verified host candidate
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codex-mobile-host-candidate
@@ -61,3 +66,4 @@ jobs:
             LICENSES/MLKIT-EXCEPTION.txt
             THIRD_PARTY_NOTICES.md
             release-signing-certificate.sha256
+            source-revision.txt

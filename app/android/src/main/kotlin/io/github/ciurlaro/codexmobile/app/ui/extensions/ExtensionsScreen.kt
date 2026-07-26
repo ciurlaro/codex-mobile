@@ -74,6 +74,14 @@ internal fun ExtensionsScreen(state: AppUiState, onEvent: (AppUiEvent) -> Unit) 
         if (state.selectedSkillPackage != null) showGitHubDialog = false
     }
     when {
+        state.extensionSourcesOpen -> ExtensionSourcesScreen(
+            state = state,
+            onEvent = onEvent,
+            onAddSource = {
+                onEvent(AppUiEvent.DismissPluginSource)
+                showPluginSourceDialog = true
+            },
+        )
         state.selectedSkill != null -> SkillDetailScreen(state.selectedSkill, state, onEvent)
         state.selectedSkillPackage != null -> SkillPackageDetailScreen(state.selectedSkillPackage, state, onEvent)
         state.selectedPlugin != null -> PluginDetailScreen(state.selectedPlugin, state, onEvent)
@@ -83,10 +91,6 @@ internal fun ExtensionsScreen(state: AppUiState, onEvent: (AppUiEvent) -> Unit) 
             onInstallFromGitHub = {
                 onEvent(AppUiEvent.DismissGitHubSkillImport)
                 showGitHubDialog = true
-            },
-            onAddPluginSource = {
-                onEvent(AppUiEvent.DismissPluginSource)
-                showPluginSourceDialog = true
             },
         )
     }
@@ -139,7 +143,7 @@ internal fun ExtensionsScreen(state: AppUiState, onEvent: (AppUiEvent) -> Unit) 
 
 @Composable
 private fun PluginSourceDialog(state: AppUiState, onAdd: (String) -> Unit, onDismiss: () -> Unit) {
-    var url by remember { mutableStateOf(DEFAULT_PLUGIN_SOURCE) }
+    var url by remember { mutableStateOf("") }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     AlertDialog(
@@ -171,8 +175,6 @@ private fun PluginSourceDialog(state: AppUiState, onAdd: (String) -> Unit, onDis
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
-
-private const val DEFAULT_PLUGIN_SOURCE = "https://github.com/ciurlaro/codex-mobile-plugins"
 
 @Composable
 private fun GitHubSkillDialog(
@@ -257,7 +259,6 @@ private fun ExtensionCatalog(
     state: AppUiState,
     onEvent: (AppUiEvent) -> Unit,
     onInstallFromGitHub: () -> Unit,
-    onAddPluginSource: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize().statusAndNavigationPadding()) {
         ExtensionTopBar("Extensions") { onEvent(AppUiEvent.CloseExtensions) }
@@ -267,34 +268,33 @@ private fun ExtensionCatalog(
         ExtensionFilterChips(state.extensionFilter) {
             onEvent(AppUiEvent.SelectExtensionFilter(it))
         }
-        TextField(
-            value = state.extensionSearch,
-            onValueChange = { onEvent(AppUiEvent.SearchExtensions(it)) },
-            placeholder = { Text("Search extensions") },
-            leadingIcon = { AppIcon(IconGlyph.SEARCH, Modifier.size(20.dp), ChatColors.Secondary) },
-            singleLine = true,
-            shape = RoundedCornerShape(ChatDimensions.ControlCorner),
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = ChatColors.Elevated,
-                unfocusedContainerColor = ChatColors.Elevated,
-                focusedIndicatorColor = ChatColors.Accent,
-                unfocusedIndicatorColor = ChatColors.Border,
-            ),
-            modifier = Modifier.fillMaxWidth().padding(
-                horizontal = ChatDimensions.ScreenPadding,
-                vertical = 8.dp,
-            ),
-        )
-        if (state.pluginChangesNeedNewChat) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = ChatDimensions.ScreenPadding, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text("Plugin changes are available in a new chat", Modifier.weight(1f))
-                Button(onClick = { onEvent(AppUiEvent.StartNewChat) }) { Text("New chat") }
-            }
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = ChatDimensions.ScreenPadding, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextField(
+                value = state.extensionSearch,
+                onValueChange = { onEvent(AppUiEvent.SearchExtensions(it)) },
+                placeholder = { Text("Search extensions") },
+                leadingIcon = { AppIcon(IconGlyph.SEARCH, Modifier.size(20.dp), ChatColors.Secondary) },
+                singleLine = true,
+                shape = RoundedCornerShape(ChatDimensions.ControlCorner),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = ChatColors.Elevated,
+                    unfocusedContainerColor = ChatColors.Elevated,
+                    focusedIndicatorColor = ChatColors.Accent,
+                    unfocusedIndicatorColor = ChatColors.Border,
+                ),
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(Modifier.size(10.dp))
+            CircleIconButton(
+                label = "Manage extension sources",
+                glyph = IconGlyph.SETTINGS,
+                onClick = { onEvent(AppUiEvent.OpenExtensionSources) },
+            )
         }
-        ExtensionList(state, onEvent, onInstallFromGitHub, onAddPluginSource)
+        ExtensionList(state, onEvent, onInstallFromGitHub)
     }
 }
 
@@ -353,7 +353,6 @@ private fun ExtensionList(
     state: AppUiState,
     onEvent: (AppUiEvent) -> Unit,
     onInstallFromGitHub: () -> Unit,
-    onAddPluginSource: () -> Unit,
 ) {
     val query = state.extensionSearch.trim()
     val installed = state.extensionSection == ExtensionSection.INSTALLED
@@ -391,6 +390,9 @@ private fun ExtensionList(
         if (errors.isNotEmpty()) {
             item("extension-error") { ExtensionError(errors.joinToString("\n"), onEvent) }
         }
+        state.extensionNotice?.let { notice ->
+            item("extension-notice") { ExtensionNoticeCard(notice.message, notice.isError) }
+        }
         if (skillsLoading || pluginsLoading) {
             item("capabilities-loading") {
                 ExtensionLoading(if (installed) "Loading extensions…" else "Refreshing catalog…")
@@ -402,15 +404,6 @@ private fun ExtensionList(
                     AppIcon(IconGlyph.PLUS, Modifier.size(18.dp), ChatColors.Accent)
                     Spacer(Modifier.size(8.dp))
                     Text("Install a skill from GitHub")
-                }
-            }
-        }
-        if (!installed && showPlugins) {
-            item("plugin-source") {
-                TextButton(onClick = onAddPluginSource, modifier = Modifier.fillMaxWidth()) {
-                    AppIcon(IconGlyph.PLUS, Modifier.size(18.dp), ChatColors.Accent)
-                    Spacer(Modifier.size(8.dp))
-                    Text("Add a plugin source from GitHub")
                 }
             }
         }
@@ -738,7 +731,7 @@ private fun PluginDetailScreen(detail: AgentPluginDetail, state: AppUiState, onE
 }
 
 @Composable
-private fun ExtensionTopBar(title: String, onBack: () -> Unit) {
+internal fun ExtensionTopBar(title: String, onBack: () -> Unit) {
     Box(Modifier.fillMaxWidth().height(ChatDimensions.TopBarHeight).padding(horizontal = ChatDimensions.ScreenPadding)) {
         CircleIconButton("Back", IconGlyph.BACK, Modifier.align(Alignment.CenterStart), onClick = onBack)
         Text(
@@ -791,6 +784,22 @@ private fun ExtensionError(value: String, onEvent: (AppUiEvent) -> Unit) {
 @Composable
 private fun ActionError(value: String) {
     Text(value, color = ChatColors.Danger, style = MaterialTheme.typography.bodySmall)
+}
+
+@Composable
+private fun ExtensionNoticeCard(value: String, isError: Boolean) {
+    Surface(
+        color = (if (isError) ChatColors.Danger else ChatColors.PluginAccent).copy(alpha = 0.12f),
+        shape = RoundedCornerShape(ChatDimensions.ControlCorner),
+        border = BorderStroke(1.dp, if (isError) ChatColors.Danger else ChatColors.PluginAccent),
+    ) {
+        Text(
+            value,
+            color = if (isError) ChatColors.Danger else ChatColors.Primary,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
 }
 
 private fun AppUiState.actionError(operationId: String): String? =

@@ -78,6 +78,33 @@ class SkillsPluginsProtocolTest {
     }
 
     @Test
+    fun `idempotent plugin mutation retries after an ambiguous timeout`(): Unit = runBlocking {
+        var attempts = 0
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "marketplace/add" -> if (++attempts == 2) {
+                    server.respond(message.id, buildJsonObject {
+                        put("alreadyAdded", true)
+                        put("installedRoot", "/marketplace")
+                        put("marketplaceName", "plugins")
+                    })
+                }
+            }
+        }
+
+        CodexAgentClient(
+            runtimeFactory = { runtime },
+            requestTimeoutMillis = 1_000,
+            pluginRequestTimeoutMillis = 50,
+        ).use { client ->
+            client.addPluginMarketplace("/data/user/0/app/no_backup/codex/mobile-marketplaces/snapshot")
+        }
+
+        assertEquals(2, attempts)
+    }
+
+    @Test
     fun `provider code installs before its plugin and is removed after uninstall`(): Unit = runBlocking {
         val events = mutableListOf<String>()
         val provider = object : PluginProviderHost {
@@ -120,11 +147,13 @@ class SkillsPluginsProtocolTest {
         }
         val reference = AgentPluginReference("sample@catalog", "sample", "catalog")
 
-        CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000, providerHost = provider).use { client ->
+        val result = CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000, providerHost = provider).use { client ->
             client.installPlugin(reference)
             client.uninstallPlugin(reference)
         }
 
+        assertTrue(result.completed)
+        assertFalse(result.restartRequired)
         assertEquals(
             listOf(
                 "provider-install", "config-write", "config-write", "plugin-install", "provider-complete", "config-write",
@@ -303,6 +332,45 @@ class SkillsPluginsProtocolTest {
         }
 
         assertEquals(listOf("plugin-uninstall", "provider-remove"), events)
+    }
+
+    @Test
+    fun `pending provider install completes immediately after restart authentication`(): Unit = runBlocking {
+        val reference = AgentPluginReference("drive@openai-curated", "drive", "openai-curated")
+        val completed = CountDownLatch(1)
+        val provider = object : PluginProviderHost {
+            override suspend fun install(plugin: AgentPluginReference, mcpServerNames: Set<String>) =
+                ProviderInstallDisposition.NOT_REQUIRED
+            override fun pendingInstalls() = listOf(reference)
+            override fun manages(pluginId: String) = true
+            override fun mcpServerNames(pluginId: String) = setOf("drive")
+            override fun installCompleted(pluginId: String) = completed.countDown()
+            override suspend fun prepareRemoval(pluginId: String) = ProviderRemovalResult.ready()
+            override suspend fun remove(pluginId: String) = Unit
+        }
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "account/read" -> server.respond(message.id, buildJsonObject {
+                    putJsonObject("account") { put("type", "chatgpt") }
+                })
+                "plugin/read" -> server.respond(message.id, pluginDetail(installed = false))
+                "config/value/write" -> server.respond(message.id, buildJsonObject {})
+                "plugin/install" -> server.respond(message.id, buildJsonObject {
+                    put("authPolicy", "ON_USE")
+                    putJsonArray("appsNeedingAuth") {}
+                })
+            }
+        }
+
+        CodexAgentClient(
+            runtimeFactory = { runtime },
+            requestTimeoutMillis = 1_000,
+            providerHost = provider,
+        ).use { client ->
+            client.authenticate()
+            assertTrue(completed.await(1, TimeUnit.SECONDS))
+        }
     }
 
     @Test

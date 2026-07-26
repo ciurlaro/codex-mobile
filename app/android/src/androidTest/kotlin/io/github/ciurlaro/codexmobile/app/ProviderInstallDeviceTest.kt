@@ -3,27 +3,24 @@ package io.github.ciurlaro.codexmobile.app
 import android.content.Context
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
+import android.view.accessibility.AccessibilityNodeInfo
+import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.ciurlaro.codexmobile.agent.codex.CodexAgentClient
-import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.app.ui.shell.MainActivity
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.platform.android.AndroidPlatform
-import io.github.ciurlaro.codexmobile.platform.android.AndroidProviderRegistry
-import io.github.ciurlaro.codexmobile.platform.android.InstalledProvider
-import io.github.ciurlaro.codexmobile.platform.android.ProviderPackageState
 import io.github.ciurlaro.codexmobile.provider.api.ProviderCall
 import io.github.ciurlaro.codexmobile.provider.api.ProviderContent
 import io.github.ciurlaro.codexmobile.provider.api.ProviderResult
 import java.io.File
-import java.security.MessageDigest
-import java.util.zip.ZipFile
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
-import org.json.JSONArray
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -38,16 +35,13 @@ class ProviderInstallDeviceTest {
     fun signedProvidersInstallThroughAppServerAndExecuteOnDevice(): Unit = runBlocking {
         val arguments = InstrumentationRegistry.getArguments()
         assumeTrue("Run with -e providerE2e true", arguments.getString("providerE2e") == "true")
-        val marketplaceSource = File(checkNotNull(arguments.getString("marketplacePath"))).canonicalFile
+        val marketplaceUrl = arguments.getString("marketplaceUrl") ?: MARKETPLACE_URL
         val workspace = File(checkNotNull(arguments.getString("workspacePath"))).canonicalFile
-        assertTrue(marketplaceSource.isDirectory)
         assertTrue(workspace.isDirectory)
+        assertFalse(PROVIDER_SPLIT in installedSplits())
 
         val platform = AndroidPlatform(context)
         platform.selectWorkspace(workspace.path)
-        val marketplace = File(context.noBackupFilesDir, "codex/mobile-marketplaces/provider-e2e")
-        marketplace.deleteRecursively()
-        assertTrue(marketplaceSource.copyRecursively(marketplace, overwrite = true))
         val client = CodexAgentClient(
             runtimeFactory = platform::createCodexRuntime,
             requestTimeoutMillis = 30_000,
@@ -56,26 +50,19 @@ class ProviderInstallDeviceTest {
             providerHost = platform.providerPackages,
         )
         try {
-            client.addPluginMarketplace(marketplace.path)
-            val references = client.listAvailablePlugins(workspace.path, forceRefresh = true).plugins
+            client.addPluginMarketplace(platform.pluginMarketplaces.snapshot(marketplaceUrl))
+            val reference = client.listAvailablePlugins(workspace.path, forceRefresh = true).plugins
                 .map { it.reference }
-                .filter { it.id in EXPECTED_PLUGIN_IDS }
-            assertEquals(EXPECTED_PLUGIN_IDS, references.map(AgentPluginReference::id).toSet())
+                .single { it.id == DOCUMENTS_PLUGIN_ID }
 
-            val registry = AndroidProviderRegistry(context)
-            references.forEach { reference ->
-                registry.recordInstalling(installedProvider(marketplace, reference))
-                val result = client.installPlugin(reference)
-                assertFalse("${reference.id} unexpectedly needs a restart", result.restartRequired)
-            }
+            val result = client.installPlugin(reference)
+            assertFalse("${reference.id} unexpectedly needs a restart", result.restartRequired)
+            assertTrue(PROVIDER_SPLIT in installedSplits())
 
             val installed = client.listInstalledPlugins(workspace.path).plugins
-                .filter { it.reference.id in EXPECTED_PLUGIN_IDS }
-            assertEquals(EXPECTED_PLUGIN_IDS, installed.filter { it.installed }.map { it.reference.id }.toSet())
-            val verification = AndroidProviderRegistry(context)
-            val verified = EXPECTED_PLUGIN_IDS.associateWith(verification::isVerified)
+                .single { it.reference.id == DOCUMENTS_PLUGIN_ID }
+            assertTrue(installed.installed)
             assertEquals(
-                "verified=$verified settings=${verification.settings()}",
                 EXPECTED_TOOLS,
                 platform.builtInToolDispatcher!!.definitions().map { it.name }.toSet(),
             )
@@ -127,6 +114,69 @@ class ProviderInstallDeviceTest {
         }
     }
 
+    @Test
+    fun signedProviderUninstallStartsARecoverablePackageUpdate(): Unit = runBlocking {
+        val arguments = InstrumentationRegistry.getArguments()
+        assumeTrue("Run with -e providerUninstallE2e true", arguments.getString("providerUninstallE2e") == "true")
+        val workspace = File(checkNotNull(arguments.getString("workspacePath"))).canonicalFile
+        assertTrue(workspace.isDirectory)
+        assertTrue(PROVIDER_SPLIT in installedSplits())
+
+        val activity = ActivityScenario.launch(MainActivity::class.java)
+        val platform = AndroidPlatform(context)
+        platform.selectWorkspace(workspace.path)
+        val client = CodexAgentClient(
+            runtimeFactory = platform::createCodexRuntime,
+            requestTimeoutMillis = 30_000,
+            clientVersion = "provider-e2e",
+            builtInToolDispatcher = platform.builtInToolDispatcher,
+            providerHost = platform.providerPackages,
+        )
+        val confirmation = launch { clickPackageUpdateConfirmation() }
+        try {
+            val reference = client.listInstalledPlugins(workspace.path).plugins
+                .single { it.reference.id == DOCUMENTS_PLUGIN_ID }
+                .reference
+            val result = client.uninstallPlugin(reference)
+            assertTrue(result.completed)
+            assertFalse(result.restartRequired)
+            assertFalse(PROVIDER_SPLIT in installedSplits())
+            assertFalse(platform.providerSettings().any { it.pluginId == DOCUMENTS_PLUGIN_ID })
+            activity.onActivity { assertFalse(it.isFinishing) }
+        } finally {
+            confirmation.cancel()
+            client.close()
+            activity.close()
+        }
+    }
+
+    @Test
+    fun signedProviderRemovalIsReconciledAfterRestart(): Unit = runBlocking {
+        val arguments = InstrumentationRegistry.getArguments()
+        assumeTrue("Run with -e providerRemovalVerifyE2e true", arguments.getString("providerRemovalVerifyE2e") == "true")
+        val workspace = File(checkNotNull(arguments.getString("workspacePath"))).canonicalFile
+        assertTrue(workspace.isDirectory)
+        assertFalse(PROVIDER_SPLIT in installedSplits())
+
+        val platform = AndroidPlatform(context)
+        platform.selectWorkspace(workspace.path)
+        assertFalse(platform.providerSettings().any { it.pluginId == DOCUMENTS_PLUGIN_ID })
+        val client = CodexAgentClient(
+            runtimeFactory = platform::createCodexRuntime,
+            requestTimeoutMillis = 30_000,
+            clientVersion = "provider-e2e",
+            builtInToolDispatcher = platform.builtInToolDispatcher,
+            providerHost = platform.providerPackages,
+        )
+        try {
+            assertFalse(
+                client.listInstalledPlugins(workspace.path).plugins.any { it.reference.id == DOCUMENTS_PLUGIN_ID },
+            )
+        } finally {
+            client.close()
+        }
+    }
+
     private suspend fun executeDocumentTool(
         platform: AndroidPlatform,
         workspace: File,
@@ -169,89 +219,32 @@ class ProviderInstallDeviceTest {
         }
     }
 
-    private fun installedProvider(marketplace: File, reference: AgentPluginReference): InstalledProvider {
-        val manifest = JSONObject(
-            File(marketplace, ".agents/plugins/plugins/${reference.name}/codex-mobile-addon.json").readText(),
-        )
-        val providerApi = manifest.getJSONObject("providerApi")
-        val android = manifest.getJSONObject("android")
-        val packageInfo = android.getJSONObject("package")
-        val splitNames = android.getJSONArray("splitNames").strings()
-        val splitFiles = context.packageManager.getApplicationInfo(context.packageName, 0).let { info ->
-            info.splitNames.orEmpty().zip(info.splitSourceDirs.orEmpty().map(::File)).toMap()
+    private fun installedSplits(): Set<String> = context.packageManager
+        .getApplicationInfo(context.packageName, 0)
+        .splitNames
+        .orEmpty()
+        .toSet()
+
+    private suspend fun clickPackageUpdateConfirmation() {
+        repeat(150) {
+            val update = instrumentation.uiAutomation.rootInActiveWindow
+                ?.findAccessibilityNodeInfosByText("Update")
+                ?.firstOrNull { it.text?.toString() == "Update" && it.isClickable }
+            if (update?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) return
+            delay(200)
         }
-        val split = checkNotNull(splitFiles[splitNames.single()]) { "${splitNames.single()} is not installed" }
-        return InstalledProvider(
-            pluginId = manifest.getString("pluginId"),
-            providerApi = providerApi.getInt("min"),
-            hostVersionCode = manifest.getJSONObject("host").getInt("versionCode"),
-            implementationVersion = manifest.getString("implementationVersion"),
-            displayName = manifest.getString("displayName"),
-            splitNames = splitNames,
-            entryPoint = android.getString("entryPoint"),
-            settingsEntryPoint = android.optString("settingsEntryPoint").takeIf(String::isNotBlank),
-            schemaDigest = manifest.getString("schemaDigest"),
-            mcpServerNames = manifest.getJSONArray("mcpServerNames").strings(),
-            pluginName = reference.name,
-            marketplaceName = reference.marketplaceName,
-            marketplacePath = reference.marketplacePath,
-            marketplaceRepository = "ciurlaro/codex-mobile-plugins",
-            apkSha256 = packageInfo.getString("sha256"),
-            contentSha256 = split.apkContentSha256(),
-            state = ProviderPackageState.INSTALLING,
-        )
-    }
-
-    private fun JSONArray.strings() = (0 until length()).map(::getString)
-
-    private fun File.apkContentSha256(): String = ZipFile(this).use { apk ->
-        val digest = MessageDigest.getInstance("SHA-256")
-        val entries = apk.entries().asSequence()
-            .filterNot { it.name.isApkSignatureEntry() }
-            .sortedBy { it.name }
-            .toList()
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        entries.forEach { entry ->
-            val name = entry.name.toByteArray(Charsets.UTF_8)
-            digest.update(byteArrayOf(
-                (name.size ushr 24).toByte(),
-                (name.size ushr 16).toByte(),
-                (name.size ushr 8).toByte(),
-                name.size.toByte(),
-            ))
-            digest.update(name)
-            apk.getInputStream(entry).use { input ->
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    digest.update(buffer, 0, count)
-                }
-            }
-        }
-        digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
-    }
-
-    private fun String.isApkSignatureEntry(): Boolean {
-        val upper = uppercase()
-        if (upper == "META-INF/MANIFEST.MF") return true
-        if (!upper.startsWith("META-INF/") || '/' in upper.removePrefix("META-INF/")) return false
-        return upper.endsWith(".SF") || upper.endsWith(".RSA") || upper.endsWith(".DSA") || upper.endsWith(".EC")
+        error("Android package update confirmation did not appear")
     }
 
     private companion object {
         const val DOCUMENT_SENTINEL = "Codex Mobile Documents E2E 2026"
-        val EXPECTED_PLUGIN_IDS = setOf("documents@codex-mobile", "telegram@codex-mobile")
+        const val MARKETPLACE_URL = "https://github.com/ciurlaro/codex-mobile-plugins"
+        const val DOCUMENTS_PLUGIN_ID = "documents@codex-mobile"
+        const val PROVIDER_SPLIT = "provider_documents"
         val EXPECTED_TOOLS = setOf(
             "documents_read",
             "documents_view_pages",
             "documents_edit",
-            "telegram_list_chats",
-            "telegram_list_messages",
-            "telegram_search_messages",
-            "telegram_search_contacts",
-            "telegram_download_media",
-            "telegram_send_text",
-            "telegram_send_file",
         )
     }
 }

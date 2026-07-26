@@ -15,9 +15,15 @@ import io.github.ciurlaro.codexmobile.app.presentation.model.AppScreen
 import io.github.ciurlaro.codexmobile.app.presentation.state.AppUiState
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionActionError
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionFilter
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionNotice
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionRemoval
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSection
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatSelector
+import io.github.ciurlaro.codexmobile.app.presentation.model.CODEX_MOBILE_PLUGIN_SOURCE_ID
+import io.github.ciurlaro.codexmobile.app.presentation.model.CODEX_MOBILE_PLUGIN_SOURCE_URL
+import io.github.ciurlaro.codexmobile.app.presentation.model.OPENAI_PLUGIN_SOURCE_ID
+import io.github.ciurlaro.codexmobile.app.presentation.model.canonicalPluginSourceId
+import io.github.ciurlaro.codexmobile.app.presentation.model.initialPluginSourceSelection
 import io.github.ciurlaro.codexmobile.app.presentation.state.withNewChat
 import io.github.ciurlaro.codexmobile.app.presentation.state.withStreamingAssistant
 import io.github.ciurlaro.codexmobile.app.presentation.state.withSubmittedTurn
@@ -39,6 +45,7 @@ import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentModel
 import io.github.ciurlaro.codexmobile.core.AgentPluginAuthPolicy
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentPluginSummary
 import io.github.ciurlaro.codexmobile.core.AgentPluginUnavailableException
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentSkill
@@ -61,6 +68,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
     private val container = (application as CodexMobileApplication).container
     private val uiPreferences = AppPreferencesStore(appContext)
+    private val initialPluginSources = initialPluginSourceSelection(
+        savedKnownIds = uiPreferences.savedKnownPluginSourceIds,
+        savedEnabledIds = uiPreferences.savedEnabledPluginSourceIds,
+        appWasUpgraded = uiPreferences.appWasUpgraded,
+    )
     private val mutableState = MutableStateFlow(
         AppUiState(
             hasStorageAccess = container.platform.hasStoragePermission(),
@@ -72,6 +84,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             recentInvocationKeys = uiPreferences.recentInvocationKeys,
             approvalPreset = uiPreferences.approvalPreset,
             providerSettings = container.platform.providerSettings(),
+            knownPluginSourceIds = initialPluginSources.knownIds,
+            enabledPluginSourceIds = initialPluginSources.enabledIds,
         ),
     )
     private var serviceController: CodexSessionController? = null
@@ -92,6 +106,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var availablePluginsJob: Job? = null
     private var skillSourceJob: Job? = null
     private var pluginSourceJob: Job? = null
+    private var codexMobilePluginSourceAdded = uiPreferences.codexMobilePluginSourceAdded
     private var integrationsLoaded = false
     private val pendingConnectorAuthentications = ArrayDeque<AgentConnector>()
     internal var serviceInstanceId: String? = null
@@ -106,6 +121,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val state: StateFlow<AppUiState> = mutableState.asStateFlow()
 
     init {
+        uiPreferences.savePluginSourceSelection(initialPluginSources.knownIds, initialPluginSources.enabledIds)
         viewModelScope.launch {
             container.backgroundSessions.failure.collect { failure ->
                 failure?.let { message ->
@@ -176,8 +192,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun resumeAfterProviderInstall() {
-        if (container.platform.consumeProviderInstallRestart()) authenticate()
+    fun resumeAfterProviderPackageUpdate() {
+        val completion = container.platform.consumeProviderPackageCompletion() ?: return
+        mutableState.update {
+            it.copy(
+                screen = AppScreen.EXTENSIONS,
+                extensionsReturnScreen = AppScreen.SETTINGS,
+                extensionSection = ExtensionSection.INSTALLED,
+                extensionFilter = ExtensionFilter.PLUGINS,
+                extensionSearch = "",
+                extensionSourcesOpen = false,
+                selectedPlugin = null,
+                pendingExtensionRemoval = null,
+                installedPluginsLoaded = false,
+                availablePluginsLoaded = false,
+                extensionNotice = ExtensionNotice(completion.message, isError = !completion.successful),
+                statusMessage = completion.message,
+            )
+        }
+        if (uiPreferences.hadAuthenticatedSession) authenticate()
     }
 
     fun cancelAuthentication() {
@@ -264,11 +297,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startNewChat() {
+        resetChat(openChat = true)
+    }
+
+    private fun resetChat(openChat: Boolean = false) {
         serviceController?.let { if (!it.startNewChat()) return }
         pendingConversationId = null
         selectionRestoredSessionId = null
         activeAssistantMessageId = null
-        mutableState.update(AppUiState::withNewChat)
+        mutableState.update { current ->
+            current.withNewChat().let { reset ->
+                if (openChat) reset else reset.copy(screen = current.screen)
+            }
+        }
     }
 
     fun openConversation(sessionId: SessionId) {
@@ -407,6 +448,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 extensionFilter = filter,
                 extensionSection = ExtensionSection.INSTALLED,
                 extensionSearch = "",
+                extensionSourcesOpen = false,
+                extensionNotice = null,
                 isHistoryOpen = false,
                 activeSelector = null,
             )
@@ -427,6 +470,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 githubSkillError = null,
                 isGitHubSkillLoading = false,
                 extensionActionError = null,
+                extensionNotice = null,
+                extensionSourcesOpen = false,
                 skillSourceChunks = emptyList(),
                 skillSourceNextOffset = null,
             )
@@ -438,6 +483,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 extensionActionError = null,
                 unavailablePluginIds = emptySet(),
+                extensionNotice = null,
             )
         }
         loadCurrentExtensions(forceReload = true)
@@ -473,6 +519,39 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun searchExtensions(query: String) {
         mutableState.update { it.copy(extensionSearch = query) }
+    }
+
+    fun openExtensionSources() {
+        mutableState.update { it.copy(extensionSourcesOpen = true, extensionNotice = null) }
+    }
+
+    fun closeExtensionSources() {
+        mutableState.update { it.copy(extensionSourcesOpen = false) }
+        if (mutableState.value.extensionSection == ExtensionSection.DISCOVER) loadCurrentExtensions(forceReload = false)
+    }
+
+    fun togglePluginSource(sourceId: String, enabled: Boolean) {
+        val normalized = canonicalPluginSourceId(sourceId)
+        val current = mutableState.value
+        if (normalized !in current.knownPluginSourceIds) return
+        availablePluginsJob?.cancel()
+        availableSkillsJob?.cancel()
+        mutableState.update {
+            val enabledIds = if (enabled) it.enabledPluginSourceIds + normalized
+            else it.enabledPluginSourceIds - normalized
+            it.copy(
+                enabledPluginSourceIds = enabledIds,
+                availablePlugins = it.availablePlugins.filter { plugin ->
+                    canonicalPluginSourceId(plugin.reference.marketplaceName) in enabledIds
+                },
+                availableSkills = if (OPENAI_PLUGIN_SOURCE_ID in enabledIds) it.availableSkills else emptyList(),
+                availablePluginsLoaded = false,
+                availableSkillsLoaded = false,
+                availablePluginsError = null,
+                availableSkillsError = null,
+            )
+        }
+        persistPluginSourceSelection()
     }
 
     fun closePluginDetails() {
@@ -718,9 +797,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
             return@extensionMutation
         }
+        resetChat()
         mutableState.update {
             it.copy(
-                pluginChangesNeedNewChat = true,
                 selectedPlugin = null,
                 availablePlugins = it.availablePlugins.filterNot { candidate -> candidate.reference.id == plugin.id },
                 unavailablePluginIds = it.unavailablePluginIds - plugin.id,
@@ -739,9 +818,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         "Plugin could not be removed",
     ) {
         val result = serviceController?.uninstallPlugin(plugin) ?: return@extensionMutation
+        resetChat()
         mutableState.update {
             it.copy(
-                pluginChangesNeedNewChat = true,
                 selectedPlugin = null,
                 statusMessage = result.message ?: if (result.completed) "Plugin removed" else it.statusMessage,
                 installedPlugins = if (result.restartRequired || result.completed) {
@@ -798,7 +877,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         "Plugin could not be updated",
     ) {
         serviceController?.setPluginEnabled(pluginId, enabled)
-        mutableState.update { it.copy(pluginChangesNeedNewChat = true) }
+        resetChat()
         loadInstalledPlugins(forceReload = true)
     }
 
@@ -989,6 +1068,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun signOut() {
         setAuthenticationHandoffPending(false)
+        uiPreferences.setHadAuthenticatedSession(false)
         mutableState.update {
             it.copy(statusMessage = "Signing out…", signInUrl = null)
         }
@@ -1207,6 +1287,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadAvailableSkills(forceReload: Boolean) {
+        if (OPENAI_PLUGIN_SOURCE_ID !in mutableState.value.enabledPluginSourceIds) {
+            availableSkillsJob?.cancel()
+            availableSkillsJob = null
+            mutableState.update {
+                it.copy(
+                    availableSkills = emptyList(),
+                    availableSkillsLoaded = true,
+                    isAvailableSkillsLoading = false,
+                    availableSkillsError = null,
+                )
+            }
+            return
+        }
         val controller = serviceController ?: return
         val current = mutableState.value
         if (!forceReload && (current.availableSkillsLoaded || availableSkillsJob?.isActive == true)) return
@@ -1285,14 +1378,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val workingDirectory = container.platform.activeWorkspacePath() ?: return
         mutableState.update { it.copy(isAvailablePluginsLoading = true, availablePluginsError = null) }
         availablePluginsJob = viewModelScope.launch {
-            runCatching { controller.listAvailablePlugins(workingDirectory, forceReload) }
+            runCatching {
+                var sourceAdded = false
+                val bootstrapError = runCatching {
+                    sourceAdded = ensureCodexMobilePluginSource(controller)
+                }.exceptionOrNull()
+                controller.listAvailablePlugins(workingDirectory, forceReload || sourceAdded).let { catalog ->
+                    catalog.copy(errors = catalog.errors + listOfNotNull(bootstrapError?.message))
+                }
+            }
                 .onSuccess { catalog ->
                     if (serviceController !== controller) return@onSuccess
+                    registerDiscoveredPluginSources(catalog.plugins)
                     val refreshAfterCache = !forceReload && catalog.freshness != AgentCatalogFreshness.LIVE
                     mutableState.update {
                         val installedIds = it.installedPlugins.map { plugin -> plugin.reference.id }.toSet()
                         it.copy(
-                            availablePlugins = catalog.plugins.filterNot { plugin -> plugin.reference.id in installedIds },
+                            availablePlugins = catalog.plugins.filter { plugin ->
+                                plugin.reference.id !in installedIds &&
+                                    canonicalPluginSourceId(plugin.reference.marketplaceName) in it.enabledPluginSourceIds
+                            },
                             availablePluginsLoaded = true,
                             isAvailablePluginsLoading = refreshAfterCache,
                             availablePluginsError = catalog.errors.distinct().joinToString("\n").ifBlank { null },
@@ -1316,6 +1421,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
         }
+    }
+
+    private suspend fun ensureCodexMobilePluginSource(controller: CodexSessionController): Boolean {
+        if (
+            codexMobilePluginSourceAdded ||
+            CODEX_MOBILE_PLUGIN_SOURCE_ID !in mutableState.value.enabledPluginSourceIds
+        ) return false
+        controller.addPluginMarketplace(CODEX_MOBILE_PLUGIN_SOURCE_URL)
+        codexMobilePluginSourceAdded = true
+        uiPreferences.setCodexMobilePluginSourceAdded(true)
+        return true
+    }
+
+    private fun registerDiscoveredPluginSources(plugins: List<AgentPluginSummary>) {
+        val discovered = plugins.map { canonicalPluginSourceId(it.reference.marketplaceName) }
+            .filter(String::isNotBlank)
+            .toSet()
+        if (discovered.isEmpty()) return
+        mutableState.update {
+            val newIds = discovered - it.knownPluginSourceIds
+            it.copy(
+                knownPluginSourceIds = it.knownPluginSourceIds + discovered,
+                enabledPluginSourceIds = it.enabledPluginSourceIds + (newIds - OPENAI_PLUGIN_SOURCE_ID),
+            )
+        }
+        persistPluginSourceSelection()
+    }
+
+    private fun persistPluginSourceSelection() {
+        val current = mutableState.value
+        uiPreferences.savePluginSourceSelection(current.knownPluginSourceIds, current.enabledPluginSourceIds)
     }
 
     private suspend fun refreshConnectors(
@@ -1437,6 +1573,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         session: CodexSessionState,
         notificationVisible: Boolean,
     ) {
+        if (session.isAuthenticated) uiPreferences.setHadAuthenticatedSession(true)
         when {
             session.isAuthenticated -> setAuthenticationHandoffPending(false)
             session.signInUrl != null -> setAuthenticationHandoffPending(true)
