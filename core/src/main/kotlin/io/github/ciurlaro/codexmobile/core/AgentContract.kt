@@ -19,10 +19,13 @@ interface AgentClient : AutoCloseable {
 
     suspend fun setSkillEnabled(path: String, enabled: Boolean)
 
-    suspend fun listInstalledPlugins(workingDirectory: String): AgentPluginCatalog
+    suspend fun listInstalledPlugins(
+        workingDirectory: String?,
+        forceRefresh: Boolean = false,
+    ): AgentPluginCatalog
 
     suspend fun listAvailablePlugins(
-        workingDirectory: String,
+        workingDirectory: String?,
         forceRefresh: Boolean = false,
     ): AgentPluginCatalog
 

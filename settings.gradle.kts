@@ -20,7 +20,10 @@ includeBuild("app-server-client")
 includeBuild("provider-api")
 
 val providerBuild = providers.gradleProperty("codexMobile.providerBuild").orNull
-providerBuild?.let { includeBuild(it) { name = "codex-mobile-plugins" } }
+    ?: sequenceOf(file("codex-mobile-plugins"), file("../codex-mobile-plugins"))
+        .firstOrNull(File::isDirectory)?.absolutePath
+    ?: error("codex-mobile-plugins is required to build the bundled providers")
+includeBuild(providerBuild) { name = "codex-mobile-plugins" }
 
 include(
     ":app:android",
@@ -30,8 +33,3 @@ include(
     ":runtime-host",
     ":runtime-host:android",
 )
-if (providerBuild != null) {
-    include(":provider_documents", ":provider_telegram")
-    project(":provider_documents").projectDir = file("providers/documents")
-    project(":provider_telegram").projectDir = file("providers/telegram")
-}

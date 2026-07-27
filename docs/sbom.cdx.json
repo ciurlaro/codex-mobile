@@ -33,7 +33,7 @@
     },
     {
       "bom-ref": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.3",
-      "description": "Android runtime, signed provider host, workspace authority, and mutation journal.",
+      "description": "Android runtime, bundled provider host, workspace authority, and mutation journal.",
       "licenses": [
         {
           "license": {
@@ -45,6 +45,36 @@
       "purl": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.3",
       "type": "library",
       "version": "0.2.0-preview.3"
+    },
+    {
+      "bom-ref": "pkg:generic/codex-mobile-provider-documents@a40fefe7c3a60da14e65fef05106a07e1734afdf",
+      "description": "Bundled Documents provider from ciurlaro/codex-mobile-plugins.",
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-3.0-or-later"
+          }
+        }
+      ],
+      "name": "codex-mobile-provider-documents",
+      "purl": "pkg:generic/codex-mobile-provider-documents@a40fefe7c3a60da14e65fef05106a07e1734afdf",
+      "type": "library",
+      "version": "a40fefe7c3a60da14e65fef05106a07e1734afdf"
+    },
+    {
+      "bom-ref": "pkg:generic/codex-mobile-provider-telegram@a40fefe7c3a60da14e65fef05106a07e1734afdf",
+      "description": "Bundled Telegram provider from ciurlaro/codex-mobile-plugins.",
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-3.0-or-later"
+          }
+        }
+      ],
+      "name": "codex-mobile-provider-telegram",
+      "purl": "pkg:generic/codex-mobile-provider-telegram@a40fefe7c3a60da14e65fef05106a07e1734afdf",
+      "type": "library",
+      "version": "a40fefe7c3a60da14e65fef05106a07e1734afdf"
     },
     {
       "bom-ref": "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64",
@@ -77,6 +107,34 @@
       "purl": "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64",
       "type": "application",
       "version": "0.144.6"
+    },
+    {
+      "bom-ref": "pkg:generic/tdlib@1.8.66",
+      "licenses": [
+        {
+          "license": {
+            "id": "BSL-1.0"
+          }
+        }
+      ],
+      "name": "TDLib",
+      "purl": "pkg:generic/tdlib@1.8.66",
+      "type": "library",
+      "version": "1.8.66"
+    },
+    {
+      "bom-ref": "pkg:generic/openssl@3.5.7",
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "OpenSSL",
+      "purl": "pkg:generic/openssl@3.5.7",
+      "type": "library",
+      "version": "3.5.7"
     },
     {
       "bom-ref": "pkg:maven/androidx.activity/activity@1.13.0",
@@ -125,6 +183,22 @@
       "purl": "pkg:maven/androidx.annotation/annotation-jvm@1.9.1",
       "type": "library",
       "version": "1.9.1"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.appcompat/appcompat@1.6.1",
+      "group": "androidx.appcompat",
+      "name": "appcompat",
+      "purl": "pkg:maven/androidx.appcompat/appcompat@1.6.1",
+      "type": "library",
+      "version": "1.6.1"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.appcompat/appcompat-resources@1.6.1",
+      "group": "androidx.appcompat",
+      "name": "appcompat-resources",
+      "purl": "pkg:maven/androidx.appcompat/appcompat-resources@1.6.1",
+      "type": "library",
+      "version": "1.6.1"
     },
     {
       "bom-ref": "pkg:maven/androidx.arch.core/core-common@2.2.0",
@@ -471,6 +545,22 @@
       "version": "1.0.0"
     },
     {
+      "bom-ref": "pkg:maven/androidx.cursoradapter/cursoradapter@1.0.0",
+      "group": "androidx.cursoradapter",
+      "name": "cursoradapter",
+      "purl": "pkg:maven/androidx.cursoradapter/cursoradapter@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.customview/customview@1.0.0",
+      "group": "androidx.customview",
+      "name": "customview",
+      "purl": "pkg:maven/androidx.customview/customview@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
       "bom-ref": "pkg:maven/androidx.customview/customview-poolingcontainer@1.0.0",
       "group": "androidx.customview",
       "name": "customview-poolingcontainer",
@@ -483,6 +573,14 @@
       "group": "androidx.documentfile",
       "name": "documentfile",
       "purl": "pkg:maven/androidx.documentfile/documentfile@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.drawerlayout/drawerlayout@1.0.0",
+      "group": "androidx.drawerlayout",
+      "name": "drawerlayout",
+      "purl": "pkg:maven/androidx.drawerlayout/drawerlayout@1.0.0",
       "type": "library",
       "version": "1.0.0"
     },
@@ -501,6 +599,30 @@
       "purl": "pkg:maven/androidx.emoji2/emoji2@1.4.0",
       "type": "library",
       "version": "1.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.emoji2/emoji2-views-helper@1.4.0",
+      "group": "androidx.emoji2",
+      "name": "emoji2-views-helper",
+      "purl": "pkg:maven/androidx.emoji2/emoji2-views-helper@1.4.0",
+      "type": "library",
+      "version": "1.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.exifinterface/exifinterface@1.0.0",
+      "group": "androidx.exifinterface",
+      "name": "exifinterface",
+      "purl": "pkg:maven/androidx.exifinterface/exifinterface@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.fragment/fragment@1.3.6",
+      "group": "androidx.fragment",
+      "name": "fragment",
+      "purl": "pkg:maven/androidx.fragment/fragment@1.3.6",
+      "type": "library",
+      "version": "1.3.6"
     },
     {
       "bom-ref": "pkg:maven/androidx.graphics/graphics-path@1.0.1",
@@ -751,6 +873,14 @@
       "version": "1.4.0"
     },
     {
+      "bom-ref": "pkg:maven/androidx.resourceinspection/resourceinspection-annotation@1.0.1",
+      "group": "androidx.resourceinspection",
+      "name": "resourceinspection-annotation",
+      "purl": "pkg:maven/androidx.resourceinspection/resourceinspection-annotation@1.0.1",
+      "type": "library",
+      "version": "1.0.1"
+    },
+    {
       "bom-ref": "pkg:maven/androidx.savedstate/savedstate@1.4.0",
       "group": "androidx.savedstate",
       "name": "savedstate",
@@ -815,12 +945,36 @@
       "version": "1.6.0"
     },
     {
+      "bom-ref": "pkg:maven/androidx.vectordrawable/vectordrawable@1.1.0",
+      "group": "androidx.vectordrawable",
+      "name": "vectordrawable",
+      "purl": "pkg:maven/androidx.vectordrawable/vectordrawable@1.1.0",
+      "type": "library",
+      "version": "1.1.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.vectordrawable/vectordrawable-animated@1.1.0",
+      "group": "androidx.vectordrawable",
+      "name": "vectordrawable-animated",
+      "purl": "pkg:maven/androidx.vectordrawable/vectordrawable-animated@1.1.0",
+      "type": "library",
+      "version": "1.1.0"
+    },
+    {
       "bom-ref": "pkg:maven/androidx.versionedparcelable/versionedparcelable@1.1.1",
       "group": "androidx.versionedparcelable",
       "name": "versionedparcelable",
       "purl": "pkg:maven/androidx.versionedparcelable/versionedparcelable@1.1.1",
       "type": "library",
       "version": "1.1.1"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.viewpager/viewpager@1.0.0",
+      "group": "androidx.viewpager",
+      "name": "viewpager",
+      "purl": "pkg:maven/androidx.viewpager/viewpager@1.0.0",
+      "type": "library",
+      "version": "1.0.0"
     },
     {
       "bom-ref": "pkg:maven/androidx.window/window@1.5.0",
@@ -847,12 +1001,156 @@
       "version": "1.5.0"
     },
     {
+      "bom-ref": "pkg:maven/com.google.android.datatransport/transport-api@2.2.1",
+      "group": "com.google.android.datatransport",
+      "name": "transport-api",
+      "purl": "pkg:maven/com.google.android.datatransport/transport-api@2.2.1",
+      "type": "library",
+      "version": "2.2.1"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.android.datatransport/transport-backend-cct@2.3.3",
+      "group": "com.google.android.datatransport",
+      "name": "transport-backend-cct",
+      "purl": "pkg:maven/com.google.android.datatransport/transport-backend-cct@2.3.3",
+      "type": "library",
+      "version": "2.3.3"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.android.datatransport/transport-runtime@2.2.6",
+      "group": "com.google.android.datatransport",
+      "name": "transport-runtime",
+      "purl": "pkg:maven/com.google.android.datatransport/transport-runtime@2.2.6",
+      "type": "library",
+      "version": "2.2.6"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.android.gms/play-services-base@18.5.0",
+      "group": "com.google.android.gms",
+      "name": "play-services-base",
+      "purl": "pkg:maven/com.google.android.gms/play-services-base@18.5.0",
+      "type": "library",
+      "version": "18.5.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.android.gms/play-services-basement@18.4.0",
+      "group": "com.google.android.gms",
+      "name": "play-services-basement",
+      "purl": "pkg:maven/com.google.android.gms/play-services-basement@18.4.0",
+      "type": "library",
+      "version": "18.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.android.gms/play-services-mlkit-text-recognition@19.0.1",
+      "group": "com.google.android.gms",
+      "name": "play-services-mlkit-text-recognition",
+      "purl": "pkg:maven/com.google.android.gms/play-services-mlkit-text-recognition@19.0.1",
+      "type": "library",
+      "version": "19.0.1"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.android.gms/play-services-mlkit-text-recognition-common@19.1.0",
+      "group": "com.google.android.gms",
+      "name": "play-services-mlkit-text-recognition-common",
+      "purl": "pkg:maven/com.google.android.gms/play-services-mlkit-text-recognition-common@19.1.0",
+      "type": "library",
+      "version": "19.1.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.android.gms/play-services-tasks@18.2.0",
+      "group": "com.google.android.gms",
+      "name": "play-services-tasks",
+      "purl": "pkg:maven/com.google.android.gms/play-services-tasks@18.2.0",
+      "type": "library",
+      "version": "18.2.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.android.odml/image@1.0.0-beta1",
+      "group": "com.google.android.odml",
+      "name": "image",
+      "purl": "pkg:maven/com.google.android.odml/image@1.0.0-beta1",
+      "type": "library",
+      "version": "1.0.0-beta1"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.firebase/firebase-annotations@16.0.0",
+      "group": "com.google.firebase",
+      "name": "firebase-annotations",
+      "purl": "pkg:maven/com.google.firebase/firebase-annotations@16.0.0",
+      "type": "library",
+      "version": "16.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.firebase/firebase-components@16.1.0",
+      "group": "com.google.firebase",
+      "name": "firebase-components",
+      "purl": "pkg:maven/com.google.firebase/firebase-components@16.1.0",
+      "type": "library",
+      "version": "16.1.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.firebase/firebase-encoders@16.1.0",
+      "group": "com.google.firebase",
+      "name": "firebase-encoders",
+      "purl": "pkg:maven/com.google.firebase/firebase-encoders@16.1.0",
+      "type": "library",
+      "version": "16.1.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.firebase/firebase-encoders-json@17.1.0",
+      "group": "com.google.firebase",
+      "name": "firebase-encoders-json",
+      "purl": "pkg:maven/com.google.firebase/firebase-encoders-json@17.1.0",
+      "type": "library",
+      "version": "17.1.0"
+    },
+    {
       "bom-ref": "pkg:maven/com.google.guava/listenablefuture@1.0",
       "group": "com.google.guava",
       "name": "listenablefuture",
       "purl": "pkg:maven/com.google.guava/listenablefuture@1.0",
       "type": "library",
       "version": "1.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.mlkit/common@18.11.0",
+      "group": "com.google.mlkit",
+      "name": "common",
+      "purl": "pkg:maven/com.google.mlkit/common@18.11.0",
+      "type": "library",
+      "version": "18.11.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.mlkit/text-recognition@16.0.1",
+      "group": "com.google.mlkit",
+      "name": "text-recognition",
+      "purl": "pkg:maven/com.google.mlkit/text-recognition@16.0.1",
+      "type": "library",
+      "version": "16.0.1"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.mlkit/text-recognition-bundled-common@17.0.0",
+      "group": "com.google.mlkit",
+      "name": "text-recognition-bundled-common",
+      "purl": "pkg:maven/com.google.mlkit/text-recognition-bundled-common@17.0.0",
+      "type": "library",
+      "version": "17.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.mlkit/vision-common@17.3.0",
+      "group": "com.google.mlkit",
+      "name": "vision-common",
+      "purl": "pkg:maven/com.google.mlkit/vision-common@17.3.0",
+      "type": "library",
+      "version": "17.3.0"
+    },
+    {
+      "bom-ref": "pkg:maven/com.google.mlkit/vision-interfaces@16.3.0",
+      "group": "com.google.mlkit",
+      "name": "vision-interfaces",
+      "purl": "pkg:maven/com.google.mlkit/vision-interfaces@16.3.0",
+      "type": "library",
+      "version": "16.3.0"
     },
     {
       "bom-ref": "pkg:maven/com.mikepenz/multiplatform-markdown-renderer@0.41.0",
@@ -885,6 +1183,30 @@
       "purl": "pkg:maven/com.mikepenz/multiplatform-markdown-renderer-m3-android@0.41.0",
       "type": "library",
       "version": "0.41.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.legere/pdfiumandroid-api@2.0.0",
+      "group": "io.legere",
+      "name": "pdfiumandroid-api",
+      "purl": "pkg:maven/io.legere/pdfiumandroid-api@2.0.0",
+      "type": "library",
+      "version": "2.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.legere/pdfiumandroid-core@2.0.0",
+      "group": "io.legere",
+      "name": "pdfiumandroid-core",
+      "purl": "pkg:maven/io.legere/pdfiumandroid-core@2.0.0",
+      "type": "library",
+      "version": "2.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/javax.inject/javax.inject@1",
+      "group": "javax.inject",
+      "name": "javax.inject",
+      "purl": "pkg:maven/javax.inject/javax.inject@1",
+      "type": "library",
+      "version": "1"
     },
     {
       "bom-ref": "pkg:maven/org.jetbrains/annotations@23.0.0",
@@ -1021,13 +1343,19 @@
         "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.3",
         "pkg:generic/codex-mobile-core@0.2.0-preview.3",
         "pkg:generic/codex-mobile-platform-android@0.2.0-preview.3",
+        "pkg:generic/codex-mobile-provider-documents@a40fefe7c3a60da14e65fef05106a07e1734afdf",
+        "pkg:generic/codex-mobile-provider-telegram@a40fefe7c3a60da14e65fef05106a07e1734afdf",
         "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64",
+        "pkg:generic/openssl@3.5.7",
+        "pkg:generic/tdlib@1.8.66",
         "pkg:maven/androidx.activity/activity-compose@1.13.0",
         "pkg:maven/androidx.activity/activity-ktx@1.13.0",
         "pkg:maven/androidx.activity/activity@1.13.0",
         "pkg:maven/androidx.annotation/annotation-experimental@1.4.1",
         "pkg:maven/androidx.annotation/annotation-jvm@1.9.1",
         "pkg:maven/androidx.annotation/annotation@1.9.1",
+        "pkg:maven/androidx.appcompat/appcompat-resources@1.6.1",
+        "pkg:maven/androidx.appcompat/appcompat@1.6.1",
         "pkg:maven/androidx.arch.core/core-common@2.2.0",
         "pkg:maven/androidx.arch.core/core-runtime@2.2.0",
         "pkg:maven/androidx.autofill/autofill@1.0.0",
@@ -1071,10 +1399,16 @@
         "pkg:maven/androidx.core/core-ktx@1.18.0",
         "pkg:maven/androidx.core/core-viewtree@1.0.0",
         "pkg:maven/androidx.core/core@1.18.0",
+        "pkg:maven/androidx.cursoradapter/cursoradapter@1.0.0",
         "pkg:maven/androidx.customview/customview-poolingcontainer@1.0.0",
+        "pkg:maven/androidx.customview/customview@1.0.0",
         "pkg:maven/androidx.documentfile/documentfile@1.0.0",
+        "pkg:maven/androidx.drawerlayout/drawerlayout@1.0.0",
         "pkg:maven/androidx.dynamicanimation/dynamicanimation@1.0.0",
+        "pkg:maven/androidx.emoji2/emoji2-views-helper@1.4.0",
         "pkg:maven/androidx.emoji2/emoji2@1.4.0",
+        "pkg:maven/androidx.exifinterface/exifinterface@1.0.0",
+        "pkg:maven/androidx.fragment/fragment@1.3.6",
         "pkg:maven/androidx.graphics/graphics-path@1.0.1",
         "pkg:maven/androidx.interpolator/interpolator@1.0.0",
         "pkg:maven/androidx.legacy/legacy-support-core-utils@1.0.0",
@@ -1106,6 +1440,7 @@
         "pkg:maven/androidx.navigationevent/navigationevent@1.0.0",
         "pkg:maven/androidx.print/print@1.0.0",
         "pkg:maven/androidx.profileinstaller/profileinstaller@1.4.0",
+        "pkg:maven/androidx.resourceinspection/resourceinspection-annotation@1.0.1",
         "pkg:maven/androidx.savedstate/savedstate-android@1.4.0",
         "pkg:maven/androidx.savedstate/savedstate-compose-android@1.4.0",
         "pkg:maven/androidx.savedstate/savedstate-compose@1.4.0",
@@ -1114,15 +1449,39 @@
         "pkg:maven/androidx.startup/startup-runtime@1.1.1",
         "pkg:maven/androidx.tracing/tracing@1.2.0",
         "pkg:maven/androidx.transition/transition@1.6.0",
+        "pkg:maven/androidx.vectordrawable/vectordrawable-animated@1.1.0",
+        "pkg:maven/androidx.vectordrawable/vectordrawable@1.1.0",
         "pkg:maven/androidx.versionedparcelable/versionedparcelable@1.1.1",
+        "pkg:maven/androidx.viewpager/viewpager@1.0.0",
         "pkg:maven/androidx.window/window-core-android@1.5.0",
         "pkg:maven/androidx.window/window-core@1.5.0",
         "pkg:maven/androidx.window/window@1.5.0",
+        "pkg:maven/com.google.android.datatransport/transport-api@2.2.1",
+        "pkg:maven/com.google.android.datatransport/transport-backend-cct@2.3.3",
+        "pkg:maven/com.google.android.datatransport/transport-runtime@2.2.6",
+        "pkg:maven/com.google.android.gms/play-services-base@18.5.0",
+        "pkg:maven/com.google.android.gms/play-services-basement@18.4.0",
+        "pkg:maven/com.google.android.gms/play-services-mlkit-text-recognition-common@19.1.0",
+        "pkg:maven/com.google.android.gms/play-services-mlkit-text-recognition@19.0.1",
+        "pkg:maven/com.google.android.gms/play-services-tasks@18.2.0",
+        "pkg:maven/com.google.android.odml/image@1.0.0-beta1",
+        "pkg:maven/com.google.firebase/firebase-annotations@16.0.0",
+        "pkg:maven/com.google.firebase/firebase-components@16.1.0",
+        "pkg:maven/com.google.firebase/firebase-encoders-json@17.1.0",
+        "pkg:maven/com.google.firebase/firebase-encoders@16.1.0",
         "pkg:maven/com.google.guava/listenablefuture@1.0",
+        "pkg:maven/com.google.mlkit/common@18.11.0",
+        "pkg:maven/com.google.mlkit/text-recognition-bundled-common@17.0.0",
+        "pkg:maven/com.google.mlkit/text-recognition@16.0.1",
+        "pkg:maven/com.google.mlkit/vision-common@17.3.0",
+        "pkg:maven/com.google.mlkit/vision-interfaces@16.3.0",
         "pkg:maven/com.mikepenz/multiplatform-markdown-renderer-android@0.41.0",
         "pkg:maven/com.mikepenz/multiplatform-markdown-renderer-m3-android@0.41.0",
         "pkg:maven/com.mikepenz/multiplatform-markdown-renderer-m3@0.41.0",
         "pkg:maven/com.mikepenz/multiplatform-markdown-renderer@0.41.0",
+        "pkg:maven/io.legere/pdfiumandroid-api@2.0.0",
+        "pkg:maven/io.legere/pdfiumandroid-core@2.0.0",
+        "pkg:maven/javax.inject/javax.inject@1",
         "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib@2.3.21",
         "pkg:maven/org.jetbrains.kotlinx/kotlinx-collections-immutable-jvm@0.4.0",
         "pkg:maven/org.jetbrains.kotlinx/kotlinx-collections-immutable@0.4.0",
@@ -1156,7 +1515,23 @@
     },
     {
       "dependsOn": [],
+      "ref": "pkg:generic/codex-mobile-provider-documents@a40fefe7c3a60da14e65fef05106a07e1734afdf"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:generic/codex-mobile-provider-telegram@a40fefe7c3a60da14e65fef05106a07e1734afdf"
+    },
+    {
+      "dependsOn": [],
       "ref": "pkg:generic/openai/codex-app-server@0.144.6?arch=arm64"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:generic/openssl@3.5.7"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:generic/tdlib@1.8.66"
     },
     {
       "dependsOn": [],
@@ -1181,6 +1556,14 @@
     {
       "dependsOn": [],
       "ref": "pkg:maven/androidx.annotation/annotation@1.9.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.appcompat/appcompat-resources@1.6.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.appcompat/appcompat@1.6.1"
     },
     {
       "dependsOn": [],
@@ -1356,7 +1739,15 @@
     },
     {
       "dependsOn": [],
+      "ref": "pkg:maven/androidx.cursoradapter/cursoradapter@1.0.0"
+    },
+    {
+      "dependsOn": [],
       "ref": "pkg:maven/androidx.customview/customview-poolingcontainer@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.customview/customview@1.0.0"
     },
     {
       "dependsOn": [],
@@ -1364,11 +1755,27 @@
     },
     {
       "dependsOn": [],
+      "ref": "pkg:maven/androidx.drawerlayout/drawerlayout@1.0.0"
+    },
+    {
+      "dependsOn": [],
       "ref": "pkg:maven/androidx.dynamicanimation/dynamicanimation@1.0.0"
     },
     {
       "dependsOn": [],
+      "ref": "pkg:maven/androidx.emoji2/emoji2-views-helper@1.4.0"
+    },
+    {
+      "dependsOn": [],
       "ref": "pkg:maven/androidx.emoji2/emoji2@1.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.exifinterface/exifinterface@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.fragment/fragment@1.3.6"
     },
     {
       "dependsOn": [],
@@ -1496,6 +1903,10 @@
     },
     {
       "dependsOn": [],
+      "ref": "pkg:maven/androidx.resourceinspection/resourceinspection-annotation@1.0.1"
+    },
+    {
+      "dependsOn": [],
       "ref": "pkg:maven/androidx.savedstate/savedstate-android@1.4.0"
     },
     {
@@ -1528,7 +1939,19 @@
     },
     {
       "dependsOn": [],
+      "ref": "pkg:maven/androidx.vectordrawable/vectordrawable-animated@1.1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.vectordrawable/vectordrawable@1.1.0"
+    },
+    {
+      "dependsOn": [],
       "ref": "pkg:maven/androidx.versionedparcelable/versionedparcelable@1.1.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.viewpager/viewpager@1.0.0"
     },
     {
       "dependsOn": [],
@@ -1544,7 +1967,79 @@
     },
     {
       "dependsOn": [],
+      "ref": "pkg:maven/com.google.android.datatransport/transport-api@2.2.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.android.datatransport/transport-backend-cct@2.3.3"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.android.datatransport/transport-runtime@2.2.6"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.android.gms/play-services-base@18.5.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.android.gms/play-services-basement@18.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.android.gms/play-services-mlkit-text-recognition-common@19.1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.android.gms/play-services-mlkit-text-recognition@19.0.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.android.gms/play-services-tasks@18.2.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.android.odml/image@1.0.0-beta1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.firebase/firebase-annotations@16.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.firebase/firebase-components@16.1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.firebase/firebase-encoders-json@17.1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.firebase/firebase-encoders@16.1.0"
+    },
+    {
+      "dependsOn": [],
       "ref": "pkg:maven/com.google.guava/listenablefuture@1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.mlkit/common@18.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.mlkit/text-recognition-bundled-common@17.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.mlkit/text-recognition@16.0.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.mlkit/vision-common@17.3.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/com.google.mlkit/vision-interfaces@16.3.0"
     },
     {
       "dependsOn": [],
@@ -1561,6 +2056,18 @@
     {
       "dependsOn": [],
       "ref": "pkg:maven/com.mikepenz/multiplatform-markdown-renderer@0.41.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.legere/pdfiumandroid-api@2.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.legere/pdfiumandroid-core@2.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/javax.inject/javax.inject@1"
     },
     {
       "dependsOn": [],

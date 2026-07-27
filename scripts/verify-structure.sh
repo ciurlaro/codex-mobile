@@ -27,9 +27,6 @@ required=(
   runtime-host/build.gradle.kts runtime-host/android/build.gradle.kts
   runtime-host/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/host/AppServerRuntimeDistribution.kt
   runtime-host/android/src/main/kotlin/io/github/ciurlaro/codexmobile/appserver/host/android/AndroidCodexRuntime.kt
-  providers/documents/build.gradle.kts providers/documents/src/main/AndroidManifest.xml
-  providers/telegram/build.gradle.kts providers/telegram/src/main/AndroidManifest.xml
-  providers/telegram/src/main/kotlin/io/github/ciurlaro/codexmobile/providers/telegram/TelegramSettingsActivity.kt
   provider-api/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/provider/api/CodexMobileProvider.kt
   agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/ProviderHost.kt
   agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/ThreadProviderStateStore.kt
@@ -37,13 +34,17 @@ required=(
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
   platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/BuiltInMutationJournal.kt
+  platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/providers/telegram/TelegramSettingsActivity.kt
   scripts/generate-sbom.py scripts/verify-release.sh scripts/release-local.sh scripts/install-device-fast.sh
   scripts/verify-provider-uninstall-device.sh
 )
 for path in "${required[@]}"; do test -f "$path" || { echo "missing required file: $path" >&2; exit 1; }; done
 
 grep -qx 'codexMobile.codexVersion=0.144.6' gradle.properties
+grep -qx 'codexMobile.providerRevision=a40fefe7c3a60da14e65fef05106a07e1734afdf' gradle.properties
 grep -q 'includeBuild("app-server-client")' settings.gradle.kts
+grep -q 'repository: ciurlaro/codex-mobile-plugins' .github/workflows/verify.yml
+grep -q 'ref: a40fefe7c3a60da14e65fef05106a07e1734afdf' .github/workflows/verify.yml
 grep -q 'version = "0.144.6-1"' app-server-client/build.gradle.kts
 grep -q 'const val APP_SERVER_VERSION = "0.144.6"' \
   app-server-client/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/AppServerProtocolIdentity.kt
@@ -70,21 +71,19 @@ if find app/android/src/main platform/android/src/main -path '*/build/*' -prune 
 fi
 
 test ! -d platform/android/src/main/assets/codex/plugins
-if find app platform agent core -path '*/build/*' -prune -o -type d -name providers -print | grep -q .; then
-  echo "provider implementation directory found in the host" >&2
-  exit 1
-fi
+test -z "$(find providers -path '*/build/*' -prune -o -type f -print 2>/dev/null)"
 reject_matches -n -i \
   '@codex-mobile|src/main/assets/codex/plugins|private.backend' \
   app platform agent core docs gradle/verification-metadata.xml \
   --glob '!**/build/**' --glob '!**/src/test/**' --glob '!**/src/androidTest/**'
-grep -q 'REQUEST_INSTALL_PACKAGES' app/android/src/main/AndroidManifest.xml
-grep -q 'UPDATE_PACKAGES_WITHOUT_USER_ACTION' app/android/src/main/AndroidManifest.xml
-grep -q 'MODE_INHERIT_EXISTING' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
-grep -q 'USER_ACTION_NOT_REQUIRED' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
-grep -q 'session.removeSplit(splitName)' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
-test "$(grep -c 'setDontKillApp(true)' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt)" = 2
-grep -q 'const val PROVIDER_API = 2' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderPackageManager.kt
+reject_matches -n 'REQUEST_INSTALL_PACKAGES|UPDATE_PACKAGES_WITHOUT_USER_ACTION|PackageInstaller' \
+  app/android/src/main platform/android/src/main --glob '!**/build/**'
+grep -q 'documents-android:1.0.0' platform/android/build.gradle.kts
+grep -q 'telegram-android:1.0.0' platform/android/build.gradle.kts
+grep -q 'enum class ProviderDelivery { BUNDLED, LEGACY_SPLIT }' \
+  platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderRegistry.kt
+grep -q 'BUNDLED_PROVIDER_FACTORIES' \
+  platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderRegistry.kt
 grep -q 'AndroidKeyStore' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
 grep -q 'AES/GCM/NoPadding' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderSecretStore.kt
 grep -q 'interface CodexMobileProvider' provider-api/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/provider/api/CodexMobileProvider.kt
@@ -95,16 +94,8 @@ grep -q 'CANONICAL_PROVIDER_REPOSITORY = "ciurlaro/codex-mobile-plugins"' platfo
 grep -q 'record.marketplaceRepository == CANONICAL_PROVIDER_REPOSITORY' platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/platform/android/AndroidProviderRegistry.kt
 grep -q 'class io.github.ciurlaro.codexmobile.provider.api.\*\*' app/android/proguard-rules.pro
 grep -q 'provider-addon-rules.pro' app/android/build.gradle.kts
-grep -qx -- '-dontoptimize' app/android/provider-addon-rules.pro
-grep -qx -- '-dontobfuscate' app/android/provider-addon-rules.pro
-for provider_abi in \
-  'io.github.ciurlaro.codexmobile.provider.api.**' \
-  'io.github.ciurlaro.codexmobile.platform.android.**' \
-  'kotlin.**' \
-  'kotlinx.coroutines.**' \
-  'kotlinx.serialization.**'; do
-  grep -Fqx -- "-keep class $provider_abi { *; }" app/android/provider-addon-rules.pro
-done
+reject_matches -n '^-dont(optimize|obfuscate)$' app/android/provider-addon-rules.pro
+grep -Fqx -- '-keep class org.drinkless.tdlib.JsonClient { *; }' app/android/provider-addon-rules.pro
 grep -Fqx -- '-keep class io.legere.pdfiumandroid.core.jni.** { *; }' app/android/provider-addon-rules.pro
 grep -q 'AppServerClientMethods.MarketplaceAdd' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
 grep -q 'AppServerClientMethods.ThreadInjectItems' agent/codex/src/main/kotlin/io/github/ciurlaro/codexmobile/agent/codex/CodexAgentClient.kt
@@ -119,8 +110,7 @@ reject_matches -n '^[[:space:]]*import[[:space:]]+(android|androidx|io\.github\.
 reject_matches -n '^[[:space:]]*import[[:space:]]+(android|androidx|io\.github\.ciurlaro\.codexmobile\.(agent|app|core|platform))\.' provider-api/src
 reject_matches -n '^[[:space:]]*import[[:space:]]+io\.github\.ciurlaro\.codexmobile\.(agent|app|core|platform|provider)\.' \
   runtime-host/src runtime-host/android/src
-test -z "$(find providers/documents/src/main -name '*.kt' -print)"
-test "$(find providers/telegram/src/main -name '*.kt' -print | wc -l | tr -d ' ')" = 1
+test "$(find platform/android/src/main/kotlin/io/github/ciurlaro/codexmobile/providers -name '*.kt' -print | wc -l | tr -d ' ')" = 1
 reject_matches -n '@Ignore|TODO[[:space:]]*\(' --glob '*.kt' core/src agent/codex/src platform/android/src app/android/src
 reject_matches -n '(^|[^[:alnum:]_])(Log\.[vdiwe]|println|print|System\.(out|err))[[:space:]]*\(' \
   --glob '*.kt' core/src/main agent/codex/src/main platform/android/src/main app/android/src/main --glob '!**/build/**'

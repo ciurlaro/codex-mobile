@@ -43,9 +43,6 @@ class AndroidPlatform internal constructor(
 
     fun providerSettings(): List<ProviderSettingsEntry> = providers.settings()
 
-    fun consumeProviderPackageCompletion(): ProviderPackageCompletion? =
-        ProviderPackageOperationStore.consume(appContext)
-
     fun openProviderSettings(pluginId: String) {
         val entry = providers.settings().singleOrNull { it.pluginId == pluginId }
             ?: error("Provider settings are unavailable")

@@ -14,7 +14,7 @@ interface ProviderSecretStore {
     fun clear()
 }
 
-enum class ProviderInstallDisposition { NOT_REQUIRED, READY, RESTART_REQUIRED }
+enum class ProviderInstallDisposition { NOT_REQUIRED, READY }
 
 interface PluginProviderHost {
     suspend fun install(plugin: AgentPluginReference, mcpServerNames: Set<String>): ProviderInstallDisposition

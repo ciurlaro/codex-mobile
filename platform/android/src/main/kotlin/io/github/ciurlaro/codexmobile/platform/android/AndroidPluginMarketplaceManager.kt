@@ -26,9 +26,16 @@ class AndroidPluginMarketplaceManager internal constructor(context: Context) {
     private val root = File(context.applicationContext.noBackupFilesDir, "codex/mobile-marketplaces")
     private val mutationMutex = Mutex()
 
-    suspend fun snapshot(sourceUrl: String): String = withContext(Dispatchers.IO) {
+    suspend fun snapshot(sourceUrl: String): String = prepareSnapshot(sourceUrl, reuseExisting = false)
+
+    suspend fun snapshotOrReuse(sourceUrl: String): String = prepareSnapshot(sourceUrl, reuseExisting = true)
+
+    private suspend fun prepareSnapshot(sourceUrl: String, reuseExisting: Boolean): String = withContext(Dispatchers.IO) {
         mutationMutex.withLock {
             val source = GitHubMarketplaceLocation.parse(sourceUrl)
+            if (reuseExisting) {
+                findReusableMarketplaceSnapshot(root, source)?.let { return@withLock it.canonicalPath }
+            }
             val ref = source.ref ?: readJson(
                 "https://api.github.com/repos/${source.repository.owner}/${source.repository.repo}",
             ).getString("default_branch").also {
@@ -51,6 +58,7 @@ class AndroidPluginMarketplaceManager internal constructor(context: Context) {
                 }
                 check(hasMarketplaceManifest(staging)) { "The repository has no valid plugin marketplace" }
                 writeOrigin(staging, source.repository)
+                writeSource(staging, source)
                 check(isValidMarketplaceSnapshot(staging)) { "The marketplace contains an invalid local plugin path" }
                 replaceMarketplaceSnapshot(staging, destination)
                 destination.canonicalPath
@@ -81,6 +89,17 @@ class AndroidPluginMarketplaceManager internal constructor(context: Context) {
         )
     }
 
+    private fun writeSource(directory: File, source: GitHubMarketplaceLocation) {
+        File(directory, SOURCE_METADATA_FILE).writeText(
+            JSONObject()
+                .put("owner", source.repository.owner.lowercase())
+                .put("repository", source.repository.repo.lowercase())
+                .put("ref", source.ref ?: JSONObject.NULL)
+                .put("path", source.path)
+                .toString(),
+        )
+    }
+
     private fun openConnection(url: String): HttpURLConnection =
         (URI(url).toURL().openConnection() as HttpURLConnection).apply {
             connectTimeout = NETWORK_TIMEOUT_MILLIS
@@ -99,6 +118,39 @@ class AndroidPluginMarketplaceManager internal constructor(context: Context) {
         const val MAX_MANIFEST_BYTES = 1L * 1024 * 1024
     }
 }
+
+private const val SOURCE_METADATA_FILE = ".codex-mobile-source.json"
+
+internal fun findReusableMarketplaceSnapshot(root: File, source: GitHubMarketplaceLocation): File? =
+    root.listFiles().orEmpty()
+        .asSequence()
+        .filter { it.isDirectory && !it.name.startsWith('.') }
+        .filter(::isValidMarketplaceSnapshot)
+        .filter { snapshotMatchesSource(it, source) }
+        .maxByOrNull(File::lastModified)
+
+private fun snapshotMatchesSource(directory: File, source: GitHubMarketplaceLocation): Boolean {
+    val metadata = File(directory, SOURCE_METADATA_FILE)
+    if (metadata.isFile) return runCatching {
+        val value = JSONObject(metadata.readText())
+        value.getString("owner").equals(source.repository.owner, true) &&
+            value.getString("repository").equals(source.repository.repo, true) &&
+            (if (value.isNull("ref")) null else value.getString("ref")) == source.ref &&
+            value.optString("path") == source.path
+    }.getOrDefault(false)
+    if (source.ref != null || source.path.isNotEmpty()) return false
+    return readSnapshotOrigin(directory) == source.repository.normalized()
+}
+
+private fun readSnapshotOrigin(directory: File): GitHubRepository? = runCatching {
+    val url = File(directory, ".git/config").readLines()
+        .first { it.trimStart().startsWith("url =") }
+        .substringAfter('=')
+        .trim()
+    GitHubMarketplaceLocation.parse(url).repository.normalized()
+}.getOrNull()
+
+private fun GitHubRepository.normalized() = GitHubRepository(owner.lowercase(), repo.lowercase())
 
 internal fun readMarketplaceName(directory: File): String {
     val manifest = File(directory, ".agents/plugins/marketplace.json")

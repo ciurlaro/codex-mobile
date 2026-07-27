@@ -38,8 +38,6 @@ internal class AppPreferencesStore(context: Context) {
             appContext.packageManager.getPackageInfo(appContext.packageName, 0)
                 .let { it.lastUpdateTime > it.firstInstallTime }
         }.getOrDefault(false)
-    val codexMobilePluginSourceAdded: Boolean
-        get() = preferences.getBoolean(CODEX_MOBILE_PLUGIN_SOURCE_ADDED, false)
     val hadAuthenticatedSession: Boolean
         get() = preferences.getBoolean(HAD_AUTHENTICATED_SESSION, false)
 
@@ -72,10 +70,6 @@ internal class AppPreferencesStore(context: Context) {
             .apply()
     }
 
-    fun setCodexMobilePluginSourceAdded(added: Boolean) {
-        preferences.edit().putBoolean(CODEX_MOBILE_PLUGIN_SOURCE_ADDED, added).apply()
-    }
-
     fun setHadAuthenticatedSession(authenticated: Boolean) {
         preferences.edit().putBoolean(HAD_AUTHENTICATED_SESSION, authenticated).apply()
     }
@@ -100,7 +94,6 @@ internal class AppPreferencesStore(context: Context) {
         const val KNOWN_PLUGIN_SOURCES = "known-plugin-sources"
         const val ENABLED_PLUGIN_SOURCES = "enabled-plugin-sources"
         const val CUSTOM_EXTENSION_SOURCES = "custom-extension-sources"
-        const val CODEX_MOBILE_PLUGIN_SOURCE_ADDED = "codex-mobile-plugin-source-added"
         const val HAD_AUTHENTICATED_SESSION = "had-authenticated-session"
     }
 

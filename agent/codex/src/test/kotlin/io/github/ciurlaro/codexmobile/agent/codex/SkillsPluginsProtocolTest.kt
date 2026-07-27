@@ -153,7 +153,6 @@ class SkillsPluginsProtocolTest {
         }
 
         assertTrue(result.completed)
-        assertFalse(result.restartRequired)
         assertEquals(
             listOf(
                 "provider-install", "config-write", "config-write", "plugin-install", "provider-complete", "config-write",
@@ -567,7 +566,7 @@ class SkillsPluginsProtocolTest {
     }
 
     @Test
-    fun `available plugin discovery does not retry an empty catalog`(): Unit = runBlocking {
+    fun `available plugin discovery retries an empty catalog while the marketplace becomes ready`(): Unit = runBlocking {
         var requests = 0
         val process = FakeCodexRuntime { message, server ->
             when (message.method) {
@@ -582,14 +581,18 @@ class SkillsPluginsProtocolTest {
             }
         }
 
-        CodexAgentClient({ process }, requestTimeoutMillis = 1_000).use { client ->
-            assertTrue(client.listAvailablePlugins("/workspace").plugins.isEmpty())
-            assertEquals(1, requests)
+        CodexAgentClient(
+            runtimeFactory = { process },
+            requestTimeoutMillis = 1_000,
+            emptyPluginCatalogRetryDelaysMillis = listOf(0),
+        ).use { client ->
+            assertTrue(client.listAvailablePlugins("/workspace").plugins.isNotEmpty())
+            assertEquals(2, requests)
         }
     }
 
     @Test
-    fun `installed plugins ignore marketplace refresh failures`(): Unit = runBlocking {
+    fun `installed plugins preserve marketplace refresh failures`(): Unit = runBlocking {
         val runtime = FakeCodexRuntime { message, server ->
             when (message.method) {
                 "initialize" -> server.respond(message.id, buildJsonObject {})
@@ -613,8 +616,73 @@ class SkillsPluginsProtocolTest {
         CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000).use { client ->
             val catalog = client.listInstalledPlugins("/workspace")
             assertTrue(catalog.plugins.single().installed)
-            assertTrue(catalog.errors.isEmpty())
+            assertEquals(listOf("Stream Closed"), catalog.errors)
         }
+    }
+
+    @Test
+    fun `installed plugin refresh keeps last known plugins when app server returns empty`(): Unit = runBlocking {
+        val cache = Files.createTempDirectory("installed-plugin-cache-").toFile()
+        val populated = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/installed" -> server.respond(message.id, pluginList(installed = true))
+            }
+        }
+        CodexAgentClient({ populated }, requestTimeoutMillis = 1_000, pluginCacheDirectory = cache).use { client ->
+            assertTrue(client.listInstalledPlugins("/workspace").plugins.single().installed)
+        }
+
+        val empty = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/installed" -> server.respond(message.id, emptyPluginList())
+            }
+        }
+        CodexAgentClient({ empty }, requestTimeoutMillis = 1_000, pluginCacheDirectory = cache).use { client ->
+            val catalog = client.listInstalledPlugins("/workspace", forceRefresh = true)
+            assertEquals(AgentCatalogFreshness.STALE_CACHE, catalog.freshness)
+            assertTrue(catalog.plugins.single().installed)
+            assertTrue(catalog.errors.isNotEmpty())
+        }
+        cache.deleteRecursively()
+    }
+
+    @Test
+    fun `plugin discovery works without a workspace`() = runBlocking {
+        var params: JsonObject? = null
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "plugin/list" -> {
+                    params = message.objectValue["params"]!!.jsonObject
+                    server.respond(message.id, pluginList(installed = false))
+                }
+            }
+        }
+
+        CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000).use { client ->
+            assertTrue(client.listAvailablePlugins(null, forceRefresh = true).plugins.isNotEmpty())
+        }
+        assertFalse("cwds" in checkNotNull(params))
+    }
+
+    @Test
+    fun `sign out clears saved plugin catalogs`(): Unit = runBlocking {
+        val cache = Files.createTempDirectory("signed-out-plugin-cache-").toFile()
+        val runtime = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize", "account/logout" -> server.respond(message.id, buildJsonObject {})
+                "plugin/list" -> server.respond(message.id, pluginList(installed = false))
+            }
+        }
+        CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000, pluginCacheDirectory = cache).use { client ->
+            client.listAvailablePlugins("/workspace")
+            assertTrue(cache.listFiles().orEmpty().isNotEmpty())
+            client.signOut()
+            assertTrue(cache.listFiles().orEmpty().isEmpty())
+        }
+        cache.deleteRecursively()
     }
 
     @Test

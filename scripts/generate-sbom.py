@@ -37,6 +37,7 @@ def dependencies() -> list[tuple[str, str, str]]:
 
 def generate() -> str:
     version = prop("codexMobile.versionName", r".+")
+    provider_revision = prop("codexMobile.providerRevision", r"[0-9a-f]{40}")
     codex_version = prop("codexMobile.codexVersion", r"0\.144\.6")
     archive_hash = prop("codexMobile.codexArchiveSha256", r"[0-9a-f]{64}")
     binary_hash = prop("codexMobile.codexBinarySha256", r"[0-9a-f]{64}")
@@ -54,8 +55,32 @@ def generate() -> str:
         for name, description in [
             ("codex-mobile-core", "Provider-neutral application contracts."),
             ("codex-mobile-agent-codex", "Pinned App Server protocol, plugin lifecycle, and dynamic-tool authority."),
-            ("codex-mobile-platform-android", "Android runtime, signed provider host, workspace authority, and mutation journal."),
+            ("codex-mobile-platform-android", "Android runtime, bundled provider host, workspace authority, and mutation journal."),
         ]
+    ]
+    internal += [
+        {
+            "type": "library",
+            "bom-ref": f"pkg:generic/codex-mobile-provider-{name}@{provider_revision}",
+            "name": f"codex-mobile-provider-{name}",
+            "version": provider_revision,
+            "purl": f"pkg:generic/codex-mobile-provider-{name}@{provider_revision}",
+            "description": f"Bundled {name.title()} provider from ciurlaro/codex-mobile-plugins.",
+            "licenses": [{"license": {"id": "GPL-3.0-or-later"}}],
+        }
+        for name in ("documents", "telegram")
+    ]
+    native = [
+        {
+            "type": "library", "bom-ref": "pkg:generic/tdlib@1.8.66", "name": "TDLib",
+            "version": "1.8.66", "purl": "pkg:generic/tdlib@1.8.66",
+            "licenses": [{"license": {"id": "BSL-1.0"}}],
+        },
+        {
+            "type": "library", "bom-ref": "pkg:generic/openssl@3.5.7", "name": "OpenSSL",
+            "version": "3.5.7", "purl": "pkg:generic/openssl@3.5.7",
+            "licenses": [{"license": {"id": "Apache-2.0"}}],
+        },
     ]
     codex_ref = f"pkg:generic/openai/codex-app-server@{codex_version}?arch=arm64"
     codex = {
@@ -80,7 +105,7 @@ def generate() -> str:
             "type": "library", "bom-ref": ref, "group": group, "name": name,
             "version": dependency_version, "purl": ref,
         })
-    direct = internal + [codex] + maven
+    direct = internal + [codex] + native + maven
     refs = sorted(item["bom-ref"] for item in direct)
     bom = {
         "bomFormat": "CycloneDX",

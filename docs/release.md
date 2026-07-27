@@ -5,13 +5,11 @@
 - ARM64 (`arm64-v8a`) stock Android API 26–37.
 - One ChatGPT account through Codex-managed browser authentication.
 - Android **All files access** plus one selected shared-storage directory used as each turn's starting `cwd`.
-- Standard GitHub marketplace plugins and explicitly confirmed signed feature splits.
+- Standard GitHub marketplace plugins and the bundled official Android providers.
 - Ordinary shell work through App Server, four approval policies, model speed tiers, and foreground execution.
 - Typed mutations under Auto review fall back to explicit one-use user approval on App Server `0.144.6`.
 
-The host release is independent of any provider checkout. The base APK contains App Server and host code only. Provider repositories build and publish exact-host-version feature APKs separately with the same package name, version code, and signing certificate.
-
-An Android package update cannot mix a new base version with old-version feature splits. Release tooling includes matching signed replacements for every installed provider in the same update session, or requires the user to finish provider removal before a base-only update. A later in-app repair cannot make an otherwise invalid package transaction safe.
+The host release checks out the exact `codexMobile.providerRevision` and bundles its Documents and Telegram libraries in the base APK. A full APK update removes legacy provider splits while preserving application data.
 
 ## CI build and verification
 
@@ -32,9 +30,9 @@ GitHub pull-request CI runs these commands with an ephemeral key. Official relea
 
 `scripts/release-local.sh` is an explicit fallback when GitHub Actions is unavailable. It obtains the password from Keychain and runs the same release checks; `--reproducible` adds two clean byte-for-byte comparison builds.
 
-`assembleRelease` refuses an unsigned APK. The verifier checks signature, manifest, pinned App Server, locks, dependency verification, SBOM, and that the base packages no provider definitions, models, feature code, or native payloads beyond App Server and AndroidX's declared graphics-path library. Provider-specific ABI, JNI/model size, licence, network, retry, and runtime-download audits belong to each provider release.
+`assembleRelease` refuses an unsigned APK. The verifier checks signature, manifest, pinned App Server and provider revision, locks, dependency verification, SBOM, bundled provider entry points, and the exact native-library set.
 
-Standalone host and coordinated provider builds use the same R8 rules: the provider API, Android bridge, Kotlin, coroutine, and serialization packages are retained as a stable shared ABI, while optimization and obfuscation are disabled across the independently built boundary. Provider-only implementation code can still be shrunk. Release verification rejects short default-package class descriptors and requires each split to reference the stable provider API.
+R8 keeps only JNI-bound names and the two metadata-compared provider entry-point names; the rest of the monolithic app remains optimizable.
 
 ## Install on a connected phone
 
@@ -42,7 +40,7 @@ Standalone host and coordinated provider builds use the same R8 rules: the provi
 scripts/install-phone.sh
 ```
 
-The command verifies the signed release, updates a base-only installation on the selected physical device with `adb install -r`, verifies the package, and opens it. It refuses emulators, unauthorized devices, ambiguous multi-device selections, and installations containing feature splits. It never uninstalls the app or clears data.
+The command verifies the signed release, performs a full in-place update with `adb install -r`, verifies that legacy provider splits are gone, and opens the app. It never uninstalls the app or clears data.
 
 ## Host provenance
 
@@ -55,7 +53,7 @@ The command verifies the signed release, updates a base-only installation on the
 
 ## Release gates
 
-The release record covers startup, session readiness, first token, long streams, memory, CPU, file descriptors, threads, process activity, APK size/hash, supported Android versions, and marketplace/package lifecycle drills. Before promotion, verify source addition, cache-first catalog refresh, installation confirmation and restart continuation, disable/re-enable/uninstall, existing-thread notices, ordinary shell work, all approval modes, mutation recovery without resubmission, official plugins, foreground behavior, and app-data erasure.
+The release record covers startup, session readiness, first token, long streams, memory, CPU, file descriptors, threads, process activity, APK size/hash, supported Android versions, and marketplace/provider lifecycle drills. Before promotion, verify source addition, cache-first catalog refresh, restart-free activation/removal, next-chat tool visibility, ordinary shell work, all approval modes, mutation recovery without resubmission, official plugins, foreground behavior, and app-data erasure.
 
 Provider publishing is separate. Each add-on manifest pins a matching host version, API range, schema digest, MCP names, split name, ABI set, artifact URL, and SHA-256. Its release checks prove signer compatibility, post-restart activation/removal, functional behavior, declared JNI/models, licences, size, network/download behavior, and absence of helper executables.
 The coordinated provider release publishes a deterministic `release-manifest.json` that binds the exact host APK, App Server client/protocol/runtime, provider API and implementations, plugin content, feature APKs, MCP image, compatibility ranges, and both SBOMs by revision and SHA-256.

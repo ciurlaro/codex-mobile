@@ -1,38 +1,17 @@
 package io.github.ciurlaro.codexmobile.platform.android
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageInstaller
-import android.net.Uri
 import android.os.Build
-import android.provider.Settings
 import io.github.ciurlaro.codexmobile.agent.codex.PluginProviderHost
 import io.github.ciurlaro.codexmobile.agent.codex.ProviderInstallDisposition
+import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.core.AgentPluginUnavailableException
 import io.github.ciurlaro.codexmobile.provider.api.ProviderContext
+import io.github.ciurlaro.codexmobile.provider.api.ProviderDescriptor
 import io.github.ciurlaro.codexmobile.provider.api.ProviderRemovalResult
 import io.github.ciurlaro.codexmobile.provider.api.ProviderRemovalState
-import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import java.io.File
-import java.net.HttpURLConnection
 import java.net.URI
-import java.security.MessageDigest
-import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
-import java.util.zip.ZipFile
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.int
 import kotlinx.serialization.json.jsonArray
@@ -44,7 +23,6 @@ class AndroidProviderPackageManager(
     private val registry: AndroidProviderRegistry,
 ) : PluginProviderHost {
     private val appContext = context.applicationContext
-    private val installer get() = appContext.packageManager.packageInstaller
 
     override suspend fun install(
         plugin: AgentPluginReference,
@@ -52,45 +30,27 @@ class AndroidProviderPackageManager(
     ): ProviderInstallDisposition {
         val packageInfo = readDescriptor(plugin) ?: return ProviderInstallDisposition.NOT_REQUIRED
         val descriptor = packageInfo.descriptor
-        check(descriptor.pluginId == plugin.id) { "Provider plugin ID does not match its plugin" }
-        check(descriptor.mcpServerNames.toSet() == mcpServerNames) {
-            "Provider MCP configuration does not match its add-on metadata"
-        }
-        check(PROVIDER_API in descriptor.minProviderApi..descriptor.maxProviderApi) {
-            "This provider requires an unsupported host API"
-        }
+        val provider = registry.bundledProvider(plugin.id) ?: throw AgentPluginUnavailableException(
+            plugin.id,
+            descriptor.displayName,
+            "${descriptor.displayName} requires a newer Codex Mobile version",
+        )
         val hostVersion = appContext.packageManager.getPackageInfo(appContext.packageName, 0).compatVersionCode()
-        check(descriptor.hostVersionCode == hostVersion) { "This provider was built for another Codex Mobile version" }
-        check(Build.SUPPORTED_ABIS.any(descriptor.abis::contains)) { "This provider does not support this device ABI" }
-        val candidate = descriptor.toInstalledProvider(plugin, PROVIDER_API, packageInfo.marketplaceRepository)
-        val previous = registry.installedRecord(plugin.id)
-        val splitName = descriptor.splitNames.single()
-        if (installedSplits().contains(splitName) && previous?.apkSha256 == descriptor.sha256) {
-            registry.recordInstalling(candidate.copy(contentSha256 = previous.contentSha256))
-            val verificationError = runCatching { registry.requireVerified(plugin.id) }.exceptionOrNull()
-            if (verificationError == null) return ProviderInstallDisposition.READY
-            registry.restoreInstallRecord(plugin.id, previous)
-            throw descriptor.verificationFailure(verificationError)
-        }
-        awaitInstallerPermission()
+        validateBundledProvider(descriptor, provider.descriptor, provider.javaClass.name, mcpServerNames, hostVersion)
 
-        val apk = download(descriptor)
-        val contentSha256 = apk.apkContentSha256()
+        val previous = registry.installedRecord(plugin.id)
         try {
-            registry.recordInstalling(candidate.copy(contentSha256 = contentSha256))
-            installSplit(
-                splitName,
-                apk,
-                ProviderPackageOperation(ProviderPackageOperationKind.INSTALL, plugin.id, descriptor.displayName),
+            registry.recordInstalling(
+                descriptor.toInstalledProvider(plugin, provider.descriptor.providerApi, packageInfo.marketplaceRepository),
             )
-            runCatching { registry.requireVerified(plugin.id) }
-                .getOrElse { throw descriptor.verificationFailure(it) }
+            registry.requireVerified(plugin.id)
         } catch (error: Exception) {
-            val installedContent = runCatching { installedSplitFiles()[splitName]?.apkContentSha256() }.getOrNull()
-            if (installedContent != contentSha256) registry.restoreInstallRecord(plugin.id, previous)
-            throw error
-        } finally {
-            apk.delete()
+            registry.restoreInstallRecord(plugin.id, previous)
+            throw IllegalStateException(
+                "${descriptor.displayName} provider verification failed: " +
+                    (error.message ?: "the bundled code does not match its metadata"),
+                error,
+            )
         }
         return ProviderInstallDisposition.READY
     }
@@ -112,8 +72,8 @@ class AndroidProviderPackageManager(
         if (provider == null) {
             BuiltInMutationJournal(appContext).use { it.compact(pluginId) }
             registry.secretStore(pluginId).clear()
-            registry.markRemovalPrepared(pluginId, "Unverified provider is ready for code removal")
-            return ProviderRemovalResult.ready("Unverified provider is ready for code removal")
+            registry.markRemovalPrepared(pluginId, "Provider state is ready for removal")
+            return ProviderRemovalResult.ready()
         }
         val result = provider.prepareUninstall(ProviderContext({}, registry.secretStore(pluginId).snapshot()))
         if (result.state == ProviderRemovalState.READY) {
@@ -126,22 +86,7 @@ class AndroidProviderPackageManager(
         return result
     }
 
-    override suspend fun remove(pluginId: String) {
-        val record = registry.installedRecord(pluginId) ?: return
-        registry.markSplitRemovalPending(pluginId)
-        try {
-            record.splitNames.filter { it in installedSplits() }.forEach { splitName ->
-                removeSplit(
-                    splitName,
-                    ProviderPackageOperation(ProviderPackageOperationKind.REMOVE, pluginId, record.displayName),
-                )
-            }
-            registry.reconcileRemovedSplits()
-        } catch (error: Exception) {
-            registry.markSplitRemovalPending(pluginId, error.message ?: "Provider code removal needs retry")
-            throw error
-        }
-    }
+    override suspend fun remove(pluginId: String) = registry.remove(pluginId)
 
     private fun readDescriptor(plugin: AgentPluginReference): ProviderPackageInfo? {
         val codexRoot = File(appContext.noBackupFilesDir, "codex").canonicalFile
@@ -168,246 +113,36 @@ class AndroidProviderPackageManager(
         return ProviderPackageInfo(ProviderPackageDescriptor.parse(manifest.readText()), repository)
     }
 
-    private suspend fun awaitInstallerPermission() {
-        if (appContext.packageManager.canRequestPackageInstalls()) return
-        appContext.startActivity(
-            Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${appContext.packageName}"))
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-        )
-        check(withTimeoutOrNull(INSTALL_PERMISSION_TIMEOUT_MILLIS) {
-            while (!appContext.packageManager.canRequestPackageInstalls()) delay(250)
-            true
-        } == true) { "Allow Codex Mobile to install provider add-ons" }
-    }
-
-    private suspend fun download(descriptor: ProviderPackageDescriptor): File = withContext(Dispatchers.IO) {
-        val destination = File(appContext.cacheDir, "provider-${UUID.randomUUID()}.apk")
-        var uri = descriptor.apkUri
-        repeat(MAX_REDIRECTS + 1) { redirect ->
-            ProviderSourcePolicy.requireProviderUri(uri, redirect > 0)
-            val connection = uri.toURL().openConnection() as HttpURLConnection
-            connection.instanceFollowRedirects = false
-            connection.connectTimeout = NETWORK_TIMEOUT_MILLIS
-            connection.readTimeout = NETWORK_TIMEOUT_MILLIS
-            connection.setRequestProperty("Accept", "application/vnd.android.package-archive")
-            connection.connect()
-            connection.use {
-                if (it.responseCode in 300..399) {
-                    check(redirect < MAX_REDIRECTS) { "Too many provider download redirects" }
-                    uri = uri.resolve(checkNotNull(it.getHeaderField("Location")) { "Provider redirect has no location" })
-                    return@repeat
-                }
-                check(it.responseCode in 200..299) { "Provider download returned HTTP ${it.responseCode}" }
-                val expectedSize = it.contentLengthLong
-                check(expectedSize in 1..MAX_APK_BYTES) { "Provider APK has an invalid size" }
-                val digest = MessageDigest.getInstance("SHA-256")
-                it.inputStream.use { input ->
-                    destination.outputStream().use { output ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var total = 0L
-                        while (true) {
-                            val count = input.read(buffer)
-                            if (count < 0) break
-                            total += count
-                            check(total <= MAX_APK_BYTES) { "Provider APK exceeds the size limit" }
-                            digest.update(buffer, 0, count)
-                            output.write(buffer, 0, count)
-                        }
-                    }
-                }
-                check(digest.digest().toHex() == descriptor.sha256) { "Provider APK checksum does not match" }
-                return@withContext destination
-            }
-        }
-        error("Provider download failed")
-    }
-
-    private suspend fun installSplit(splitName: String, apk: File, operation: ProviderPackageOperation) {
-        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_INHERIT_EXISTING).apply {
-            setAppPackageName(appContext.packageName)
-            if (Build.VERSION.SDK_INT >= 31) {
-                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-            }
-            if (Build.VERSION.SDK_INT >= 34) setDontKillApp(true)
-        }
-        commit(installer.createSession(params), operation) { session ->
-            session.openWrite(splitName, 0, apk.length()).use { output ->
-                apk.inputStream().use { it.copyTo(output) }
-                session.fsync(output)
-            }
-        }
-    }
-
-    private suspend fun removeSplit(splitName: String, operation: ProviderPackageOperation) {
-        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_INHERIT_EXISTING).apply {
-            setAppPackageName(appContext.packageName)
-            if (Build.VERSION.SDK_INT >= 31) {
-                setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED)
-            }
-            if (Build.VERSION.SDK_INT >= 34) setDontKillApp(true)
-        }
-        commit(installer.createSession(params), operation) { session -> session.removeSplit(splitName) }
-    }
-
-    private suspend fun commit(
-        sessionId: Int,
-        operation: ProviderPackageOperation,
-        write: (PackageInstaller.Session) -> Unit,
-    ) {
-        val token = UUID.randomUUID().toString()
-        val result = CompletableDeferred<Result<Unit>>()
-        ProviderPackageCallbacks.register(token, result)
-        var committed = false
-        try {
-            installer.openSession(sessionId).use { session ->
-                write(session)
-                val callback = PendingIntent.getBroadcast(
-                    appContext,
-                    sessionId,
-                    Intent(appContext, ProviderPackageResultReceiver::class.java)
-                        .putExtra(ProviderPackageResultReceiver.EXTRA_TOKEN, token),
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE,
-                )
-                ProviderPackageOperationStore.begin(appContext, token, operation)
-                session.commit(callback.intentSender)
-                committed = true
-            }
-            try {
-                val completed = withTimeout(PACKAGE_TIMEOUT_MILLIS) { result.await() }
-                ProviderPackageOperationStore.clear(appContext, token)
-                completed.getOrThrow()
-            } catch (_: TimeoutCancellationException) {
-                currentCoroutineContext().ensureActive()
-                throw IllegalStateException("Android provider installation timed out")
-            }
-        } catch (error: Exception) {
-            if (!committed) ProviderPackageOperationStore.clear(appContext, token)
-            throw error
-        } finally {
-            ProviderPackageCallbacks.remove(token)
-            runCatching { installer.abandonSession(sessionId) }
-        }
-    }
-
-    private fun installedSplits(): Set<String> = installedSplitFiles().keys
-
-    private fun installedSplitFiles(): Map<String, File> = appContext.packageManager
-        .getApplicationInfo(appContext.packageName, 0)
-        .let { info -> info.splitNames.orEmpty().zip(info.splitSourceDirs.orEmpty().map(::File)).toMap() }
-
-    private inline fun <T> HttpURLConnection.use(block: (HttpURLConnection) -> T): T = try {
-        block(this)
-    } finally {
-        disconnect()
-    }
-
     private companion object {
-        const val PROVIDER_API = 2
-        const val MAX_REDIRECTS = 5
         const val MAX_DESCRIPTOR_BYTES = 64L * 1024
-        const val MAX_APK_BYTES = 512L * 1024 * 1024
-        const val NETWORK_TIMEOUT_MILLIS = 30_000
-        const val PACKAGE_TIMEOUT_MILLIS = 15L * 60 * 1_000
-        const val INSTALL_PERMISSION_TIMEOUT_MILLIS = 2L * 60 * 1_000
     }
 }
 
-class ProviderPackageResultReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        val token = intent.getStringExtra(EXTRA_TOKEN) ?: return
-        when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
-            PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                val confirmation = pendingUserAction(intent)
-                if (confirmation == null) {
-                    finish(context, token, Result.failure(IllegalStateException("Provider installation needs confirmation")))
-                } else {
-                    runCatching {
-                        context.startActivity(confirmation.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    }.onFailure { finish(context, token, Result.failure(it)) }
-                }
-            }
-            PackageInstaller.STATUS_SUCCESS -> {
-                finish(context, token, Result.success(Unit))
-            }
-            else -> finish(context, token, Result.failure(IllegalStateException(
-                intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "Provider package update failed",
-            )))
-        }
+internal fun validateBundledProvider(
+    addOn: ProviderPackageDescriptor,
+    bundled: ProviderDescriptor,
+    bundledEntryPoint: String,
+    mcpServerNames: Set<String>,
+    hostVersion: Int,
+    supportedAbis: Set<String> = Build.SUPPORTED_ABIS.toSet(),
+) {
+    check(addOn.pluginId == bundled.pluginId) { "Provider plugin ID does not match its bundled code" }
+    check(addOn.mcpServerNames.toSet() == mcpServerNames) {
+        "Provider MCP configuration does not match its add-on metadata"
     }
-
-    private fun finish(context: Context, token: String, result: Result<Unit>) {
-        if (!ProviderPackageCallbacks.complete(token, result)) {
-            val completion = ProviderPackageOperationStore.complete(context, token, result)
-            notifyAfterRestart(context, completion, result)
-            reopenApp(context)
-        }
+    check(bundled.providerApi in addOn.minProviderApi..addOn.maxProviderApi) {
+        "This provider requires an unsupported host API"
     }
-
-    @Suppress("DEPRECATION")
-    private fun pendingUserAction(intent: Intent): Intent? = if (Build.VERSION.SDK_INT >= 33) {
-        intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
-    } else {
-        intent.getParcelableExtra(Intent.EXTRA_INTENT)
+    check(addOn.hostVersionCode == hostVersion && hostVersion in bundled.minHostVersionCode..bundled.maxHostVersionCode) {
+        "This provider was built for another Codex Mobile version"
     }
-
-    private fun notifyAfterRestart(
-        context: Context,
-        completion: ProviderPackageCompletion?,
-        result: Result<Unit>,
-    ) {
-        val notifications = context.getSystemService(NotificationManager::class.java)
-        notifications.createNotificationChannel(
-            NotificationChannel(CHANNEL_ID, "Provider changes", NotificationManager.IMPORTANCE_DEFAULT),
-        )
-        val openApp = context.packageManager.getLaunchIntentForPackage(context.packageName)?.let {
-            PendingIntent.getActivity(context, 0, it, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        }
-        notifications.notify(
-            NOTIFICATION_ID,
-            Notification.Builder(context, CHANNEL_ID)
-                .setSmallIcon(if (result.isSuccess) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_notify_error)
-                .setContentTitle("Codex Mobile")
-                .setContentText(completion?.message ?: result.exceptionOrNull()?.message ?: "Provider update finished")
-                .setContentIntent(openApp)
-                .setAutoCancel(true)
-                .build(),
-        )
-    }
-
-    private fun reopenApp(context: Context) {
-        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName) ?: return
-        runCatching {
-            context.startActivity(
-                launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            )
-        }
-    }
-
-    companion object {
-        const val EXTRA_TOKEN = "providerPackageToken"
-        private const val CHANNEL_ID = "provider-installation"
-        internal const val NOTIFICATION_ID = 5002
-    }
+    check(supportedAbis.any(addOn.abis::contains)) { "This provider does not support this device ABI" }
+    check(addOn.implementationVersion == bundled.implementationVersion)
+    check(addOn.displayName == bundled.displayName)
+    check(addOn.schemaDigest == bundled.schemaDigest)
+    check(addOn.entryPoint == bundledEntryPoint)
+    check(addOn.settingsEntryPoint == bundled.settingsEntryPoint)
 }
-
-internal object ProviderPackageCallbacks {
-    private val callbacks = ConcurrentHashMap<String, CompletableDeferred<Result<Unit>>>()
-
-    fun register(token: String, result: CompletableDeferred<Result<Unit>>) {
-        check(callbacks.putIfAbsent(token, result) == null)
-    }
-
-    fun complete(token: String, result: Result<Unit>): Boolean = callbacks.remove(token)?.complete(result) == true
-
-    fun remove(token: String) {
-        callbacks.remove(token)
-    }
-}
-
-private fun ProviderPackageDescriptor.verificationFailure(cause: Throwable) = IllegalStateException(
-    "$displayName provider verification failed: ${cause.message ?: "the installed code does not match its metadata"}",
-    cause,
-)
 
 internal data class ProviderPackageInfo(
     val descriptor: ProviderPackageDescriptor,
@@ -440,7 +175,8 @@ internal data class ProviderPackageDescriptor(
         hostVersionCode = hostVersionCode,
         implementationVersion = implementationVersion,
         displayName = displayName,
-        splitNames = splitNames,
+        delivery = ProviderDelivery.BUNDLED,
+        splitNames = emptyList(),
         entryPoint = entryPoint,
         settingsEntryPoint = settingsEntryPoint,
         schemaDigest = schemaDigest,
@@ -596,43 +332,6 @@ internal object ProviderSourcePolicy {
 
 private fun kotlinx.serialization.json.JsonObject.requireOnly(vararg names: String) {
     require(keys.all { it in names }) { "Provider manifest contains an unsupported field" }
-}
-
-private fun ByteArray.toHex() = joinToString("") { "%02x".format(it.toInt() and 0xff) }
-
-internal fun File.apkContentSha256(): String = ZipFile(this).use { apk ->
-    val digest = MessageDigest.getInstance("SHA-256")
-    val entries = apk.entries().asSequence()
-        .filterNot { it.name.isApkSignatureEntry() }
-        .sortedBy { it.name }
-        .toList()
-    require(entries.map { it.name }.distinct().size == entries.size) { "Provider APK contains duplicate entries" }
-    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-    entries.forEach { entry ->
-        val name = entry.name.toByteArray(Charsets.UTF_8)
-        digest.update(byteArrayOf(
-            (name.size ushr 24).toByte(),
-            (name.size ushr 16).toByte(),
-            (name.size ushr 8).toByte(),
-            name.size.toByte(),
-        ))
-        digest.update(name)
-        apk.getInputStream(entry).use { input ->
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
-            }
-        }
-    }
-    digest.digest().toHex()
-}
-
-private fun String.isApkSignatureEntry(): Boolean {
-    val upper = uppercase()
-    if (upper == "META-INF/MANIFEST.MF") return true
-    if (!upper.startsWith("META-INF/") || '/' in upper.removePrefix("META-INF/")) return false
-    return upper.endsWith(".SF") || upper.endsWith(".RSA") || upper.endsWith(".DSA") || upper.endsWith(".EC")
 }
 
 @Suppress("DEPRECATION")

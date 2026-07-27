@@ -2,11 +2,11 @@
 
 Codex Mobile is a lean Android host for the pinned Codex App Server `0.144.6`. It provides ChatGPT authentication, conversations, ordinary App Server shell support, workspace selection, approvals, plugin management, typed provider dispatch, and mutation recovery.
 
-Plugins come from standard Codex GitHub marketplaces. The host downloads, validates, and atomically refreshes each public GitHub marketplace as a bounded local snapshot before registering it with App Server. Ordinary plugins remain installable from any such source. Android-executable providers for the official app come only from [`ciurlaro/codex-mobile-plugins`](https://github.com/ciurlaro/codex-mobile-plugins); the host verifies that snapshot's canonical repository before accepting its signed, host-compatible feature split. Android asks the user to approve installation, restarts the app, and verifies the split before activating the standard plugin. The base APK contains no optional provider implementation, model, JNI library, or provider-specific definition.
+Plugins come from standard Codex GitHub marketplaces. The host downloads, validates, and atomically refreshes each public GitHub marketplace as a bounded local snapshot before registering it with App Server. Ordinary plugins remain installable from any such source. The official Documents and Telegram Android providers are compiled into the base APK from a pinned [`ciurlaro/codex-mobile-plugins`](https://github.com/ciurlaro/codex-mobile-plugins) revision. Their marketplace metadata activates bundled code only after its provider API, host version, schema, entry point, and MCP declarations match; installation never updates the Android package.
 
 Providers declare any user-supplied secrets they require. Codex Mobile stores each plugin's values in its own Android Keystore-backed namespace and supplies them only at runtime, so public add-on artifacts contain no configured credentials.
 
-Disabling a plugin immediately revokes its tools while retaining its installed split and private state. Uninstall first completes provider cleanup, removes the App Server plugin, removes the split, and verifies absence after restart. Existing conversations remain usable and receive an internal availability update.
+Disabling a plugin immediately revokes its tools while retaining private state. Uninstall completes provider cleanup, removes the App Server plugin, and deletes its activation record while the bundled code remains inert. Existing conversations remain usable; installations become visible to tools in the next new chat.
 
 ## Modules
 
@@ -16,12 +16,12 @@ Disabling a plugin immediately revokes its tools while retaining its installed s
 | `:core` | Provider-neutral application contracts |
 | `app-server-client` | Published KMP App Server protocol identity and transport contract |
 | `:agent:codex` | Codex product adaptation, plugin lifecycle, dynamic-tool authority, and authentication |
-| `:platform:android` | App Server runtime, storage checks, signed provider lifecycle, and mutation journal |
+| `:platform:android` | App Server runtime, storage checks, bundled provider lifecycle, and mutation journal |
 | `provider-api` | Published KMP provider contract with host-supplied workspace and mutation capabilities |
-| `:provider_documents`, `:provider_telegram` | Thin base-app feature wrappers; provider behavior comes from exact external artifacts |
+| `codex-mobile-plugins` composite | Pinned Documents and Telegram implementation artifacts bundled into the app |
 
-The base build includes no optional providers. A coordinated local provider build uses
-`-PcodexMobile.providerBuild=/absolute/codex-mobile-plugins`; the host-owned wrappers then consume the same published provider coordinates through composite substitution.
+Local builds use a sibling `codex-mobile-plugins` checkout by default, or an explicit
+`-PcodexMobile.providerBuild=/absolute/codex-mobile-plugins`; CI checks out the pinned revision from `gradle.properties`.
 
 ## Verification
 

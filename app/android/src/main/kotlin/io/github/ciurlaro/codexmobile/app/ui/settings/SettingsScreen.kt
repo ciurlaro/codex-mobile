@@ -169,15 +169,6 @@ internal fun SettingsScreen(
                         subtitle = "How Codex Mobile handles local and OpenAI data",
                         onClick = { onEvent(AppUiEvent.ShowPrivacy) },
                     )
-                    if (state.isBackgroundActive) {
-                        SettingsDivider()
-                        SettingsRow(
-                            glyph = IconGlyph.STOP,
-                            title = "Stop background work",
-                            subtitle = "Stop the active Codex runtime",
-                            onClick = { onEvent(AppUiEvent.StopBackground) },
-                        )
-                    }
                     SettingsDivider()
                     SettingsRow(
                         glyph = IconGlyph.TRASH,

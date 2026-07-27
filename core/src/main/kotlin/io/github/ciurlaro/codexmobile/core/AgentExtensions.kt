@@ -109,20 +109,19 @@ data class AgentPluginSkill(
 data class AgentPluginInstallResult(
     val authPolicy: AgentPluginAuthPolicy,
     val connectorsNeedingAuthentication: List<AgentConnector>,
-    val restartRequired: Boolean = false,
     val message: String? = null,
 )
 
 data class AgentPluginRemovalResult(
     val completed: Boolean,
-    val restartRequired: Boolean = false,
     val message: String? = null,
 )
 
 class AgentPluginUnavailableException(
     val pluginId: String,
     pluginName: String,
-) : IllegalStateException("$pluginName is temporarily unavailable")
+    message: String = "$pluginName is temporarily unavailable",
+) : IllegalStateException(message)
 
 data class AgentConnector(
     val id: String,

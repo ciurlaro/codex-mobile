@@ -3,7 +3,7 @@ package io.github.ciurlaro.codexmobile.app
 import android.content.Context
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
-import android.view.accessibility.AccessibilityNodeInfo
+import android.os.Process
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
 import io.github.ciurlaro.codexmobile.agent.codex.CodexAgentClient
@@ -14,8 +14,6 @@ import io.github.ciurlaro.codexmobile.provider.api.ProviderCall
 import io.github.ciurlaro.codexmobile.provider.api.ProviderContent
 import io.github.ciurlaro.codexmobile.provider.api.ProviderResult
 import java.io.File
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -32,13 +30,38 @@ class ProviderInstallDeviceTest {
     private val context = instrumentation.targetContext
 
     @Test
-    fun signedProvidersInstallThroughAppServerAndExecuteOnDevice(): Unit = runBlocking {
+    fun pluginCatalogSurvivesRepeatedColdRuntimeStarts(): Unit = runBlocking {
+        val arguments = InstrumentationRegistry.getArguments()
+        assumeTrue("Run with -e pluginCatalogE2e true", arguments.getString("pluginCatalogE2e") == "true")
+        val marketplaceUrl = arguments.getString("marketplaceUrl") ?: MARKETPLACE_URL
+        val platform = AndroidPlatform(context)
+        val cache = File(context.cacheDir, "plugin-catalog-device-test").also(File::deleteRecursively)
+
+        repeat(10) { attempt ->
+            CodexAgentClient(
+                runtimeFactory = platform::createCodexRuntime,
+                requestTimeoutMillis = 30_000,
+                clientVersion = "catalog-e2e",
+                pluginCacheDirectory = cache,
+            ).use { client ->
+                client.addPluginMarketplace(platform.pluginMarketplaces.snapshotOrReuse(marketplaceUrl))
+                val plugins = client.listAvailablePlugins(null, forceRefresh = true).plugins
+                assertTrue("Documents missing on cold start ${attempt + 1}", plugins.any {
+                    it.reference.id == DOCUMENTS_PLUGIN_ID
+                })
+            }
+        }
+    }
+
+    @Test
+    fun bundledProvidersActivateThroughAppServerAndExecuteOnDevice(): Unit = runBlocking {
         val arguments = InstrumentationRegistry.getArguments()
         assumeTrue("Run with -e providerE2e true", arguments.getString("providerE2e") == "true")
         val marketplaceUrl = arguments.getString("marketplaceUrl") ?: MARKETPLACE_URL
         val workspace = File(checkNotNull(arguments.getString("workspacePath"))).canonicalFile
         assertTrue(workspace.isDirectory)
         assertFalse(PROVIDER_SPLIT in installedSplits())
+        val processId = Process.myPid()
 
         val platform = AndroidPlatform(context)
         platform.selectWorkspace(workspace.path)
@@ -56,8 +79,8 @@ class ProviderInstallDeviceTest {
                 .single { it.id == DOCUMENTS_PLUGIN_ID }
 
             val result = client.installPlugin(reference)
-            assertFalse("${reference.id} unexpectedly needs a restart", result.restartRequired)
-            assertTrue(PROVIDER_SPLIT in installedSplits())
+            assertEquals(processId, Process.myPid())
+            assertFalse(PROVIDER_SPLIT in installedSplits())
 
             val installed = client.listInstalledPlugins(workspace.path).plugins
                 .single { it.reference.id == DOCUMENTS_PLUGIN_ID }
@@ -117,12 +140,13 @@ class ProviderInstallDeviceTest {
     }
 
     @Test
-    fun signedProviderUninstallStartsARecoverablePackageUpdate(): Unit = runBlocking {
+    fun bundledProviderUninstallKeepsTheAppProcessAlive(): Unit = runBlocking {
         val arguments = InstrumentationRegistry.getArguments()
         assumeTrue("Run with -e providerUninstallE2e true", arguments.getString("providerUninstallE2e") == "true")
         val workspace = File(checkNotNull(arguments.getString("workspacePath"))).canonicalFile
         assertTrue(workspace.isDirectory)
-        assertTrue(PROVIDER_SPLIT in installedSplits())
+        assertFalse(PROVIDER_SPLIT in installedSplits())
+        val processId = Process.myPid()
 
         val activity = ActivityScenario.launch(MainActivity::class.java)
         val platform = AndroidPlatform(context)
@@ -134,19 +158,17 @@ class ProviderInstallDeviceTest {
             builtInToolDispatcher = platform.builtInToolDispatcher,
             providerHost = platform.providerPackages,
         )
-        val confirmation = launch { clickPackageUpdateConfirmation() }
         try {
             val reference = client.listInstalledPlugins(workspace.path).plugins
                 .single { it.reference.id == DOCUMENTS_PLUGIN_ID }
                 .reference
             val result = client.uninstallPlugin(reference)
             assertTrue(result.completed)
-            assertFalse(result.restartRequired)
             assertFalse(PROVIDER_SPLIT in installedSplits())
+            assertEquals(processId, Process.myPid())
             assertFalse(platform.providerSettings().any { it.pluginId == DOCUMENTS_PLUGIN_ID })
             activity.onActivity { assertFalse(it.isFinishing) }
         } finally {
-            confirmation.cancel()
             client.close()
             activity.close()
         }
@@ -226,17 +248,6 @@ class ProviderInstallDeviceTest {
         .splitNames
         .orEmpty()
         .toSet()
-
-    private suspend fun clickPackageUpdateConfirmation() {
-        repeat(150) {
-            val update = instrumentation.uiAutomation.rootInActiveWindow
-                ?.findAccessibilityNodeInfosByText("Update")
-                ?.firstOrNull { it.text?.toString() == "Update" && it.isClickable }
-            if (update?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true) return
-            delay(200)
-        }
-        error("Android package update confirmation did not appear")
-    }
 
     private companion object {
         const val DOCUMENT_SENTINEL = "Codex Mobile Documents E2E 2026"

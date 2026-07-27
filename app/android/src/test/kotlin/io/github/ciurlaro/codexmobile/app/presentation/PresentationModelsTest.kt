@@ -15,6 +15,7 @@ import io.github.ciurlaro.codexmobile.app.presentation.model.OPENAI_PLUGIN_SOURC
 import io.github.ciurlaro.codexmobile.app.presentation.model.CustomExtensionSource
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSourceSelection
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionStatus
+import io.github.ciurlaro.codexmobile.app.presentation.model.PluginCatalogStatus
 import io.github.ciurlaro.codexmobile.app.presentation.model.canonicalPluginSourceId
 import io.github.ciurlaro.codexmobile.app.presentation.model.enabledMarketplaceNames
 import io.github.ciurlaro.codexmobile.app.presentation.model.extensionSourceItems
@@ -29,6 +30,7 @@ import io.github.ciurlaro.codexmobile.app.presentation.validation.isValidElicita
 import io.github.ciurlaro.codexmobile.app.ui.chat.shellCommandVisualTransformation
 import io.github.ciurlaro.codexmobile.app.ui.extensions.extensionPageSize
 import io.github.ciurlaro.codexmobile.app.ui.extensions.pageTokens
+import io.github.ciurlaro.codexmobile.app.ui.extensions.pluginEmptyMessage
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentConnector
@@ -129,10 +131,19 @@ class PresentationModelsTest {
         )
 
         assertEquals(ExtensionStatus.UNINSTALLED, plugin.uninstalledStatus(emptySet(), emptySet()))
+        assertEquals("Market", ExtensionStatus.UNINSTALLED.label)
         assertEquals(ExtensionStatus.UNAVAILABLE, plugin.uninstalledStatus(emptySet(), setOf("documents")))
         assertEquals(null, plugin.uninstalledStatus(setOf("documents"), emptySet()))
         assertEquals(4, extensionPageSize(420f))
         assertEquals(listOf(0, 1, 2, null, 9), pageTokens(page = 1, pageCount = 10))
+        assertEquals(
+            "Connecting to Codex…",
+            pluginEmptyMessage(AppUiState(pluginCatalogStatus = PluginCatalogStatus.CONNECTING), ""),
+        )
+        assertEquals(
+            "No installed plugins",
+            pluginEmptyMessage(AppUiState(pluginCatalogStatus = PluginCatalogStatus.LIVE), ""),
+        )
     }
 
     @Test

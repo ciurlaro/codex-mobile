@@ -30,41 +30,18 @@ installed_splits() {
     "$adb" -s "$serial" shell pm path "$package" | tr -d '\r'
 }
 
-grep -q '/split_provider_documents\.apk$' <<<"$(installed_splits)" ||
-    die "install and verify the Documents provider before running this check"
-
-set +e
-uninstall_output=$("$adb" -s "$serial" shell am instrument -w -r \
-    -e class "$test_class#signedProviderUninstallStartsARecoverablePackageUpdate" \
-    -e providerUninstallE2e true \
-    -e workspacePath "$workspace" \
-    "$test_runner" 2>&1)
-uninstall_status=$?
-set -e
-
-for _ in {1..30}; do
-    if ! grep -q '/split_provider_documents\.apk$' <<<"$(installed_splits)"; then break; fi
-    sleep 1
-done
-if grep -q '/split_provider_documents\.apk$' <<<"$(installed_splits)"; then
-    printf '%s\n' "$uninstall_output" >&2
-    die "Documents split remained installed"
+if grep -q '/split_provider_.*\.apk$' <<<"$(installed_splits)"; then
+    die "install the monolithic Codex Mobile APK before running this check"
 fi
 
-if ! grep -q 'OK (1 test)' <<<"$uninstall_output"; then
-    for _ in {1..30}; do
-        "$adb" -s "$serial" shell uiautomator dump /sdcard/codex-mobile-window.xml >/dev/null 2>&1 || true
-        window_xml=$("$adb" -s "$serial" shell cat /sdcard/codex-mobile-window.xml 2>/dev/null | tr -d '\r')
-        if grep -q 'text="Extensions"' <<<"$window_xml" && grep -q 'text="Documents removed"' <<<"$window_xml"; then
-            break
-        fi
-        sleep 1
-    done
-    grep -q 'text="Extensions"' <<<"$window_xml" || {
-        printf '%s\n' "$uninstall_output" >&2
-        die "Extensions was not restored after package restart (instrumentation status $uninstall_status)"
-    }
-    grep -q 'text="Documents removed"' <<<"$window_xml" || die "removal completion was not shown"
+uninstall_output=$("$adb" -s "$serial" shell am instrument -w -r \
+    -e class "$test_class#bundledProviderUninstallKeepsTheAppProcessAlive" \
+    -e providerUninstallE2e true \
+    -e workspacePath "$workspace" \
+    "$test_runner")
+grep -q 'OK (1 test)' <<<"$uninstall_output" || { printf '%s\n' "$uninstall_output" >&2; exit 1; }
+if grep -q '/split_provider_.*\.apk$' <<<"$(installed_splits)"; then
+    die "a provider split appeared during uninstall"
 fi
 
 "$adb" -s "$serial" shell am instrument -w -r \
@@ -73,4 +50,4 @@ fi
     -e workspacePath "$workspace" \
     "$test_runner"
 
-echo "Documents uninstall recovered the visible app and reconciled provider state."
+echo "Documents uninstall kept the app process alive and reconciled provider state."
