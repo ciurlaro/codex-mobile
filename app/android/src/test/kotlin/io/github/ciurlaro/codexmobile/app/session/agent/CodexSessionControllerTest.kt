@@ -148,6 +148,20 @@ class CodexSessionControllerTest {
     }
 
     @Test
+    fun pluginChangeEventsAreRevisionedBeforeAnyCatalogRequest(): Unit = runBlocking {
+        val fake = FakeAgentClient()
+        val controller = controller(fake)
+        try {
+            fake.emit(AgentEvent.PluginsChanged)
+            fake.emit(AgentEvent.PluginsChanged)
+
+            await { controller.state.value.pluginsRevision == 2 }
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
     fun typedTurnSnapshotsModelEffortAndCapabilityBeforeGeneration(): Unit = runBlocking {
         val fake = FakeAgentClient()
         val controller = controller(fake)
@@ -441,9 +455,10 @@ class CodexSessionControllerTest {
 
         override suspend fun setSkillEnabled(path: String, enabled: Boolean) = Unit
 
-        override suspend fun listInstalledPlugins(workingDirectory: String) = AgentPluginCatalog(emptyList())
+        override suspend fun listInstalledPlugins(workingDirectory: String?, forceRefresh: Boolean) =
+            AgentPluginCatalog(emptyList())
 
-        override suspend fun listAvailablePlugins(workingDirectory: String, forceRefresh: Boolean) =
+        override suspend fun listAvailablePlugins(workingDirectory: String?, forceRefresh: Boolean) =
             AgentPluginCatalog(emptyList())
 
         override suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail = error("unused")

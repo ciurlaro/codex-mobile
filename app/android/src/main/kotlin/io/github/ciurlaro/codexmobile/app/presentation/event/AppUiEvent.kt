@@ -35,7 +35,6 @@ sealed interface AppUiEvent {
     data object Authenticate : AppUiEvent
     data object CancelAuthentication : AppUiEvent
     data object OpenSignIn : AppUiEvent
-    data object StopBackground : AppUiEvent
     data object SignOut : AppUiEvent
     data object ShowPrivacy : AppUiEvent
     data object ShowPluginSettings : AppUiEvent

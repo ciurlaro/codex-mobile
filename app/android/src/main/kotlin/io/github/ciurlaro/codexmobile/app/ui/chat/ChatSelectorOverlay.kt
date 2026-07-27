@@ -326,7 +326,7 @@ private fun TagSelector(
         item("plugins") {
             SelectorRow(
                 title = "Plugins",
-                subtitle = if (state.isInstalledPluginsLoading) "Loading…" else availableLabel(plugins.size, "plugin"),
+                subtitle = if (state.isPluginCatalogLoading) "Loading…" else availableLabel(plugins.size, "plugin"),
                 selected = false,
                 leading = IconGlyph.PUZZLE,
                 leadingTint = ChatColors.PluginAccent,
@@ -357,7 +357,7 @@ private fun PromptInvocationSelector(
     val remaining = matches.filterNot { it.invocation.key in recentKeys }
     val title = if (kind == PromptInvocationKind.SKILL) "Skills" else "Plugins"
     val singular = if (kind == PromptInvocationKind.SKILL) "skill" else "plugin"
-    val loading = if (kind == PromptInvocationKind.SKILL) state.isSkillsLoading else state.isInstalledPluginsLoading
+    val loading = if (kind == PromptInvocationKind.SKILL) state.isSkillsLoading else state.isPluginCatalogLoading
     val type = if (kind == PromptInvocationKind.SKILL) ExtensionType.SKILLS else ExtensionType.PLUGINS
 
     LazyColumn(

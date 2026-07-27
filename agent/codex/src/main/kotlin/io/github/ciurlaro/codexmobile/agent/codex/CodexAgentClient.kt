@@ -54,6 +54,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.receiveAsFlow
@@ -76,6 +77,7 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
+import kotlinx.serialization.KSerializer
 
 class CodexAgentClient(
     runtimeFactory: CodexRuntimeFactory,
@@ -87,6 +89,7 @@ class CodexAgentClient(
     private val builtInToolDispatcher: BuiltInToolDispatcher? = null,
     private val providerHost: PluginProviderHost? = null,
     private val pluginRequestTimeoutMillis: Long = 120_000,
+    private val emptyPluginCatalogRetryDelaysMillis: List<Long> = EMPTY_PLUGIN_CATALOG_RETRY_DELAYS_MILLIS,
 ) : AgentClient {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val eventsChannel = Channel<AgentEvent>(capacity = EVENT_BUFFER_SIZE)
@@ -138,6 +141,7 @@ class CodexAgentClient(
 
     init {
         require(pluginRequestTimeoutMillis > 0) { "Plugin request timeout must be positive" }
+        require(emptyPluginCatalogRetryDelaysMillis.all { it >= 0 }) { "Plugin retry delays must not be negative" }
     }
 
     init {
@@ -241,16 +245,19 @@ class CodexAgentClient(
         }
     }
 
-    override suspend fun signOut() = authMutex.withLock {
-        connection.ensureStarted()
-        connection.request(AppServerClientMethods.AccountLogout, Unit)
-        authenticated.set(false)
-        synchronized(loginStateLock) {
-            loginId = null
-            loginStarting = false
-            loginCompletedDuringStart = null
-            cancelledLoginIds.clear()
+    override suspend fun signOut() {
+        authMutex.withLock {
+            connection.ensureStarted()
+            connection.request(AppServerClientMethods.AccountLogout, Unit)
+            authenticated.set(false)
+            synchronized(loginStateLock) {
+                loginId = null
+                loginStarting = false
+                loginCompletedDuringStart = null
+                cancelledLoginIds.clear()
+            }
         }
+        clearPluginCache()
         synchronized(turnStateLock) {
             activeTurns.clear()
             startingTurns.clear()
@@ -334,47 +341,96 @@ class CodexAgentClient(
         )
     }
 
-    override suspend fun listInstalledPlugins(workingDirectory: String): AgentPluginCatalog {
-        // Marketplace refresh failures belong to Discover; the installed inventory is still usable.
-        val catalog = listPlugins(
-            workingDirectory,
-            AppServerClientMethods.PluginInstalled,
-            PluginInstalledParams(cwds = listOf(workingDirectory)),
-            timeoutMillis = pluginRequestTimeoutMillis,
-            marketplaces = PluginInstalledResponse::marketplaces,
-            loadErrors = PluginInstalledResponse::marketplaceLoadErrors,
-        ).copy(errors = emptyList())
+    override suspend fun listInstalledPlugins(
+        workingDirectory: String?,
+        forceRefresh: Boolean,
+    ): AgentPluginCatalog {
+        validateWorkingDirectory(workingDirectory)
+        val cache = pluginCacheFile(workingDirectory, "installed")
+        val cached = readPluginCache(
+            cache,
+            PluginInstalledResponse.serializer(),
+            PluginInstalledResponse::marketplaces,
+            PluginInstalledResponse::marketplaceLoadErrors,
+        )
+        if (!forceRefresh && cached != null) {
+            reconcileProvidersInBackground(cached)
+            return cached
+        }
+        val catalog = runCatching {
+            listPlugins(
+                workingDirectory,
+                AppServerClientMethods.PluginInstalled,
+                PluginInstalledParams(cwds = workingDirectory?.let(::listOf)),
+                timeoutMillis = pluginRequestTimeoutMillis,
+                marketplaces = PluginInstalledResponse::marketplaces,
+                loadErrors = PluginInstalledResponse::marketplaceLoadErrors,
+            ) { writePluginCache(cache, PluginInstalledResponse.serializer(), it) }
+        }.getOrElse { error ->
+            if (error is CancellationException) throw error
+            return cached?.asStale(error.visibleMessage()) ?: throw error
+        }.let { live ->
+            if ((live.plugins.isEmpty() || live.errors.isNotEmpty()) && cached?.plugins?.isNotEmpty() == true) {
+                live.withCachedFallback(
+                    cached,
+                    "Installed plugins could not be fully verified; showing saved plugins.",
+                )
+            } else {
+                live
+            }
+        }
         reconcileProvidersInBackground(catalog)
         return catalog
     }
 
     override suspend fun listAvailablePlugins(
-        workingDirectory: String,
+        workingDirectory: String?,
         forceRefresh: Boolean,
     ): AgentPluginCatalog {
-        require(workingDirectory.startsWith('/')) { "Working directory must be absolute" }
-        val cache = pluginCacheFile(workingDirectory)
-        if (!forceRefresh) readPluginCache(cache)?.let { return it }
+        validateWorkingDirectory(workingDirectory)
+        val cache = pluginCacheFile(workingDirectory, "available")
+        val cached = readPluginCache(
+            cache,
+            PluginListResponse.serializer(),
+            PluginListResponse::marketplaces,
+            PluginListResponse::marketplaceLoadErrors,
+        )
+        if (!forceRefresh && cached != null) return cached
         return runCatching {
-            val catalog = listPlugins(
-                workingDirectory,
-                AppServerClientMethods.PluginList,
-                PluginListParams(cwds = listOf(workingDirectory)),
-                pluginRequestTimeoutMillis,
-                marketplaces = PluginListResponse::marketplaces,
-                loadErrors = PluginListResponse::marketplaceLoadErrors,
-            ) { writePluginCache(cache, it) }
-            catalog
+            var catalog = requestAvailablePlugins(workingDirectory, cache)
+            for (retryDelay in emptyPluginCatalogRetryDelaysMillis) {
+                if (catalog.plugins.isNotEmpty() || catalog.errors.isNotEmpty()) break
+                delay(retryDelay)
+                catalog = requestAvailablePlugins(workingDirectory, cache)
+            }
+            when {
+                catalog.errors.isNotEmpty() && cached?.plugins?.isNotEmpty() == true -> {
+                    catalog.withCachedFallback(cached, "Some marketplaces could not be refreshed; showing saved plugins.")
+                }
+                catalog.plugins.isNotEmpty() || catalog.errors.isNotEmpty() -> catalog
+                cached?.plugins?.isNotEmpty() == true -> cached.asStale(
+                    "The plugin marketplace is not ready; showing saved plugins.",
+                )
+                else -> catalog.copy(errors = listOf("The plugin marketplace is not ready yet. Retry in a moment."))
+            }
         }.getOrElse { error ->
             if (error is CancellationException) throw error
-            readPluginCache(cache, stale = true)?.copy(
-                errors = listOfNotNull(error.message ?: "Available plugins could not be refreshed"),
-            ) ?: throw error
+            cached?.asStale(error.visibleMessage()) ?: throw error
         }
     }
 
+    private suspend fun requestAvailablePlugins(workingDirectory: String?, cache: File?): AgentPluginCatalog =
+        listPlugins(
+            workingDirectory,
+            AppServerClientMethods.PluginList,
+            PluginListParams(cwds = workingDirectory?.let(::listOf)),
+            pluginRequestTimeoutMillis,
+            marketplaces = PluginListResponse::marketplaces,
+            loadErrors = PluginListResponse::marketplaceLoadErrors,
+        ) { writePluginCache(cache, PluginListResponse.serializer(), it) }
+
     private suspend fun <P, R> listPlugins(
-        workingDirectory: String,
+        workingDirectory: String?,
         method: AppServerMethod<P, R>,
         params: P,
         timeoutMillis: Long? = null,
@@ -382,7 +438,7 @@ class CodexAgentClient(
         loadErrors: (R) -> List<MarketplaceLoadErrorInfo>?,
         onResponse: (R) -> Unit = {},
     ): AgentPluginCatalog {
-        require(workingDirectory.startsWith('/')) { "Working directory must be absolute" }
+        validateWorkingDirectory(workingDirectory)
         val result = pluginRequest(method, params, timeoutMillis ?: pluginRequestTimeoutMillis)
         val errors = loadErrors(result).orEmpty().map { it.message }.distinct()
         val catalog = AgentPluginCatalog(parsePluginMarketplaces(marketplaces(result)), errors)
@@ -392,7 +448,7 @@ class CodexAgentClient(
                 builtInEnablementLoaded.set(true)
             }
         }
-        runCatching { onResponse(result) }
+        if (catalog.plugins.isNotEmpty() && catalog.errors.isEmpty()) runCatching { onResponse(result) }
         return catalog
     }
 
@@ -410,44 +466,73 @@ class CodexAgentClient(
         }
     }
 
-    private fun pluginCacheFile(workingDirectory: String): File? {
+    private fun pluginCacheFile(workingDirectory: String?, kind: String): File? {
         val directory = pluginCacheDirectory ?: return null
         val key = MessageDigest.getInstance("SHA-256")
-            .digest("$clientVersion\u0000$workingDirectory".toByteArray(StandardCharsets.UTF_8))
+            .digest("$clientVersion\u0000${workingDirectory.orEmpty()}\u0000$kind".toByteArray(StandardCharsets.UTF_8))
             .joinToString("") { "%02x".format(it.toInt() and 0xff) }
         return File(directory, "$key.json")
     }
 
-    private fun readPluginCache(file: File?, stale: Boolean = false): AgentPluginCatalog? {
+    private fun <T> readPluginCache(
+        file: File?,
+        serializer: KSerializer<T>,
+        marketplaces: (T) -> List<PluginMarketplaceEntry>,
+        loadErrors: (T) -> List<MarketplaceLoadErrorInfo>?,
+    ): AgentPluginCatalog? {
         if (file?.isFile != true) return null
         return runCatching {
-            val result = PROTOCOL_JSON.decodeFromString(PluginListResponse.serializer(), file.readText())
-            val freshness = if (!stale && System.currentTimeMillis() - file.lastModified() <= CATALOG_CACHE_TTL_MILLIS) {
+            val result = PROTOCOL_JSON.decodeFromString(serializer, file.readText())
+            val freshness = if (System.currentTimeMillis() - file.lastModified() <= CATALOG_CACHE_TTL_MILLIS) {
                 AgentCatalogFreshness.FRESH_CACHE
             } else {
                 AgentCatalogFreshness.STALE_CACHE
             }
             AgentPluginCatalog(
-                plugins = parsePluginMarketplaces(result.marketplaces),
-                errors = result.marketplaceLoadErrors.orEmpty().map { it.message }.distinct(),
+                plugins = parsePluginMarketplaces(marketplaces(result)),
+                errors = loadErrors(result).orEmpty().map { it.message }.distinct(),
                 freshness = freshness,
             )
         }.getOrNull()
     }
 
-    private fun writePluginCache(file: File?, response: PluginListResponse) {
+    private fun <T> writePluginCache(file: File?, serializer: KSerializer<T>, response: T) {
         if (file == null) return
         check(file.parentFile?.let { it.isDirectory || it.mkdirs() } == true) {
             "Unable to prepare plugin catalog cache"
         }
         val next = File(file.parentFile, ".${file.name}.next")
-        next.writeText(PROTOCOL_JSON.encodeToString(PluginListResponse.serializer(), response))
+        next.writeText(PROTOCOL_JSON.encodeToString(serializer, response))
         Files.move(
             next.toPath(),
             file.toPath(),
             StandardCopyOption.ATOMIC_MOVE,
             StandardCopyOption.REPLACE_EXISTING,
         )
+    }
+
+    private fun AgentPluginCatalog.asStale(message: String): AgentPluginCatalog = copy(
+        freshness = AgentCatalogFreshness.STALE_CACHE,
+        errors = (errors + message).distinct(),
+    )
+
+    private fun AgentPluginCatalog.withCachedFallback(
+        cached: AgentPluginCatalog,
+        message: String,
+    ): AgentPluginCatalog = copy(
+        plugins = (cached.plugins + plugins).associateBy { it.reference.id }.values.toList(),
+        freshness = AgentCatalogFreshness.STALE_CACHE,
+        errors = (cached.errors + errors + message).distinct(),
+    )
+
+    private fun validateWorkingDirectory(workingDirectory: String?) {
+        require(workingDirectory == null || workingDirectory.startsWith('/')) {
+            "Working directory must be absolute"
+        }
+    }
+
+    private fun clearPluginCache() {
+        pluginCacheDirectory?.listFiles().orEmpty().forEach(File::delete)
     }
 
     override suspend fun readPlugin(plugin: AgentPluginReference): AgentPluginDetail {
@@ -482,20 +567,13 @@ class CodexAgentClient(
         val detail = host?.let { readPlugin(plugin) }
         val disposition = host?.install(plugin, detail?.mcpServers.orEmpty().toSet())
             ?: ProviderInstallDisposition.NOT_REQUIRED
-        if (disposition == ProviderInstallDisposition.RESTART_REQUIRED) {
-            return AgentPluginInstallResult(
-                authPolicy = AgentPluginAuthPolicy.ON_USE,
-                connectorsNeedingAuthentication = emptyList(),
-                restartRequired = true,
-                message = "Restart Codex Mobile to verify and finish installing this provider.",
-            )
-        }
         if (disposition == ProviderInstallDisposition.READY) {
             refreshBuiltInTools()
             disableManagedProviderMcp(plugin.id)
         }
         if (disposition == ProviderInstallDisposition.READY && detail?.summary?.installed == true) {
             checkNotNull(host).installCompleted(plugin.id)
+            clearPluginCache()
             eventsChannel.send(AgentEvent.PluginsChanged)
             return AgentPluginInstallResult(detail.summary.authPolicy, emptyList())
         }
@@ -509,6 +587,7 @@ class CodexAgentClient(
             throw error.forPlugin(plugin)
         }
         if (disposition == ProviderInstallDisposition.READY) host?.installCompleted(plugin.id)
+        clearPluginCache()
         eventsChannel.send(AgentEvent.PluginsChanged)
         return AgentPluginInstallResult(
             authPolicy = enumValueOf(result.authPolicy.name),
@@ -537,12 +616,14 @@ class CodexAgentClient(
         )
         if (host != null) {
             host.remove(plugin.id)
+            clearPluginCache()
             eventsChannel.send(AgentEvent.PluginsChanged)
             return AgentPluginRemovalResult(
                 completed = true,
                 message = removalWarning,
             )
         }
+        clearPluginCache()
         eventsChannel.send(AgentEvent.PluginsChanged)
         return AgentPluginRemovalResult(completed = true)
     }
@@ -566,6 +647,7 @@ class CodexAgentClient(
                 retryOnTimeout = true,
             )
         }
+        clearPluginCache()
     }
 
     override suspend fun listConnectors(
@@ -1837,6 +1919,7 @@ class CodexAgentClient(
         const val BUILT_IN_TOOL_DEADLINE_MILLIS = 120_000L
         const val SKILL_CHUNK_BYTES = 32 * 1024
         const val CATALOG_CACHE_TTL_MILLIS = 6 * 60 * 60 * 1000L
+        val EMPTY_PLUGIN_CATALOG_RETRY_DELAYS_MILLIS = listOf(500L, 1_000L, 2_000L)
         const val AVAILABILITY_MESSAGE_PREFIX = "codex-mobile:plugin-availability"
         const val INTERNAL_APPS_MCP_SERVER = "codex_apps"
 

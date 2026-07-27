@@ -2,6 +2,8 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+provider_root=${CODEX_MOBILE_PROVIDER_ROOT:-"$root/../codex-mobile-plugins"}
+provider_revision=$(awk -F= '$1 == "codexMobile.providerRevision" { print $2; exit }' "$root/gradle.properties")
 
 die() {
     echo "release-local: $*" >&2
@@ -37,6 +39,10 @@ keychain_service=${CODEX_MOBILE_RELEASE_KEYCHAIN_SERVICE:-io.github.ciurlaro.cod
    -f $android_home/platforms/android-37.0/android.jar ]] ||
     die "Android platform 37 was not found under $android_home"
 [[ -f $store_file ]] || die "release keystore was not found at $store_file"
+[[ -d $provider_root/.git ]] || die "provider repository was not found at $provider_root"
+[[ $(git -C "$provider_root" rev-parse HEAD) == "$provider_revision" ]] ||
+    die "provider repository must be at $provider_revision"
+[[ -z $(git -C "$provider_root" status --porcelain) ]] || die "provider repository has uncommitted changes"
 
 store_password=${CODEX_MOBILE_RELEASE_STORE_PASSWORD:-}
 if [[ -z $store_password ]]; then
@@ -57,7 +63,8 @@ export CODEX_MOBILE_RELEASE_KEY_PASSWORD=$key_password
 trap 'unset store_password key_password CODEX_MOBILE_RELEASE_STORE_PASSWORD CODEX_MOBILE_RELEASE_KEY_PASSWORD' EXIT
 
 cd "$root"
-./gradlew --no-daemon test assembleDebug assembleDebugAndroidTest lint assembleRelease bundleRelease
+./gradlew --no-daemon "-PcodexMobile.providerBuild=$provider_root" \
+    test assembleDebug assembleDebugAndroidTest lint assembleRelease bundleRelease
 scripts/verify-release.sh
 
 if $reproducible; then

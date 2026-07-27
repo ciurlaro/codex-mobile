@@ -19,7 +19,8 @@ grep -q "versionCode.*=$version_code" <<<"$manifest"
 grep -q "versionName.*=\"$version_name\"" <<<"$manifest"
 grep -q 'allowBackup.*=false' <<<"$manifest"
 grep -q 'usesCleartextTraffic.*=false' <<<"$manifest"
-grep -q 'REQUEST_INSTALL_PACKAGES' <<<"$manifest"
+! grep -q 'REQUEST_INSTALL_PACKAGES' <<<"$manifest"
+grep -q 'TelegramSettingsActivity' <<<"$manifest"
 grep -q 'CodexForegroundService' <<<"$manifest"
 test "$(grep -c 'exported.*=true' <<<"$manifest")" -eq 1
 ! grep -q 'debuggable.*=true' <<<"$manifest"
@@ -28,12 +29,14 @@ host_dex=$(mktemp)
 trap 'rm -f "$host_dex"' EXIT
 "$tools/dexdump" -f "$apk" > "$host_dex"
 grep -Fq "Class descriptor  : 'Lio/github/ciurlaro/codexmobile/provider/api/CodexMobileProvider;'" "$host_dex"
+grep -Fq "Class descriptor  : 'Lio/github/ciurlaro/codexmobile/platform/android/DocumentsProvider;'" "$host_dex"
+grep -Fq "Class descriptor  : 'Lio/github/ciurlaro/codexmobile/platform/android/TelegramProvider;'" "$host_dex"
 
 base=$(unzip -Z1 "$apk")
 bundle=$(unzip -Z1 "$aab")
-expected_native=$'lib/arm64-v8a/libandroidx.graphics.path.so\nlib/arm64-v8a/libcodex_app_server.so'
+expected_native=$'lib/arm64-v8a/libandroidx.graphics.path.so\nlib/arm64-v8a/libcodex_app_server.so\nlib/arm64-v8a/libmlkit_google_ocr_pipeline.so\nlib/arm64-v8a/libpdfium.so\nlib/arm64-v8a/libpdfiumandroid.so\nlib/arm64-v8a/libtdjsonjava.so'
 test "$(grep '^lib/.*\.so$' <<<"$base" | sort)" = "$expected_native"
-expected_bundle_native=$'base/lib/arm64-v8a/libandroidx.graphics.path.so\nbase/lib/arm64-v8a/libcodex_app_server.so'
+expected_bundle_native=$'base/lib/arm64-v8a/libandroidx.graphics.path.so\nbase/lib/arm64-v8a/libcodex_app_server.so\nbase/lib/arm64-v8a/libmlkit_google_ocr_pipeline.so\nbase/lib/arm64-v8a/libpdfium.so\nbase/lib/arm64-v8a/libpdfiumandroid.so\nbase/lib/arm64-v8a/libtdjsonjava.so'
 test "$(grep '/lib/.*\.so$' <<<"$bundle" | sort)" = "$expected_bundle_native"
 ! grep -q '^base/assets/codex/plugins/' <<<"$bundle"
 ! grep -q '^assets/codex/plugins/' <<<"$base"

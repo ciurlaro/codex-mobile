@@ -57,6 +57,7 @@ import io.github.ciurlaro.codexmobile.app.presentation.event.AppUiEvent
 import io.github.ciurlaro.codexmobile.app.presentation.invocation.readableTitle
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionStatus
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionType
+import io.github.ciurlaro.codexmobile.app.presentation.model.PluginCatalogStatus
 import io.github.ciurlaro.codexmobile.app.presentation.model.uninstalledStatus
 import io.github.ciurlaro.codexmobile.app.presentation.state.AppUiState
 import io.github.ciurlaro.codexmobile.app.ui.icons.AppIcon
@@ -301,11 +302,11 @@ private fun ExtensionResults(state: AppUiState, onEvent: (AppUiEvent) -> Unit, m
     val installed = state.extensionStatus == ExtensionStatus.INSTALLED
     val loading = when (state.extensionType) {
         ExtensionType.SKILLS -> if (installed) state.isSkillsLoading else state.isAvailableSkillsLoading
-        ExtensionType.PLUGINS -> if (installed) state.isInstalledPluginsLoading else state.isAvailablePluginsLoading
+        ExtensionType.PLUGINS -> state.isPluginCatalogLoading
     }
     val error = when (state.extensionType) {
         ExtensionType.SKILLS -> if (installed) state.skillsError else state.availableSkillsError
-        ExtensionType.PLUGINS -> if (installed) state.installedPluginsError else state.availablePluginsError
+        ExtensionType.PLUGINS -> state.pluginCatalogError
     }
     Column(
         modifier = modifier.fillMaxWidth().padding(horizontal = ChatDimensions.ScreenPadding),
@@ -362,7 +363,7 @@ private fun PluginResults(state: AppUiState, onEvent: (AppUiEvent) -> Unit, modi
     PagedExtensionList(
         itemCount = plugins.size,
         pageKey = "plugins:${state.extensionStatus}:$query",
-        emptyMessage = emptyMessage(state, query),
+        emptyMessage = pluginEmptyMessage(state, query),
         modifier = modifier,
     ) { index -> PluginCard(plugins[index], state, onEvent) }
 }
@@ -423,7 +424,7 @@ private fun PluginCard(plugin: AgentPluginSummary, state: AppUiState, onEvent: (
         },
         busy = state.extensionOperationId == operationId,
         error = state.actionError(operationId),
-        controlsEnabled = !state.isExtensionMutationLoading && !unavailable,
+        controlsEnabled = state.pluginActionsEnabled && !state.isExtensionMutationLoading && !unavailable,
         onAction = when {
             installed -> {
                 { onEvent(AppUiEvent.RequestUninstallPlugin(plugin.reference, plugin.displayName)) }
@@ -613,6 +614,14 @@ private fun emptyMessage(state: AppUiState, query: String): String = when {
     state.extensionStatus == ExtensionStatus.INSTALLED -> "No installed ${state.extensionType.label.lowercase()}"
     state.extensionStatus == ExtensionStatus.UNINSTALLED -> "No ${state.extensionType.label.lowercase()} available to install"
     else -> "No unavailable ${state.extensionType.label.lowercase()}"
+}
+
+internal fun pluginEmptyMessage(state: AppUiState, query: String): String = when (state.pluginCatalogStatus) {
+    PluginCatalogStatus.CONNECTING -> "Connecting to Codex…"
+    PluginCatalogStatus.LOADING -> "Loading plugin catalog…"
+    PluginCatalogStatus.NOT_LOADED -> "Waiting for the plugin catalog…"
+    PluginCatalogStatus.STALE, PluginCatalogStatus.ERROR -> "Plugin catalog unavailable"
+    PluginCatalogStatus.LIVE -> emptyMessage(state, query)
 }
 
 private fun AgentSkill.matches(query: String): Boolean = query.isEmpty() ||

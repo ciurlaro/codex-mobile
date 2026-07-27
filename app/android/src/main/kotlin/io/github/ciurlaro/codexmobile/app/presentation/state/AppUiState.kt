@@ -11,6 +11,7 @@ import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionRemoval
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSourceSelection
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSourceUi
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionType
+import io.github.ciurlaro.codexmobile.app.presentation.model.PluginCatalogStatus
 import io.github.ciurlaro.codexmobile.app.presentation.model.extensionSourceItems
 import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentCapability
@@ -55,12 +56,9 @@ data class AppUiState(
     val extensionStatus: ExtensionStatus = ExtensionStatus.INSTALLED,
     val skillsLoaded: Boolean = false,
     val availableSkillsLoaded: Boolean = false,
-    val installedPluginsLoaded: Boolean = false,
-    val availablePluginsLoaded: Boolean = false,
+    val pluginCatalogStatus: PluginCatalogStatus = PluginCatalogStatus.NOT_LOADED,
     val isSkillsLoading: Boolean = false,
     val isAvailableSkillsLoading: Boolean = false,
-    val isInstalledPluginsLoading: Boolean = false,
-    val isAvailablePluginsLoading: Boolean = false,
     val isExtensionMutationLoading: Boolean = false,
     val extensionOperationId: String? = null,
     val extensionActionError: ExtensionActionError? = null,
@@ -72,8 +70,7 @@ data class AppUiState(
     val unavailablePluginIds: Set<String> = emptySet(),
     val skillsError: String? = null,
     val availableSkillsError: String? = null,
-    val installedPluginsError: String? = null,
-    val availablePluginsError: String? = null,
+    val pluginCatalogError: String? = null,
     val pendingExtensionRemoval: ExtensionRemoval? = null,
     val connectorAuthUrl: String? = null,
     val connectorAuthName: String? = null,
@@ -103,11 +100,12 @@ data class AppUiState(
             .values
             .toList()
 
-    val pluginsError: String?
-        get() = listOfNotNull(installedPluginsError, availablePluginsError)
-            .distinct()
-            .joinToString("\n")
-            .ifBlank { null }
+    val isPluginCatalogLoading: Boolean
+        get() = pluginCatalogStatus == PluginCatalogStatus.CONNECTING ||
+            pluginCatalogStatus == PluginCatalogStatus.LOADING
+
+    val pluginActionsEnabled: Boolean
+        get() = pluginCatalogStatus == PluginCatalogStatus.LIVE
 
     val extensionSources: List<ExtensionSourceUi>
         get() = extensionSourceItems(

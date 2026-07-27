@@ -247,18 +247,20 @@ internal class CodexSessionController(
             requireNotNull(skillPackages) { "Skill packages are unavailable" }.uninstall(skill)
         }
 
-    suspend fun listInstalledPlugins(workingDirectory: String): AgentPluginCatalog =
-        agentClient.listInstalledPlugins(workingDirectory)
+    suspend fun listInstalledPlugins(
+        workingDirectory: String?,
+        forceRefresh: Boolean = false,
+    ): AgentPluginCatalog = agentClient.listInstalledPlugins(workingDirectory, forceRefresh)
 
     suspend fun listAvailablePlugins(
-        workingDirectory: String,
+        workingDirectory: String?,
         forceRefresh: Boolean = false,
     ): AgentPluginCatalog = agentClient.listAvailablePlugins(workingDirectory, forceRefresh)
 
-    suspend fun addPluginMarketplace(sourceUrl: String): String =
+    suspend fun addPluginMarketplace(sourceUrl: String, reuseSnapshot: Boolean = false): String =
         runExternalOperation("Adding plugin source") {
             val marketplaces = requireNotNull(pluginMarketplaces) { "Plugin marketplaces are unavailable" }
-            val snapshot = marketplaces.snapshot(sourceUrl)
+            val snapshot = if (reuseSnapshot) marketplaces.snapshotOrReuse(sourceUrl) else marketplaces.snapshot(sourceUrl)
             val marketplaceName = marketplaces.marketplaceName(snapshot)
             agentClient.addPluginMarketplace(snapshot)
             marketplaceName

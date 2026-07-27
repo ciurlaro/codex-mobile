@@ -72,44 +72,33 @@ trap cleanup EXIT
 
 "$root/gradlew" -p "$root" --no-daemon \
     "-PcodexMobile.providerBuild=$provider_root" \
-    :app:android:assembleDebug \
-    :provider_documents:assembleDebug \
-    :provider_telegram:assembleDebug
+    :app:android:assembleDebug
 
-sources=(
-    "$root/app/android/build/outputs/apk/debug/android-debug.apk"
-    "$root/providers/documents/build/outputs/apk/debug/provider_documents-debug.apk"
-    "$root/providers/telegram/build/outputs/apk/debug/provider_telegram-debug.apk"
-)
-signed=(
-    "$staging/codex-mobile.apk"
-    "$staging/provider_documents.apk"
-    "$staging/provider_telegram.apk"
-)
+source="$root/app/android/build/outputs/apk/debug/android-debug.apk"
+signed="$staging/codex-mobile.apk"
 expected=$(<"$root/release-signing-certificate.sha256")
 
-for index in 0 1 2; do
-    [[ -f ${sources[$index]} ]] || die "missing debug APK: ${sources[$index]}"
-    "$apksigner" sign \
-        --ks "$store_file" \
-        --ks-pass env:CODEX_MOBILE_RELEASE_STORE_PASSWORD \
-        --ks-key-alias "$key_alias" \
-        --key-pass env:CODEX_MOBILE_RELEASE_KEY_PASSWORD \
-        --out "${signed[$index]}" \
-        "${sources[$index]}"
-    certificates=$("$apksigner" verify --print-certs "${signed[$index]}" |
-        awk -F': ' '/certificate SHA-256 digest/ { print tolower($2) }')
-    [[ $certificates == "$expected" ]] || die "signed APK certificate does not match the installed release"
-done
+[[ -f $source ]] || die "missing debug APK: $source"
+"$apksigner" sign \
+    --ks "$store_file" \
+    --ks-pass env:CODEX_MOBILE_RELEASE_STORE_PASSWORD \
+    --ks-key-alias "$key_alias" \
+    --key-pass env:CODEX_MOBILE_RELEASE_KEY_PASSWORD \
+    --out "$signed" \
+    "$source"
+certificates=$("$apksigner" verify --print-certs "$signed" |
+    awk -F': ' '/certificate SHA-256 digest/ { print tolower($2) }')
+[[ $certificates == "$expected" ]] || die "signed APK certificate does not match the installed release"
 
 model=$("$adb" -s "$serial" shell getprop ro.product.model | tr -d '\r')
 echo "fast local install on ${model:-unknown} ($serial)"
-"$adb" -s "$serial" install-multiple -r "${signed[@]}"
+"$adb" -s "$serial" install -r "$signed"
 
 installed=$("$adb" -s "$serial" shell pm path "$package" | tr -d '\r')
 grep -q '/base\.apk$' <<<"$installed" || die "Android did not report the installed base APK"
-grep -q '/split_provider_documents\.apk$' <<<"$installed" || die "Documents split is missing after installation"
-grep -q '/split_provider_telegram\.apk$' <<<"$installed" || die "Telegram split is missing after installation"
+if grep -q '/split_provider_.*\.apk$' <<<"$installed"; then
+    die "legacy provider splits remain after the full APK update"
+fi
 
 "$adb" -s "$serial" shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null
 echo "Fast debug build installed without clearing app data. Full tests, lint, Android tests, and release shrinking were skipped."

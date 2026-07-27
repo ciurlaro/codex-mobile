@@ -6,8 +6,8 @@
 | Pin App Server `0.144.6` and use dynamic tools | It preserves the Codex harness while typed providers enforce local authority | The pinned protocol gains a better native extension API |
 | Use the standard Codex Git marketplace | One catalog, lifecycle, skill UX, and enablement truth work across hosts | App Server replaces this surface |
 | Restrict Android code to the canonical provider Git origin | Ordinary Codex plugins stay portable while executable same-UID add-ons remain owner-reviewed and officially signed | A stronger platform-native trust mechanism replaces repository provenance |
-| Install Android providers as signed feature splits | Android enforces package identity and signer, uninstall removes code, and the base stays lean | Android offers an equally strict first-party add-on mechanism |
-| Persist only provider package lifecycle | Package updates must survive process replacement without becoming enablement state | PackageInstaller offers an atomic continuation into App Server installation |
+| Bundle reviewed Android providers from a pinned source revision | OEMs may kill the host for split updates despite `setDontKillApp`; activation must not update the running package | Android guarantees restart-free first-party feature delivery |
+| Persist only provider activation lifecycle | Interrupted App Server installation/removal must recover without becoming enablement state | App Server makes provider activation transactional |
 | Keep schemas and semantic DTOs portable | Shared contracts help other targets without converting the host to multiplatform or inventing abstractions | A second host needs additional proven common logic |
 | Use direct in-process Kotlin entry points | They need no transport, provider process, Binder API, or generic backend framework | Isolation is required by measured security evidence |
 | Show cached catalog data during one bounded refresh | `plugin/list` returns one response; cache-first UI improves latency without fake streaming or retry storms | App Server provides an incremental catalog protocol |
@@ -17,4 +17,4 @@
 | Encrypt user-supplied secrets per plugin with Android Keystore | Add-ons install independently, disablement retains configuration, and confirmed uninstall removes only that provider's namespace | Providers require isolation across independently signed Android UIDs |
 | Release through protected GitHub CI | Expensive builds run remotely and production signing secrets never enter pull-request jobs or local build processes | An external signer provides a smaller or stronger trust boundary |
 | Require one-use user approval for Auto-review typed mutations | App Server `0.144.6` dynamic tools have no equivalent Guardian bridge | The pinned protocol exposes equivalent authority |
-| Use Android package/data facilities as authority | Android owns split installation, removal, signing, and full app-data erasure | Platform contracts change |
+| Use Android package/data facilities as authority | Android owns monolithic updates, signing, and full app-data erasure; the host owns bundled-provider activation | Platform contracts change |

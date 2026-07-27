@@ -188,7 +188,6 @@ class MainActivity : ComponentActivity() {
                         }
                         AppUiEvent.CancelAuthentication -> viewModel.cancelAuthentication()
                         AppUiEvent.OpenSignIn -> openSignIn(state.signInUrl)
-                        AppUiEvent.StopBackground -> viewModel.stopBackgroundWork()
                         AppUiEvent.SignOut -> viewModel.signOut()
                         AppUiEvent.ShowPrivacy -> showPrivacyDisclosure = true
                         AppUiEvent.ShowPluginSettings -> {
@@ -299,14 +298,12 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        viewModel.resumeAfterProviderPackageUpdate()
         viewModel.refreshStorage()
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        viewModel.resumeAfterProviderPackageUpdate()
     }
 
 }

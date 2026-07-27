@@ -23,6 +23,8 @@ dependencies {
     implementation(project(":core"))
     implementation(project(":agent:codex"))
     implementation("io.github.ciurlaro.codexmobile:provider-api:2.0.0")
+    implementation("io.github.ciurlaro.codexmobile.providers:documents-android:1.0.0")
+    implementation("io.github.ciurlaro.codexmobile.providers:telegram-android:1.0.0")
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.serialization.json)
     testImplementation(kotlin("test-junit"))

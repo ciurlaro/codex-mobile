@@ -8,6 +8,8 @@ import io.github.ciurlaro.codexmobile.agent.codex.BuiltInToolResult
 import io.github.ciurlaro.codexmobile.provider.api.CodexMobileProvider
 import io.github.ciurlaro.codexmobile.provider.api.ProviderContext
 import io.github.ciurlaro.codexmobile.provider.api.ProviderWorkspace
+import io.github.ciurlaro.codexmobile.providers.documents.DOCUMENTS_PLUGIN_ID
+import io.github.ciurlaro.codexmobile.providers.telegram.TELEGRAM_PLUGIN_ID
 import io.github.ciurlaro.codexmobile.agent.codex.ProviderToolDispatcher
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import java.io.File
@@ -15,6 +17,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 enum class ProviderPackageState { INSTALLING, ACTIVE, REMOVAL_PENDING, REMOVAL_PREPARED, SPLIT_REMOVAL_PENDING }
+enum class ProviderDelivery { BUNDLED, LEGACY_SPLIT }
 
 data class InstalledProvider(
     val pluginId: String,
@@ -35,6 +38,7 @@ data class InstalledProvider(
     val contentSha256: String?,
     val state: ProviderPackageState,
     val message: String? = null,
+    val delivery: ProviderDelivery = ProviderDelivery.LEGACY_SPLIT,
 )
 
 data class ProviderSettingsEntry(
@@ -51,9 +55,10 @@ class AndroidProviderRegistry(context: Context) {
     private val workspace = WorkspaceManager(appContext)
     private val journal = BuiltInMutationJournal(appContext)
     private val verificationCache = mutableMapOf<InstalledProvider, CodexMobileProvider>()
+    private val bundledProviders = mutableMapOf<String, CodexMobileProvider>()
 
     init {
-        reconcileRemovedSplits()
+        migrateLegacyProviders()
     }
 
     val dispatcher: BuiltInToolDispatcher = object : BuiltInToolDispatcher {
@@ -98,15 +103,6 @@ class AndroidProviderRegistry(context: Context) {
 
     fun settings(): List<ProviderSettingsEntry> = store.read().mapNotNull { record ->
         if (record.state == ProviderPackageState.REMOVAL_PREPARED) return@mapNotNull null
-        if (record.state == ProviderPackageState.SPLIT_REMOVAL_PENDING) {
-            return@mapNotNull ProviderSettingsEntry(
-                pluginId = record.pluginId,
-                displayName = record.displayName,
-                activityClassName = null,
-                removalNeedsRetry = true,
-                message = "Provider code removal needs retry",
-            )
-        }
         val provider = verifiedProvider(record)
         if (record.state == ProviderPackageState.INSTALLING && provider == null) {
             return@mapNotNull ProviderSettingsEntry(
@@ -160,6 +156,11 @@ class AndroidProviderRegistry(context: Context) {
         store.read().filterNot { it.pluginId == pluginId } + listOfNotNull(previous),
     )
 
+    fun remove(pluginId: String) {
+        verificationCache.keys.removeAll { it.pluginId == pluginId }
+        store.write(store.read().filterNot { it.pluginId == pluginId })
+    }
+
     fun markRemovalPending(pluginId: String, message: String? = null) = update(pluginId) {
         it.copy(state = ProviderPackageState.REMOVAL_PENDING, message = message)
     }
@@ -168,31 +169,44 @@ class AndroidProviderRegistry(context: Context) {
         it.copy(state = ProviderPackageState.REMOVAL_PREPARED, message = message)
     }
 
-    fun markSplitRemovalPending(
-        pluginId: String,
-        message: String = "Restarting to finish provider removal",
-    ) = update(pluginId) {
-        it.copy(state = ProviderPackageState.SPLIT_REMOVAL_PENDING, message = message)
-    }
-
     fun isVerified(pluginId: String): Boolean = installedRecord(pluginId)?.let(::verifiedProvider) != null
 
     fun requireVerified(pluginId: String) {
         verifiedProviderOrThrow(checkNotNull(installedRecord(pluginId)) { "Provider lifecycle record is missing" })
     }
 
-    fun reconcileRemovedSplits() {
-        val installed = installedSplits()
-        val records = store.read()
-        val reconciled = records.filterNot { record ->
-            record.state == ProviderPackageState.SPLIT_REMOVAL_PENDING && record.splitNames.none(installed::contains)
-        }
-        if (reconciled != records) store.write(reconciled)
+    @Synchronized
+    fun bundledProvider(pluginId: String): CodexMobileProvider? {
+        bundledProviders[pluginId]?.let { return it }
+        val provider = BUNDLED_PROVIDER_FACTORIES[pluginId]?.invoke(appContext) ?: return null
+        bundledProviders[pluginId] = provider
+        return provider
     }
 
-    private fun verifiedProviders(): List<CodexMobileProvider> = store.read()
-        .filter { it.state != ProviderPackageState.SPLIT_REMOVAL_PENDING }
-        .mapNotNull(::verifiedProvider)
+    private fun migrateLegacyProviders() {
+        val currentVersion = appContext.packageManager.getPackageInfo(appContext.packageName, 0).compatVersionCode()
+        val records = store.read()
+        val migrated = records.mapNotNull { record ->
+            if (record.state == ProviderPackageState.SPLIT_REMOVAL_PENDING) return@mapNotNull null
+            val provider = bundledProvider(record.pluginId) ?: return@mapNotNull record
+            val descriptor = provider.descriptor
+            record.copy(
+                providerApi = descriptor.providerApi,
+                hostVersionCode = currentVersion,
+                implementationVersion = descriptor.implementationVersion,
+                displayName = descriptor.displayName,
+                splitNames = emptyList(),
+                entryPoint = provider.javaClass.name,
+                settingsEntryPoint = descriptor.settingsEntryPoint,
+                schemaDigest = descriptor.schemaDigest,
+                contentSha256 = null,
+                delivery = ProviderDelivery.BUNDLED,
+            )
+        }
+        if (migrated != records) store.write(migrated)
+    }
+
+    private fun verifiedProviders(): List<CodexMobileProvider> = store.read().mapNotNull(::verifiedProvider)
 
     private fun verifiedProvider(record: InstalledProvider): CodexMobileProvider? =
         runCatching { verifiedProviderOrThrow(record) }.getOrNull()
@@ -202,20 +216,9 @@ class AndroidProviderRegistry(context: Context) {
         verificationCache[record]?.let { return it }
         return run {
             check(record.marketplaceRepository == CANONICAL_PROVIDER_REPOSITORY) { "Provider source is not authoritative" }
-            check(splitsInstalled(record)) { "Provider split is missing" }
+            check(record.delivery == ProviderDelivery.BUNDLED) { "Provider code is not bundled with this app" }
             check(record.apkSha256.matches(Regex("[a-f0-9]{64}"))) { "Provider package identity is missing" }
-            check(record.contentSha256?.matches(Regex("[a-f0-9]{64}")) == true) {
-                "Provider installation identity is missing"
-            }
-            val split = checkNotNull(installedSplitFiles()[record.splitNames.singleOrNull()]) {
-                "Provider split is missing"
-            }
-            check(split.apkContentSha256() == record.contentSha256) {
-                "Provider package does not match its signed release"
-            }
-            val provider = Class.forName(record.entryPoint)
-                .getConstructor(Context::class.java)
-                .newInstance(appContext) as CodexMobileProvider
+            val provider = checkNotNull(bundledProvider(record.pluginId)) { "Provider is not bundled with this app" }
             val descriptor = provider.descriptor
             val currentVersion = appContext.packageManager.getPackageInfo(appContext.packageName, 0).compatVersionCode()
             check(record.hostVersionCode == currentVersion && currentVersion in descriptor.minHostVersionCode..descriptor.maxHostVersionCode)
@@ -225,18 +228,10 @@ class AndroidProviderRegistry(context: Context) {
             check(descriptor.displayName == record.displayName)
             check(descriptor.settingsEntryPoint == record.settingsEntryPoint)
             check(descriptor.schemaDigest == record.schemaDigest)
+            check(provider.javaClass.name == record.entryPoint)
             provider
         }.also { verificationCache[record] = it }
     }
-
-    private fun splitsInstalled(record: InstalledProvider): Boolean = installedSplits().containsAll(record.splitNames)
-
-    private fun installedSplits(): Set<String> = appContext.packageManager
-        .getApplicationInfo(appContext.packageName, 0).splitNames.orEmpty().toSet()
-
-    private fun installedSplitFiles(): Map<String, File> = appContext.packageManager
-        .getApplicationInfo(appContext.packageName, 0)
-        .let { info -> info.splitNames.orEmpty().zip(info.splitSourceDirs.orEmpty().map(::File)).toMap() }
 
     private fun update(pluginId: String, transform: (InstalledProvider) -> InstalledProvider) {
         val records = store.read()
@@ -311,6 +306,8 @@ private fun JSONObject.installedProvider() = InstalledProvider(
     contentSha256 = optString("contentSha256").takeIf(String::isNotEmpty),
     state = ProviderPackageState.valueOf(getString("state")),
     message = optString("message").takeIf(String::isNotEmpty),
+    delivery = optString("delivery").takeIf(String::isNotEmpty)?.let(ProviderDelivery::valueOf)
+        ?: ProviderDelivery.LEGACY_SPLIT,
 )
 
 private fun InstalledProvider.json() = JSONObject()
@@ -332,3 +329,9 @@ private fun InstalledProvider.json() = JSONObject()
     .put("contentSha256", contentSha256)
     .put("state", state.name)
     .put("message", message)
+    .put("delivery", delivery.name)
+
+private val BUNDLED_PROVIDER_FACTORIES: Map<String, (Context) -> CodexMobileProvider> = mapOf(
+    DOCUMENTS_PLUGIN_ID to ::DocumentsProvider,
+    TELEGRAM_PLUGIN_ID to ::TelegramProvider,
+)

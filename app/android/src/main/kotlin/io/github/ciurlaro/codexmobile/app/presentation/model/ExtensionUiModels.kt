@@ -10,8 +10,10 @@ enum class ExtensionType(val label: String) {
 }
 
 enum class ExtensionStatus(val label: String) {
-    INSTALLED("Installed"), UNINSTALLED("Uninstalled"), UNAVAILABLE("Unavailable"),
+    INSTALLED("Installed"), UNINSTALLED("Market"), UNAVAILABLE("Unavailable"),
 }
+
+enum class PluginCatalogStatus { NOT_LOADED, CONNECTING, LOADING, LIVE, STALE, ERROR }
 
 sealed interface ExtensionRemoval {
     val displayName: String

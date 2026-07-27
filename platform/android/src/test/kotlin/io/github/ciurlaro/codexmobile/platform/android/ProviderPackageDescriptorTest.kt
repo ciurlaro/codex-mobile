@@ -1,15 +1,15 @@
 package io.github.ciurlaro.codexmobile.platform.android
 
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
+import io.github.ciurlaro.codexmobile.provider.api.ProviderDescriptor
+import io.github.ciurlaro.codexmobile.provider.api.ProviderToolDefinition
 import java.io.File
 import java.net.URI
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 import kotlin.io.path.createTempDirectory
-import kotlin.io.path.createTempFile
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlinx.serialization.json.buildJsonObject
 
 class ProviderPackageDescriptorTest {
     @Test
@@ -35,22 +35,37 @@ class ProviderPackageDescriptorTest {
     }
 
     @Test
-    fun `installed content identity ignores signatures stripped by Android`() {
-        val signed = providerApk(
-            "classes.dex" to "provider",
-            "META-INF/MANIFEST.MF" to "manifest",
-            "META-INF/CODEX-MO.SF" to "signature",
-            "META-INF/CODEX-MO.RSA" to "certificate",
+    fun `bundled provider must match signed marketplace metadata`() {
+        val addOn = ProviderPackageDescriptor.parse(manifest("a".repeat(64)))
+        val bundled = ProviderDescriptor(
+            pluginId = addOn.pluginId,
+            implementationVersion = addOn.implementationVersion,
+            tools = listOf(ProviderToolDefinition(addOn.pluginId, "sample", "Sample", buildJsonObject {})),
+            providerApi = 2,
+            minHostVersionCode = 3,
+            maxHostVersionCode = 3,
+            displayName = addOn.displayName,
+            settingsEntryPoint = addOn.settingsEntryPoint,
+            schemaDigest = addOn.schemaDigest,
         )
-        val installed = providerApk("classes.dex" to "provider")
-        val changed = providerApk("classes.dex" to "different")
-        try {
-            assertEquals(signed.apkContentSha256(), installed.apkContentSha256())
-            kotlin.test.assertNotEquals(signed.apkContentSha256(), changed.apkContentSha256())
-        } finally {
-            signed.delete()
-            installed.delete()
-            changed.delete()
+
+        validateBundledProvider(
+            addOn,
+            bundled,
+            addOn.entryPoint,
+            addOn.mcpServerNames.toSet(),
+            hostVersion = 3,
+            supportedAbis = setOf("arm64-v8a"),
+        )
+        assertFailsWith<IllegalStateException> {
+            validateBundledProvider(
+                addOn.copy(schemaDigest = "c".repeat(64)),
+                bundled,
+                addOn.entryPoint,
+                addOn.mcpServerNames.toSet(),
+                hostVersion = 3,
+                supportedAbis = setOf("arm64-v8a"),
+            )
         }
     }
 
@@ -88,7 +103,7 @@ class ProviderPackageDescriptorTest {
         val outside = createTempDirectory("outside-marketplace").toFile()
         try {
             val inside = File(root, "plugins/documents/codex-mobile-addon.json").apply {
-                parentFile.mkdirs()
+                checkNotNull(parentFile).mkdirs()
                 writeText("{}")
             }
             assertFailsWith<IllegalStateException> {
@@ -155,11 +170,11 @@ class ProviderPackageDescriptorTest {
         val root = createTempDirectory("provider-marketplace").toFile()
         try {
             File(root, ".git/config").apply {
-                parentFile.mkdirs()
+                checkNotNull(parentFile).mkdirs()
                 writeText("[remote \"origin\"]\n\turl = $origin\n")
             }
             val manifest = File(root, "plugins/documents/codex-mobile-addon.json").apply {
-                parentFile.mkdirs()
+                checkNotNull(parentFile).mkdirs()
                 writeText("{}")
             }
             block(root, manifest)
@@ -168,15 +183,4 @@ class ProviderPackageDescriptorTest {
         }
     }
 
-    private fun providerApk(vararg entries: Pair<String, String>) = createTempFile("provider", ".apk").toFile().apply {
-        outputStream().use { output ->
-            ZipOutputStream(output).use { zip ->
-                entries.forEach { (name, contents) ->
-                    zip.putNextEntry(ZipEntry(name))
-                    zip.write(contents.toByteArray())
-                    zip.closeEntry()
-                }
-            }
-        }
-    }
 }

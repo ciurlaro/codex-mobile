@@ -25,10 +25,8 @@ val appVersionName = providers.gradleProperty("codexMobile.versionName")
 val codexVersion = providers.gradleProperty("codexMobile.codexVersion")
 val codexArchiveSha256 = providers.gradleProperty("codexMobile.codexArchiveSha256")
 val codexBinarySha256 = providers.gradleProperty("codexMobile.codexBinarySha256")
-val includeProviders = providers.gradleProperty("codexMobile.providerBuild").isPresent
 android {
     namespace = "io.github.ciurlaro.codexmobile.app"
-    if (includeProviders) dynamicFeatures += setOf(":provider_documents", ":provider_telegram")
     compileSdk = 37
 
     defaultConfig {

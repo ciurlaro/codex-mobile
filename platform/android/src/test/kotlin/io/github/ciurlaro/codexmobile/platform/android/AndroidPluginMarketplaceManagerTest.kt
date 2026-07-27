@@ -112,4 +112,37 @@ class AndroidPluginMarketplaceManagerTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun `reuses a valid root snapshot from the same GitHub repository`() {
+        val root = Files.createTempDirectory("marketplaces-").toFile()
+        try {
+            val snapshot = File(root, "snapshot").apply {
+                File(this, ".git").mkdirs()
+                File(this, ".git/config").writeText(
+                    "[remote \"origin\"]\n\turl = https://github.com/Owner/Plugins.git\n",
+                )
+                val manifest = File(this, ".agents/plugins/marketplace.json")
+                checkNotNull(manifest.parentFile).mkdirs()
+                manifest.writeText("""{"name":"plugins","plugins":[]}""")
+            }
+
+            assertEquals(
+                snapshot.canonicalFile,
+                findReusableMarketplaceSnapshot(
+                    root,
+                    GitHubMarketplaceLocation.parse("https://github.com/owner/plugins"),
+                )?.canonicalFile,
+            )
+            assertEquals(
+                null,
+                findReusableMarketplaceSnapshot(
+                    root,
+                    GitHubMarketplaceLocation.parse("https://github.com/owner/other"),
+                ),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 }
