@@ -14,6 +14,7 @@ import io.github.ciurlaro.codexmobile.appserver.protocol.generated.PluginMarketp
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.PluginSummary
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.SkillMetadata
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.SkillScope
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.ToolRequestUserInputParams
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInput
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputMentionUserInput
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputSkillUserInput
@@ -85,6 +86,7 @@ internal fun parsePluginSummary(
             name = name,
             marketplaceName = marketplaceName,
             marketplacePath = marketplacePath,
+            remotePluginId = item.remotePluginId,
         ),
         displayName = interfaceInfo?.displayName
             ?: name.replace('-', ' ').replaceFirstChar(Char::uppercase),
@@ -189,6 +191,31 @@ internal fun parseElicitation(
         else -> error("Unsupported MCP elicitation mode")
     }
 }
+
+internal fun parseUserInputRequest(
+    requestId: String,
+    params: ToolRequestUserInputParams,
+) = AgentElicitation(
+    requestId = requestId,
+    serverName = "Plan",
+    sessionId = SessionId(params.threadId),
+    message = "Codex needs your input to continue planning.",
+    form = params.questions.map { question ->
+        val options = question.options.orEmpty()
+        AgentFormField(
+            name = question.id,
+            title = question.header,
+            description = question.question,
+            required = true,
+            type = if (options.isEmpty()) AgentFormFieldType.STRING else AgentFormFieldType.SINGLE_SELECT,
+            options = options.map { option ->
+                AgentFormOption(option.label, option.label, option.description)
+            },
+            allowOther = question.isOther == true,
+            secret = question.isSecret == true,
+        )
+    },
+)
 
 private fun parseForm(schema: McpElicitationSchema): List<AgentFormField> {
     val required = schema.required.orEmpty().toSet()

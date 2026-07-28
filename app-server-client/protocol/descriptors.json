@@ -1,7 +1,7 @@
 {
     "formatVersion": 1,
     "generatorVersion": "2",
-    "schemaSha256": "5c40798d0ea83e14988a6f73e854f905f35df8b8c41c4ac61afb67f8698a4c4f",
+    "schemaSha256": "8039a1222460b3846a3688c61eb4b2626b451d61b9c2b36b83fea0ce341ce0be",
     "clientRequests": [
         {
             "method": "account/login/cancel",
@@ -68,10 +68,24 @@
             "serialization": "None"
         },
         {
+            "method": "app/installed",
+            "variant": "App/installedRequest",
+            "paramsType": "AppsInstalledParams",
+            "responseType": "AppsInstalledResponse",
+            "serialization": "None"
+        },
+        {
             "method": "app/list",
             "variant": "App/listRequest",
             "paramsType": "AppsListParams",
             "responseType": "AppsListResponse",
+            "serialization": "None"
+        },
+        {
+            "method": "app/read",
+            "variant": "App/readRequest",
+            "paramsType": "AppsReadParams",
+            "responseType": "AppsReadResponse",
             "serialization": "None"
         },
         {
@@ -903,6 +917,16 @@
             "method": "thread/deleted",
             "variant": "Thread/deletedNotification",
             "paramsType": "ThreadDeletedNotification"
+        },
+        {
+            "method": "thread/environment/connected",
+            "variant": "Thread/environment/connectedNotification",
+            "paramsType": "EnvironmentConnectionNotification"
+        },
+        {
+            "method": "thread/environment/disconnected",
+            "variant": "Thread/environment/disconnectedNotification",
+            "paramsType": "EnvironmentConnectionNotification"
         },
         {
             "method": "thread/goal/cleared",

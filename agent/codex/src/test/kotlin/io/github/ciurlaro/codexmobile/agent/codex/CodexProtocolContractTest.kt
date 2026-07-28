@@ -133,7 +133,7 @@ class CodexProtocolContractTest {
             val config = params["config"]!!.jsonObject
             assertEquals("live", config["web_search"]!!.jsonPrimitive.content)
             assertEquals(
-                false,
+                true,
                 config["tools"]!!.jsonObject["experimental_request_user_input"]!!
                     .jsonObject["enabled"]!!.jsonPrimitive.content.toBoolean(),
             )
@@ -143,13 +143,12 @@ class CodexProtocolContractTest {
                 "multi_agent",
                 "image_generation",
                 "goals",
-                "hooks",
                 "skill_mcp_dependency_install",
                 "workspace_dependencies",
             ).forEach { feature ->
                 assertEquals(false, features[feature]!!.jsonPrimitive.content.toBoolean())
             }
-            listOf("apps", "enable_mcp_apps", "plugins").forEach { feature ->
+            listOf("apps", "enable_mcp_apps", "plugins", "hooks").forEach { feature ->
                 assertEquals(true, features[feature]!!.jsonPrimitive.content.toBoolean())
             }
             assertEquals(true, features["shell_tool"]!!.jsonPrimitive.content.toBoolean())
@@ -590,6 +589,19 @@ class CodexProtocolContractTest {
                         buildJsonObject { putJsonObject("turn") { put("id", "turn-1") } },
                     )
                     server.notify(
+                        "item/started",
+                        buildJsonObject {
+                            put("threadId", "thread-1")
+                            put("turnId", "turn-1")
+                            putJsonObject("item") {
+                                put("id", "item-1")
+                                put("type", "agentMessage")
+                                put("phase", "commentary")
+                                put("text", "")
+                            }
+                        },
+                    )
+                    server.notify(
                         "item/agentMessage/delta",
                         buildJsonObject {
                             put("threadId", "thread-1")
@@ -641,7 +653,10 @@ class CodexProtocolContractTest {
             assertEquals("https://auth.openai.com/oauth/authorize?state=test", required.signInUrl)
             assertIs<AgentEvent.Authenticated>(received[1])
             assertEquals(AgentEvent.SessionOpened(SessionId("thread-1"), model = "test"), received[2])
-            assertEquals(AgentEvent.TextDelta(SessionId("thread-1"), "Hello", "item-1"), received[3])
+            assertEquals(
+                AgentEvent.TextDelta(SessionId("thread-1"), "Hello", "item-1", isCommentary = true),
+                received[3],
+            )
             assertEquals(AgentEvent.TurnCompleted(SessionId("thread-1")), received[4])
             assertIs<AgentEvent.Failure>(received[5])
         } finally {

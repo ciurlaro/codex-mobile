@@ -6,11 +6,13 @@ import io.github.ciurlaro.codexmobile.appserver.protocol.generated.TextElement
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInput
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputTextUserInput
 import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentCollaborationMode
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
+import io.github.ciurlaro.codexmobile.core.PLAN_CLIENT_MESSAGE_PREFIX
 import io.github.ciurlaro.codexmobile.core.SessionId
 import io.github.ciurlaro.codexmobile.core.deriveConversationTitle
 import java.nio.charset.StandardCharsets
@@ -51,7 +53,10 @@ internal fun conversationSummary(thread: Thread, fallbackPreview: String? = null
     )
 }
 
-internal fun conversationMessages(rawItems: List<JsonElement>): List<AgentMessage> {
+internal fun conversationMessages(
+    rawItems: List<JsonElement>,
+    recordedInvocations: Map<String, List<AgentInvocation>> = emptyMap(),
+): List<AgentMessage> {
     val messages = mutableListOf<AgentMessage>()
     val reasoning = mutableListOf<String>()
     var reasoningId: String? = null
@@ -66,7 +71,17 @@ internal fun conversationMessages(rawItems: List<JsonElement>): List<AgentMessag
             }
             return@forEach
         }
-        val message = conversationMessage(rawItem) ?: return@forEach
+        if (
+            item.requiredString("type") == "agentMessage" &&
+            item.optionalString("phase") == "commentary"
+        ) {
+            item.requiredText("text").trim().takeIf(String::isNotEmpty)?.let {
+                reasoningId = item.requiredString("id")
+                reasoning += it
+            }
+            return@forEach
+        }
+        val message = conversationMessage(rawItem, recordedInvocations) ?: return@forEach
         if (message.role == AgentMessageRole.CODEX && reasoning.isNotEmpty()) {
             messages += message.copy(reasoning = reasoning.joinToString("\n\n"))
             reasoning.clear()
@@ -87,15 +102,20 @@ internal fun conversationMessages(rawItems: List<JsonElement>): List<AgentMessag
     return messages
 }
 
-internal fun conversationMessage(rawItem: JsonElement): AgentMessage? {
+internal fun conversationMessage(
+    rawItem: JsonElement,
+    recordedInvocations: Map<String, List<AgentInvocation>> = emptyMap(),
+): AgentMessage? {
     val item = rawItem.jsonObject
     return when (item.requiredString("type")) {
         "userMessage" -> {
-            if (item.optionalString("clientId")?.startsWith("codex-mobile:plugin-availability:") == true) {
+            val clientId = item.optionalString("clientId")
+            if (clientId?.startsWith("codex-mobile:plugin-availability:") == true) {
                 return null
             }
             val content = item.requiredArray("content").map(JsonElement::jsonObject)
-            val invocations = content.mapNotNull(::parseInvocation).distinctBy(AgentInvocation::key)
+            val persistedInvocations = content.mapNotNull(::parseInvocation).distinctBy(AgentInvocation::key)
+            val invocations = clientId?.let(recordedInvocations::get) ?: persistedInvocations
             val prompts = content.mapNotNull { input ->
                 input.takeIf { it.optionalString("type") == "text" }
                     ?.let { parsePrompt(it, invocations) }
@@ -103,9 +123,14 @@ internal fun conversationMessage(rawItem: JsonElement): AgentMessage? {
             if (prompts.isEmpty() && invocations.isEmpty()) return null
             AgentMessage(
                 id = item.requiredString("id"),
-                clientId = item.optionalString("clientId"),
+                clientId = clientId,
                 role = AgentMessageRole.USER,
                 text = prompts.joinToString("\n", transform = ParsedPrompt::text),
+                collaborationMode = if (clientId?.startsWith(PLAN_CLIENT_MESSAGE_PREFIX) == true) {
+                    AgentCollaborationMode.PLAN
+                } else {
+                    AgentCollaborationMode.DEFAULT
+                },
                 capabilities = prompts.flatMap(ParsedPrompt::capabilities).toSet(),
                 invocations = invocations,
             )
@@ -116,6 +141,14 @@ internal fun conversationMessage(rawItem: JsonElement): AgentMessage? {
             clientId = null,
             role = AgentMessageRole.CODEX,
             text = item.requiredText("text"),
+        )
+
+        "plan" -> AgentMessage(
+            id = item.requiredString("id"),
+            clientId = null,
+            role = AgentMessageRole.CODEX,
+            text = "",
+            plan = item.requiredText("text"),
         )
 
         else -> null

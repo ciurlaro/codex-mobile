@@ -112,6 +112,10 @@ private fun addUsedExperimentalFields(
         Regex("#\\[experimental\\(\"turn/steer\\.additionalContext\"\\)\\][\\s\\S]{0,250}pub additional_context: Option<HashMap<String, AdditionalContextEntry>>")
             .containsMatchIn(turnSource),
     ) { "Pinned turn.rs no longer declares turn/steer.additionalContext as expected" }
+    check(
+        Regex("#\\[experimental\\(\"turn/start\\.collaborationMode\"\\)\\][\\s\\S]{0,250}pub collaboration_mode: Option<CollaborationMode>")
+            .containsMatchIn(turnSource),
+    ) { "Pinned turn.rs no longer declares turn/start.collaborationMode as expected" }
     val v2 = definitions.getValue("v2").jsonObject
     val augmentedV2 = JsonObject(v2.toMutableMap().apply {
         put(
@@ -134,6 +138,13 @@ private fun addUsedExperimentalFields(
                         put("\$ref", "#/definitions/v2/AdditionalContextEntry")
                     }
                 },
+            ),
+        )
+        put(
+            "TurnStartParams",
+            getValue("TurnStartParams").jsonObject.withOptionalProperty(
+                "collaborationMode",
+                buildJsonObject { put("\$ref", "#/definitions/v2/CollaborationMode") },
             ),
         )
     })
@@ -678,7 +689,7 @@ private fun updateProvenance(
         )
         put(
             "completeSchemaExtraction",
-            JsonPrimitive("git show rust-v0.144.6:$completeSchemaPath"),
+            JsonPrimitive("git show rust-v0.145.0:$completeSchemaPath"),
         )
         put("generator", buildJsonObject {
             put("version", GENERATOR_VERSION)

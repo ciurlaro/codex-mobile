@@ -45,6 +45,12 @@ interface AgentClient : AutoCloseable {
 
     suspend fun listMcpServers(): List<AgentMcpServer>
 
+    suspend fun listHooks(workingDirectory: String): AgentHookCatalog
+
+    suspend fun setHookEnabled(key: String, enabled: Boolean)
+
+    suspend fun trustHook(key: String, currentHash: String)
+
     suspend fun startMcpOauth(serverName: String, sessionId: SessionId? = null): String
 
     suspend fun listSessions(): List<AgentConversationSummary>
@@ -131,11 +137,62 @@ data class AgentMessage(
     val clientId: String?,
     val role: AgentMessageRole,
     val text: String,
+    val collaborationMode: AgentCollaborationMode = AgentCollaborationMode.DEFAULT,
     val reasoning: String? = null,
+    val plan: String? = null,
     val shellCommand: String? = null,
     val exitCode: Int? = null,
     val capabilities: Set<AgentCapability> = emptySet(),
     val invocations: List<AgentInvocation> = emptyList(),
+)
+
+enum class AgentCollaborationMode { DEFAULT, PLAN }
+
+const val PLAN_CLIENT_MESSAGE_PREFIX = "codex-mobile:plan:"
+
+enum class AgentPlanStepStatus { PENDING, IN_PROGRESS, COMPLETED }
+
+data class AgentPlanStep(val text: String, val status: AgentPlanStepStatus)
+
+data class AgentPlanProgress(
+    val explanation: String? = null,
+    val steps: List<AgentPlanStep> = emptyList(),
+)
+
+enum class AgentHookTrustStatus { MANAGED, UNTRUSTED, TRUSTED, MODIFIED }
+
+data class AgentHook(
+    val key: String,
+    val currentHash: String,
+    val enabled: Boolean,
+    val eventName: String,
+    val handlerType: String,
+    val isManaged: Boolean,
+    val source: String,
+    val sourcePath: String,
+    val timeoutSeconds: Long,
+    val trustStatus: AgentHookTrustStatus,
+    val command: String? = null,
+    val matcher: String? = null,
+    val pluginId: String? = null,
+    val statusMessage: String? = null,
+)
+
+data class AgentHookCatalog(
+    val hooks: List<AgentHook>,
+    val warnings: List<String> = emptyList(),
+    val errors: List<String> = emptyList(),
+)
+
+enum class AgentHookRunStatus { RUNNING, COMPLETED, FAILED, BLOCKED, STOPPED }
+
+data class AgentHookActivity(
+    val id: String,
+    val eventName: String,
+    val handlerType: String,
+    val status: AgentHookRunStatus,
+    val statusMessage: String? = null,
+    val details: List<String> = emptyList(),
 )
 
 enum class AgentCapability(
@@ -157,6 +214,7 @@ data class AgentTurnRequest(
     val capabilities: Set<AgentCapability> = emptySet(),
     val invocations: List<AgentInvocation> = emptyList(),
     val workingDirectory: String? = null,
+    val collaborationMode: AgentCollaborationMode = AgentCollaborationMode.DEFAULT,
 )
 
 fun deriveConversationTitle(
@@ -191,6 +249,7 @@ sealed interface AgentEvent {
         val sessionId: SessionId,
         val text: String,
         val itemId: String? = null,
+        val isCommentary: Boolean = false,
     ) : AgentEvent
 
     data class ReasoningSummaryDelta(
@@ -198,6 +257,22 @@ sealed interface AgentEvent {
         val text: String,
         val itemId: String,
         val summaryIndex: Long,
+    ) : AgentEvent
+
+    data class PlanDelta(
+        val sessionId: SessionId,
+        val text: String,
+        val itemId: String,
+    ) : AgentEvent
+
+    data class PlanUpdated(
+        val sessionId: SessionId,
+        val progress: AgentPlanProgress,
+    ) : AgentEvent
+
+    data class HookActivityChanged(
+        val sessionId: SessionId,
+        val activity: AgentHookActivity,
     ) : AgentEvent
 
     data class ShellOutputDelta(

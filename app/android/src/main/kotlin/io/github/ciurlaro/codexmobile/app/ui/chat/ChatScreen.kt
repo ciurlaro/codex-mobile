@@ -67,6 +67,7 @@ import io.github.ciurlaro.codexmobile.app.ui.icons.IconGlyph
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatColors
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatDimensions
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
+import io.github.ciurlaro.codexmobile.core.AgentCollaborationMode
 import kotlinx.coroutines.flow.drop
 
 internal val shellCommandVisualTransformation = VisualTransformation { source ->
@@ -90,6 +91,22 @@ internal val shellCommandVisualTransformation = VisualTransformation { source ->
                     if (offset == 0) 0 else if (offset <= 3) 1 else offset - 2
             },
         )
+    }
+}
+
+internal val planCommandVisualTransformation = VisualTransformation { source ->
+    val match = Regex("^/plan(?:\\s+|${'$'})", RegexOption.IGNORE_CASE).find(source.text)
+    if (match == null) {
+        TransformedText(source, OffsetMapping.Identity)
+    } else {
+        val prefixLength = match.value.length
+        val text = buildAnnotatedString {
+            withStyle(SpanStyle(color = ChatColors.PlanAccent, fontWeight = FontWeight.Bold)) {
+                append(source.subSequence(0, prefixLength))
+            }
+            append(source.subSequence(prefixLength, source.length))
+        }
+        TransformedText(text, OffsetMapping.Identity)
     }
 }
 
@@ -258,6 +275,14 @@ private fun ConversationList(
                                 message = message,
                                 expandedByDefault = reasoningExpandedByDefault,
                                 onExpansionChanged = { reasoningExpandedByDefault = it },
+                                onProceedWithPlan = if (
+                                    message.id == state.messages.lastOrNull()?.id &&
+                                    state.collaborationMode == AgentCollaborationMode.PLAN
+                                ) {
+                                    { onEvent(AppUiEvent.ProceedWithPlan) }
+                                } else {
+                                    null
+                                },
                             )
                         }
                     }

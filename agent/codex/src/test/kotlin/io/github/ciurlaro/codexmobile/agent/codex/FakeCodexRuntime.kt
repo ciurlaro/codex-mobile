@@ -209,7 +209,7 @@ internal class FakeCodexRuntime(
     private fun normalizeThread(thread: JsonObject): JsonObject {
         val id = thread["id"] ?: JsonPrimitive("thread")
         return thread.replaceArray("turns", ::normalizeTurn).withDefaults(
-            "cliVersion" to JsonPrimitive("0.144.6"),
+            "cliVersion" to JsonPrimitive("0.145.0"),
             "createdAt" to JsonPrimitive(0),
             "cwd" to JsonPrimitive("/workspace"),
             "ephemeral" to JsonPrimitive(false),

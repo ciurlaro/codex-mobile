@@ -13,8 +13,13 @@ import io.github.ciurlaro.codexmobile.app.presentation.model.ChatSelector
 import io.github.ciurlaro.codexmobile.app.ui.theme.AppTheme
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
+import io.github.ciurlaro.codexmobile.core.AgentHookActivity
+import io.github.ciurlaro.codexmobile.core.AgentHookRunStatus
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentModel
+import io.github.ciurlaro.codexmobile.core.AgentPlanProgress
+import io.github.ciurlaro.codexmobile.core.AgentPlanStep
+import io.github.ciurlaro.codexmobile.core.AgentPlanStepStatus
 import io.github.ciurlaro.codexmobile.core.SessionId
 
 class VisualScenarioActivity : ComponentActivity() {
@@ -113,7 +118,11 @@ private val TAGGED_USER_MESSAGE = ChatMessage(
 private val COMPLETED_CODEX_MESSAGE = ChatMessage(
     id = "visual-codex-message",
     role = AgentMessageRole.CODEX,
-    text = "The stable release focuses on platform reliability, privacy, and developer tooling.",
+    text = """The stable release focuses on platform reliability. Inline math such as ${'$'}E = mc^2${'$'} is rendered with the answer.
+
+\[
+x = \frac{12}{0.8} = 15
+\]""",
     model = MODELS.first().id,
     effort = "high",
 )
@@ -122,6 +131,24 @@ private val THINKING_CODEX_MESSAGE = ChatMessage(
     id = "visual-codex-message",
     role = AgentMessageRole.CODEX,
     text = "",
+    reasoning = "I’ll verify the current behavior, make the smallest safe change, then run the focused checks.",
+    planProgress = AgentPlanProgress(
+        explanation = "Brief plan to answer your question",
+        steps = listOf(
+            AgentPlanStep("Inspect the Android release notes", AgentPlanStepStatus.COMPLETED),
+            AgentPlanStep("Compare behavior with the current app", AgentPlanStepStatus.IN_PROGRESS),
+            AgentPlanStep("Summarize the verified changes", AgentPlanStepStatus.PENDING),
+        ),
+    ),
+    hookActivities = listOf(
+        AgentHookActivity(
+            id = "visual-hook",
+            eventName = "After tool use",
+            handlerType = "command",
+            status = AgentHookRunStatus.COMPLETED,
+            statusMessage = "Hook completed",
+        ),
+    ),
     model = MODELS.first().id,
     effort = "high",
     isStreaming = true,

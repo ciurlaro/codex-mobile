@@ -9,6 +9,9 @@ import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentConnector
 import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
 import io.github.ciurlaro.codexmobile.core.AgentMcpServer
+import io.github.ciurlaro.codexmobile.core.AgentHookCatalog
+import io.github.ciurlaro.codexmobile.core.AgentHookActivity
+import io.github.ciurlaro.codexmobile.core.AgentHookRunStatus
 import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentModel
@@ -18,6 +21,9 @@ import io.github.ciurlaro.codexmobile.core.AgentPluginInstallResult
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import io.github.ciurlaro.codexmobile.core.AgentPluginRemovalResult
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
+import io.github.ciurlaro.codexmobile.core.AgentPlanProgress
+import io.github.ciurlaro.codexmobile.core.AgentPlanStep
+import io.github.ciurlaro.codexmobile.core.AgentPlanStepStatus
 import io.github.ciurlaro.codexmobile.core.AgentSkillCatalog
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
@@ -223,10 +229,53 @@ class CodexSessionControllerTest {
             fake.emit(AgentEvent.ReasoningSummaryDelta(SESSION, "Inspecting", "reasoning-1", 0))
             fake.emit(AgentEvent.ReasoningSummaryDelta(SESSION, " files", "reasoning-1", 0))
             fake.emit(AgentEvent.ReasoningSummaryDelta(SESSION, "Comparing results", "reasoning-1", 1))
+            fake.emit(AgentEvent.TextDelta(SESSION, "Checking the result", "commentary-1", isCommentary = true))
             fake.emit(AgentEvent.TextDelta(SESSION, "Final answer"))
 
             await { controller.state.value.streamedText == "Final answer" }
-            assertEquals("Inspecting files\n\nComparing results", controller.state.value.streamedReasoning)
+            assertEquals(
+                "Inspecting files\n\nComparing results\n\nChecking the result",
+                controller.state.value.streamedReasoning,
+            )
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
+    fun plansAndHookActivityStreamIntoTheirOwnStructuredState(): Unit = runBlocking {
+        val fake = FakeAgentClient()
+        val controller = controller(fake)
+        try {
+            fake.emit(AgentEvent.Authenticated)
+            await { controller.state.value.isAuthenticated }
+            assertTrue(controller.submit("plan this"))
+            await { controller.state.value.sessionId == SESSION }
+
+            fake.emit(AgentEvent.PlanDelta(SESSION, "## Plan", "plan-1"))
+            fake.emit(AgentEvent.PlanDelta(SESSION, "\nDo it", "plan-1"))
+            val progress = AgentPlanProgress(
+                "Brief plan",
+                listOf(AgentPlanStep("Inspect", AgentPlanStepStatus.IN_PROGRESS)),
+            )
+            fake.emit(AgentEvent.PlanUpdated(SESSION, progress))
+            fake.emit(
+                AgentEvent.HookActivityChanged(
+                    SESSION,
+                    AgentHookActivity("hook-1", "PRE_TOOL_USE", "COMMAND", AgentHookRunStatus.RUNNING),
+                ),
+            )
+            fake.emit(
+                AgentEvent.HookActivityChanged(
+                    SESSION,
+                    AgentHookActivity("hook-1", "PRE_TOOL_USE", "COMMAND", AgentHookRunStatus.COMPLETED),
+                ),
+            )
+
+            await { controller.state.value.hookActivities.singleOrNull()?.status == AgentHookRunStatus.COMPLETED }
+            assertEquals("## Plan\nDo it", controller.state.value.streamedPlan)
+            assertEquals(progress, controller.state.value.planProgress)
+            assertEquals(1, controller.state.value.hookActivities.size)
         } finally {
             controller.close()
         }
@@ -473,6 +522,13 @@ class CodexSessionControllerTest {
             emptyList()
 
         override suspend fun listMcpServers(): List<AgentMcpServer> = emptyList()
+
+        override suspend fun listHooks(workingDirectory: String): AgentHookCatalog =
+            AgentHookCatalog(emptyList())
+
+        override suspend fun setHookEnabled(key: String, enabled: Boolean) = Unit
+
+        override suspend fun trustHook(key: String, currentHash: String) = Unit
 
         override suspend fun startMcpOauth(serverName: String, sessionId: SessionId?): String = error("unused")
 

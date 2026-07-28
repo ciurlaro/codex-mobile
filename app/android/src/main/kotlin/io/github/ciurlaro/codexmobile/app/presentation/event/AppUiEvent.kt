@@ -9,6 +9,7 @@ import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
+import io.github.ciurlaro.codexmobile.core.AgentHook
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import io.github.ciurlaro.codexmobile.core.AgentSkill
 import io.github.ciurlaro.codexmobile.core.AgentSkillPackage
@@ -20,6 +21,11 @@ sealed interface AppUiEvent {
     data object StartNewChat : AppUiEvent
     data object OpenSettings : AppUiEvent
     data object CloseSettings : AppUiEvent
+    data object OpenHooks : AppUiEvent
+    data object CloseHooks : AppUiEvent
+    data object RefreshHooks : AppUiEvent
+    data class ToggleHook(val hook: AgentHook, val enabled: Boolean) : AppUiEvent
+    data class TrustHook(val hook: AgentHook) : AppUiEvent
     data class OpenExtensions(
         val type: ExtensionType = ExtensionType.PLUGINS,
         val returnScreen: AppScreen = AppScreen.SETTINGS,
@@ -31,6 +37,8 @@ sealed interface AppUiEvent {
     data class OpenSelector(val selector: ChatSelector) : AppUiEvent
     data object DismissSelector : AppUiEvent
     data object Send : AppUiEvent
+    data object TogglePlanMode : AppUiEvent
+    data object ProceedWithPlan : AppUiEvent
     data object Stop : AppUiEvent
     data object Authenticate : AppUiEvent
     data object CancelAuthentication : AppUiEvent
@@ -59,6 +67,7 @@ sealed interface AppUiEvent {
     data class InstallSkill(val skill: AgentSkillPackage) : AppUiEvent
     data class RequestUninstallSkill(val skill: AgentSkill) : AppUiEvent
     data class InstallPlugin(val plugin: AgentPluginReference) : AppUiEvent
+    data class ConnectPlugin(val plugin: AgentPluginReference) : AppUiEvent
     data class RequestUninstallPlugin(
         val plugin: AgentPluginReference,
         val displayName: String,

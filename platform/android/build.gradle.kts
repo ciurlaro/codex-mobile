@@ -19,7 +19,7 @@ android {
 
 dependencies {
     implementation(project(":runtime-host:android"))
-    implementation("io.github.ciurlaro.codexmobile:app-server-client:0.144.6-1")
+    implementation("io.github.ciurlaro.codexmobile:app-server-client:0.145.0-1")
     implementation(project(":core"))
     implementation(project(":agent:codex"))
     implementation("io.github.ciurlaro.codexmobile:provider-api:2.0.0")

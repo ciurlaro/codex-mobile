@@ -64,6 +64,8 @@ internal enum class IconGlyph {
     CHEVRON_DOWN,
     CHEVRON_RIGHT,
     CHECK,
+    CHECKLIST,
+    CONNECTED_STEPS,
     SEND,
     STOP,
     CLOSE,
@@ -85,6 +87,7 @@ internal enum class IconGlyph {
     GLOBE,
     SPARKLES,
     PUZZLE,
+    COPY,
 }
 
 @Composable
@@ -168,6 +171,22 @@ internal fun AppIcon(
             IconGlyph.CHECK -> {
                 line(Offset(size.width * .18f, size.height * .52f), Offset(size.width * .42f, size.height * .74f))
                 line(Offset(size.width * .42f, size.height * .74f), Offset(size.width * .84f, size.height * .24f))
+            }
+
+            IconGlyph.CHECKLIST -> repeat(3) { index ->
+                val y = size.height * (.25f + index * .25f)
+                line(Offset(size.width * .10f, y), Offset(size.width * .17f, y + size.height * .07f))
+                line(Offset(size.width * .17f, y + size.height * .07f), Offset(size.width * .29f, y - size.height * .08f))
+                line(Offset(size.width * .42f, y), Offset(size.width * .90f, y))
+            }
+
+            IconGlyph.CONNECTED_STEPS -> {
+                line(Offset(size.width * .24f, size.height * .20f), Offset(size.width * .24f, size.height * .80f))
+                repeat(3) { index ->
+                    val y = size.height * (.20f + index * .30f)
+                    drawCircle(tint, size.minDimension * .08f, Offset(size.width * .24f, y), style = Stroke(stroke))
+                    line(Offset(size.width * .42f, y), Offset(size.width * .88f, y))
+                }
             }
 
             IconGlyph.SEND -> {
@@ -428,6 +447,23 @@ internal fun AppIcon(
                 drawCircle(ChatColors.ElevatedStrong, size.minDimension * .06f, Offset(center.x, size.height * .18f))
                 drawCircle(tint, size.minDimension * .10f, Offset(size.width * .82f, center.y))
                 drawCircle(ChatColors.ElevatedStrong, size.minDimension * .06f, Offset(size.width * .82f, center.y))
+            }
+
+            IconGlyph.COPY -> {
+                drawRoundRect(
+                    tint,
+                    Offset(size.width * .30f, size.height * .17f),
+                    Size(size.width * .52f, size.height * .58f),
+                    CornerRadius(size.width * .07f),
+                    style = Stroke(stroke),
+                )
+                drawRoundRect(
+                    tint,
+                    Offset(size.width * .17f, size.height * .30f),
+                    Size(size.width * .52f, size.height * .53f),
+                    CornerRadius(size.width * .07f),
+                    style = Stroke(stroke),
+                )
             }
 
         }

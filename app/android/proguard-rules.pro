@@ -3,3 +3,6 @@
 -keep,allowoptimization public class * implements io.github.ciurlaro.codexmobile.provider.api.CodexMobileProvider {
     public <init>(android.content.Context);
 }
+
+# RaTeX's exported JNI symbols are bound to this exact class and method name.
+-keep class io.ratex.RaTeXEngine { *; }

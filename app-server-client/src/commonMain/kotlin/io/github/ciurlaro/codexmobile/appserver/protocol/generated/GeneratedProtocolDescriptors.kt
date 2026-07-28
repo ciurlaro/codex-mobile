@@ -25,7 +25,7 @@ public interface AppServerMethod<P, R> {
 }
 
 public object AppServerProtocolDescriptors {
-    public const val SCHEMA_SHA256: String = "5c40798d0ea83e14988a6f73e854f905f35df8b8c41c4ac61afb67f8698a4c4f"
+    public const val SCHEMA_SHA256: String = "8039a1222460b3846a3688c61eb4b2626b451d61b9c2b36b83fea0ce341ce0be"
     public val clientRequests: Map<String, AppServerRequestDescriptor> = listOf(
         AppServerRequestDescriptor("account/login/cancel", "CancelLoginAccountParams", "CancelLoginAccountResponse", serialization = "global(\"account-auth\")"),
         AppServerRequestDescriptor("account/login/start", "LoginAccountParams", "LoginAccountResponse", serialization = "global(\"account-auth\")", inspectParams = true),
@@ -36,7 +36,9 @@ public object AppServerProtocolDescriptors {
         AppServerRequestDescriptor("account/sendAddCreditsNudgeEmail", "SendAddCreditsNudgeEmailParams", "SendAddCreditsNudgeEmailResponse", serialization = "global(\"account-auth\")"),
         AppServerRequestDescriptor("account/usage/read", "Unit", "GetAccountTokenUsageResponse", serialization = "None"),
         AppServerRequestDescriptor("account/workspaceMessages/read", "Unit", "GetWorkspaceMessagesResponse", serialization = "None"),
+        AppServerRequestDescriptor("app/installed", "AppsInstalledParams", "AppsInstalledResponse", serialization = "None"),
         AppServerRequestDescriptor("app/list", "AppsListParams", "AppsListResponse", serialization = "None"),
+        AppServerRequestDescriptor("app/read", "AppsReadParams", "AppsReadResponse", serialization = "None"),
         AppServerRequestDescriptor("command/exec", "CommandExecParams", "CommandExecResponse", serialization = "optional_command_process_id(params.process_id)", inspectParams = true),
         AppServerRequestDescriptor("command/exec/resize", "CommandExecResizeParams", "CommandExecResizeResponse", serialization = "command_process_id(params.process_id)"),
         AppServerRequestDescriptor("command/exec/terminate", "CommandExecTerminateParams", "CommandExecTerminateResponse", serialization = "command_process_id(params.process_id)"),
@@ -172,6 +174,8 @@ public object AppServerProtocolDescriptors {
         AppServerNotificationDescriptor("thread/closed", "ThreadClosedNotification"),
         AppServerNotificationDescriptor("thread/compacted", "ContextCompactedNotification"),
         AppServerNotificationDescriptor("thread/deleted", "ThreadDeletedNotification"),
+        AppServerNotificationDescriptor("thread/environment/connected", "EnvironmentConnectionNotification"),
+        AppServerNotificationDescriptor("thread/environment/disconnected", "EnvironmentConnectionNotification"),
         AppServerNotificationDescriptor("thread/goal/cleared", "ThreadGoalClearedNotification"),
         AppServerNotificationDescriptor("thread/goal/updated", "ThreadGoalUpdatedNotification"),
         AppServerNotificationDescriptor("thread/name/updated", "ThreadNameUpdatedNotification"),
@@ -257,11 +261,23 @@ public object AppServerClientMethods {
         override val paramsSerializer: KSerializer<Unit> = Unit.serializer()
         override val responseSerializer: KSerializer<GetWorkspaceMessagesResponse> = GetWorkspaceMessagesResponse.serializer()
     }
+    public data object AppInstalled : AppServerMethod<AppsInstalledParams, AppsInstalledResponse> {
+        override val descriptor: AppServerRequestDescriptor =
+            AppServerProtocolDescriptors.clientRequests.getValue("app/installed")
+        override val paramsSerializer: KSerializer<AppsInstalledParams> = AppsInstalledParams.serializer()
+        override val responseSerializer: KSerializer<AppsInstalledResponse> = AppsInstalledResponse.serializer()
+    }
     public data object AppList : AppServerMethod<AppsListParams, AppsListResponse> {
         override val descriptor: AppServerRequestDescriptor =
             AppServerProtocolDescriptors.clientRequests.getValue("app/list")
         override val paramsSerializer: KSerializer<AppsListParams> = AppsListParams.serializer()
         override val responseSerializer: KSerializer<AppsListResponse> = AppsListResponse.serializer()
+    }
+    public data object AppRead : AppServerMethod<AppsReadParams, AppsReadResponse> {
+        override val descriptor: AppServerRequestDescriptor =
+            AppServerProtocolDescriptors.clientRequests.getValue("app/read")
+        override val paramsSerializer: KSerializer<AppsReadParams> = AppsReadParams.serializer()
+        override val responseSerializer: KSerializer<AppsReadResponse> = AppsReadResponse.serializer()
     }
     public data object CommandExec : AppServerMethod<CommandExecParams, CommandExecResponse> {
         override val descriptor: AppServerRequestDescriptor =

@@ -3,12 +3,18 @@ package io.github.ciurlaro.codexmobile.app.session.agent
 import io.github.ciurlaro.codexmobile.core.AgentElicitation
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentWorkActivity
+import io.github.ciurlaro.codexmobile.core.AgentHookActivity
+import io.github.ciurlaro.codexmobile.core.AgentPlanProgress
 import io.github.ciurlaro.codexmobile.core.SessionId
 
 internal data class CodexSessionState(
     val statusMessage: String = "Starting background session…",
     val streamedText: String = "",
     val streamedReasoning: String = "",
+    val streamedPlan: String = "",
+    val planItemId: String? = null,
+    val planProgress: AgentPlanProgress? = null,
+    val hookActivities: List<AgentHookActivity> = emptyList(),
     val reasoningItemId: String? = null,
     val reasoningSummaryIndex: Long? = null,
     val shellExitCode: Int? = null,

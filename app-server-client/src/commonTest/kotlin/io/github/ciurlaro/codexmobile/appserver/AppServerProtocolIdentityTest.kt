@@ -22,7 +22,7 @@ import kotlinx.serialization.json.jsonPrimitive
 class AppServerProtocolIdentityTest {
     @Test
     fun `client identity is bound to the pinned runtime revision`() {
-        assertEquals("0.144.6", AppServerProtocolIdentity.APP_SERVER_VERSION)
+        assertEquals("0.145.0", AppServerProtocolIdentity.APP_SERVER_VERSION)
         assertEquals(40, AppServerProtocolIdentity.UPSTREAM_REVISION.length)
         assertEquals(64, AppServerProtocolIdentity.SCHEMA_SHA256.length)
         assertEquals(AppServerProtocolIdentity.COMPLETE_SCHEMA_SHA256, AppServerProtocolDescriptors.SCHEMA_SHA256)
@@ -30,9 +30,9 @@ class AppServerProtocolIdentityTest {
 
     @Test
     fun `generated descriptors cover every pinned wire direction`() {
-        assertEquals(87, AppServerProtocolDescriptors.clientRequests.size)
+        assertEquals(89, AppServerProtocolDescriptors.clientRequests.size)
         assertEquals(10, AppServerProtocolDescriptors.serverRequests.size)
-        assertEquals(68, AppServerProtocolDescriptors.serverNotifications.size)
+        assertEquals(70, AppServerProtocolDescriptors.serverNotifications.size)
         assertEquals(setOf("initialized"), AppServerProtocolDescriptors.clientNotifications.keys)
         assertEquals(
             "DynamicToolCallResponse",

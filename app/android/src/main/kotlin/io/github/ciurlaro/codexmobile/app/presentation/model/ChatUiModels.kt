@@ -1,9 +1,12 @@
 package io.github.ciurlaro.codexmobile.app.presentation.model
 
 import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentCollaborationMode
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
+import io.github.ciurlaro.codexmobile.core.AgentHookActivity
+import io.github.ciurlaro.codexmobile.core.AgentPlanProgress
 
 enum class ChatSelector { TAGS, SKILLS, PLUGINS, EFFORT, MODEL, SPEED, APPROVAL }
 
@@ -11,7 +14,11 @@ data class ChatMessage(
     val id: String,
     val role: AgentMessageRole,
     val text: String,
+    val collaborationMode: AgentCollaborationMode = AgentCollaborationMode.DEFAULT,
     val reasoning: String? = null,
+    val plan: String? = null,
+    val planProgress: AgentPlanProgress? = null,
+    val hookActivities: List<AgentHookActivity> = emptyList(),
     val capabilities: Set<AgentCapability> = emptySet(),
     val invocations: List<AgentInvocation> = emptyList(),
     val model: String? = null,

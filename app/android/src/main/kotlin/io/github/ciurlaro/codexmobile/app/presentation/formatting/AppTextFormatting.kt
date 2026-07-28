@@ -21,6 +21,9 @@ internal fun String.normalizeMarkdownTaskLists(): String {
     }
 }
 
+internal fun String.distinctThoughts(): List<String> =
+    split("\n\n").map(String::trim).filter(String::isNotEmpty)
+
 internal fun effortLabel(value: String): String = when (value.lowercase()) {
     "none" -> "None"
     "minimal" -> "Minimal"

@@ -59,6 +59,7 @@ data class AgentPluginReference(
     val name: String,
     val marketplaceName: String,
     val marketplacePath: String? = null,
+    val remotePluginId: String? = null,
 ) {
     val uri: String get() = "plugin://$name@$marketplaceName"
 }
@@ -179,11 +180,17 @@ data class AgentFormField(
     val defaultValue: AgentFormValue? = null,
     val minimum: Double? = null,
     val maximum: Double? = null,
+    val allowOther: Boolean = false,
+    val secret: Boolean = false,
 )
 
 enum class AgentFormFieldType { STRING, NUMBER, INTEGER, BOOLEAN, SINGLE_SELECT, MULTI_SELECT }
 
-data class AgentFormOption(val value: String, val title: String = value)
+data class AgentFormOption(
+    val value: String,
+    val title: String = value,
+    val description: String? = null,
+)
 
 sealed interface AgentFormValue {
     data class Text(val value: String) : AgentFormValue

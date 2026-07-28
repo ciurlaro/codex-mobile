@@ -286,6 +286,6 @@ class CodexRuntimeDeviceTest {
     }
 
     private companion object {
-        const val EXECUTABLE_SHA256 = "09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd"
+        const val EXECUTABLE_SHA256 = "9c5954b50520b68d7d181804965b554f09add95cc8fb0db6a7750111a1296b60"
     }
 }

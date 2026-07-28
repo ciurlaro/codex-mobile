@@ -28,6 +28,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -47,6 +48,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -250,7 +252,9 @@ private fun ExtensionSearchAndActions(state: AppUiState, onEvent: (AppUiEvent) -
             )
         }
         Spacer(Modifier.size(8.dp))
-        ExtensionStatusMenu(state.extensionStatus) { onEvent(AppUiEvent.SelectExtensionStatus(it)) }
+        ExtensionStatusMenu(state.extensionStatus, state.extensionType) {
+            onEvent(AppUiEvent.SelectExtensionStatus(it))
+        }
         Spacer(Modifier.size(8.dp))
         CircleIconButton(
             label = "Manage extension sources",
@@ -261,7 +265,11 @@ private fun ExtensionSearchAndActions(state: AppUiState, onEvent: (AppUiEvent) -
 }
 
 @Composable
-private fun ExtensionStatusMenu(selected: ExtensionStatus, onSelect: (ExtensionStatus) -> Unit) {
+private fun ExtensionStatusMenu(
+    selected: ExtensionStatus,
+    type: ExtensionType,
+    onSelect: (ExtensionStatus) -> Unit,
+) {
     var expanded by remember { mutableStateOf(false) }
     Box {
         Surface(
@@ -281,7 +289,9 @@ private fun ExtensionStatusMenu(selected: ExtensionStatus, onSelect: (ExtensionS
             }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            ExtensionStatus.entries.forEach { status ->
+            ExtensionStatus.entries.filterNot {
+                type == ExtensionType.SKILLS && it == ExtensionStatus.SETUP_PENDING
+            }.forEach { status ->
                 DropdownMenuItem(
                     text = { Text(status.label) },
                     leadingIcon = {
@@ -328,7 +338,7 @@ private fun SkillResults(state: AppUiState, onEvent: (AppUiEvent) -> Unit, modif
     val skills: List<Any> = when (state.extensionStatus) {
         ExtensionStatus.INSTALLED -> state.skills.filterNot { it.scope == AgentSkillScope.PLUGIN }
         ExtensionStatus.UNINSTALLED -> state.availableSkills
-        ExtensionStatus.UNAVAILABLE -> emptyList()
+        ExtensionStatus.SETUP_PENDING, ExtensionStatus.UNAVAILABLE -> emptyList()
     }.filter {
         when (it) {
             is AgentSkill -> it.matches(query)
@@ -355,7 +365,12 @@ private fun PluginResults(state: AppUiState, onEvent: (AppUiEvent) -> Unit, modi
     val query = state.extensionSearch.trim()
     val installedIds = state.installedPlugins.map { it.reference.id }.toSet()
     val plugins = when (state.extensionStatus) {
-        ExtensionStatus.INSTALLED -> state.installedPlugins
+        ExtensionStatus.INSTALLED -> state.installedPlugins.filterNot {
+            it.reference.id in state.pendingPluginIds
+        }
+        ExtensionStatus.SETUP_PENDING -> state.installedPlugins.filter {
+            it.reference.id in state.pendingPluginIds
+        }
         ExtensionStatus.UNINSTALLED, ExtensionStatus.UNAVAILABLE -> state.availablePlugins.filter {
             it.uninstalledStatus(installedIds, state.unavailablePluginIds) == state.extensionStatus
         }
@@ -406,6 +421,7 @@ private fun AvailableSkillCard(skill: AgentSkillPackage, state: AppUiState, onEv
 private fun PluginCard(plugin: AgentPluginSummary, state: AppUiState, onEvent: (AppUiEvent) -> Unit) {
     val operationId = "plugin:${plugin.reference.id}"
     val installed = state.extensionStatus == ExtensionStatus.INSTALLED
+    val setupPending = state.extensionStatus == ExtensionStatus.SETUP_PENDING
     val unavailable = state.extensionStatus == ExtensionStatus.UNAVAILABLE
     ExtensionCard(
         title = plugin.displayName,
@@ -414,26 +430,36 @@ private fun PluginCard(plugin: AgentPluginSummary, state: AppUiState, onEvent: (
         glyph = IconGlyph.PUZZLE,
         actionLabel = when {
             installed -> "Uninstall"
+            setupPending -> "Connect"
             unavailable -> "Unavailable"
             else -> "Install"
         },
         actionStyle = when {
             installed -> ExtensionActionStyle.DANGER
+            setupPending -> ExtensionActionStyle.PRIMARY
             unavailable -> ExtensionActionStyle.DISABLED
             else -> ExtensionActionStyle.PRIMARY
         },
-        busy = state.extensionOperationId == operationId,
-        error = state.actionError(operationId),
+        busy = state.extensionOperationId == operationId || state.extensionOperationId == "connect:${plugin.reference.id}",
+        error = state.actionError(operationId) ?: state.actionError("connect:${plugin.reference.id}"),
         controlsEnabled = state.pluginActionsEnabled && !state.isExtensionMutationLoading && !unavailable,
         onAction = when {
             installed -> {
                 { onEvent(AppUiEvent.RequestUninstallPlugin(plugin.reference, plugin.displayName)) }
+            }
+            setupPending -> {
+                { onEvent(AppUiEvent.ConnectPlugin(plugin.reference)) }
             }
             unavailable -> null
             else -> {
                 { onEvent(AppUiEvent.InstallPlugin(plugin.reference)) }
             }
         },
+        secondaryActionLabel = "Uninstall ${plugin.displayName}".takeIf { setupPending },
+        secondaryActionGlyph = IconGlyph.TRASH.takeIf { setupPending },
+        onSecondaryAction = {
+            onEvent(AppUiEvent.RequestUninstallPlugin(plugin.reference, plugin.displayName))
+        }.takeIf { setupPending },
     )
 }
 
@@ -451,6 +477,9 @@ private fun ExtensionCard(
     error: String?,
     controlsEnabled: Boolean,
     onAction: (() -> Unit)?,
+    secondaryActionLabel: String? = null,
+    secondaryActionGlyph: IconGlyph? = null,
+    onSecondaryAction: (() -> Unit)? = null,
 ) {
     val largeText = LocalDensity.current.fontScale > ACCESSIBILITY_FONT_SCALE
     Surface(
@@ -498,6 +527,16 @@ private fun ExtensionCard(
             if (busy) {
                 CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
             } else {
+                if (secondaryActionLabel != null && secondaryActionGlyph != null && onSecondaryAction != null) {
+                    IconButton(
+                        onClick = onSecondaryAction,
+                        enabled = controlsEnabled,
+                        modifier = Modifier.size(40.dp).semantics { contentDescription = secondaryActionLabel },
+                    ) {
+                        AppIcon(secondaryActionGlyph, Modifier.size(20.dp), ChatColors.Danger)
+                    }
+                    Spacer(Modifier.size(4.dp))
+                }
                 Button(
                     onClick = { onAction?.invoke() },
                     enabled = controlsEnabled && onAction != null,
@@ -612,6 +651,7 @@ internal fun extensionPageSize(availableHeightDp: Float): Int =
 private fun emptyMessage(state: AppUiState, query: String): String = when {
     query.isNotEmpty() -> "No extensions match “$query”"
     state.extensionStatus == ExtensionStatus.INSTALLED -> "No installed ${state.extensionType.label.lowercase()}"
+    state.extensionStatus == ExtensionStatus.SETUP_PENDING -> "No plugins awaiting setup"
     state.extensionStatus == ExtensionStatus.UNINSTALLED -> "No ${state.extensionType.label.lowercase()} available to install"
     else -> "No unavailable ${state.extensionType.label.lowercase()}"
 }

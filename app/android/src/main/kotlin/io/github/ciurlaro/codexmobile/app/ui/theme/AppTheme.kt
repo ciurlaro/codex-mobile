@@ -21,6 +21,9 @@ internal object ChatColors {
     val SkillAccent = Color(0xFFA78BFA)
     val PluginAccent = Color(0xFF58C77B)
     val CodeAccent = Color(0xFF58C77B)
+    val PlanAccent = Color(0xFFFFA94D)
+    val MathAccent = Color(0xFFFFCF5C)
+    val ThoughtAccent = Color(0xFFA78BFA)
     val Danger = Color(0xFFFF7A83)
     val Scrim = Color(0x99000000)
 }

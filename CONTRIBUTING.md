@@ -1,6 +1,6 @@
 # Contributing
 
-Open an issue or pull request against the default branch. Keep changes focused, preserve Codex App Server `0.144.6`, and run the repository verification commands when practical; GitHub Actions is the authoritative full build.
+Open an issue or pull request against the default branch. Keep changes focused, preserve Codex App Server `0.145.0`, and run the repository verification commands when practical; GitHub Actions is the authoritative full build.
 
 Ordinary Codex plugins remain external. Android provider implementations are reviewed in `ciurlaro/codex-mobile-plugins`; this repository owns the generic host contract, provenance policy, lifecycle, authority checks, and thin base-app feature wrappers.
 

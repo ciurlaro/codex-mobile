@@ -56,14 +56,17 @@ class MainActivity : ComponentActivity() {
             var pendingWorkspaceSelection by rememberSaveable { mutableStateOf(false) }
             var openedSignInUrl by rememberSaveable { mutableStateOf<String?>(null) }
             var openedConnectorUrl by rememberSaveable { mutableStateOf<String?>(null) }
+            val signInAuthentication = rememberLauncherForActivityResult(
+                ActivityResultContracts.StartActivityForResult(),
+            ) { result ->
+                if (result.resultCode != RESULT_OK && !state.isAuthenticated) viewModel.browserUnavailable()
+            }
             fun openSignIn(rawUrl: String?) {
                 val signInUri = rawUrl?.toOfficialSignInUri()
                 if (signInUri == null) {
                     viewModel.browserUnavailable()
                 } else {
-                    runCatching {
-                        startActivity(Intent(Intent.ACTION_VIEW, signInUri))
-                    }.onFailure { viewModel.browserUnavailable() }
+                    signInAuthentication.launch(ConnectorAuthActivity.intent(this@MainActivity, signInUri.toString()))
                 }
             }
             val legacyStoragePermission = rememberLauncherForActivityResult(
@@ -76,22 +79,18 @@ class MainActivity : ComponentActivity() {
             }
             val connectorAuthentication = rememberLauncherForActivityResult(
                 ActivityResultContracts.StartActivityForResult(),
-            ) { result ->
+            ) {
                 openedConnectorUrl = null
-                viewModel.connectorAuthenticationFinished(result.resultCode == RESULT_OK)
+                viewModel.connectorAuthenticationReturned()
             }
             val elicitationAuthentication = rememberLauncherForActivityResult(
                 ActivityResultContracts.StartActivityForResult(),
             ) { result ->
-                state.pendingElicitation?.let { elicitation ->
+                if (result.resultCode != RESULT_OK) state.pendingElicitation?.let { elicitation ->
                     viewModel.resolveElicitation(
                         elicitation.requestId,
                         io.github.ciurlaro.codexmobile.core.AgentElicitationResponse(
-                            if (result.resultCode == RESULT_OK) {
-                                io.github.ciurlaro.codexmobile.core.AgentElicitationAction.ACCEPT
-                            } else {
-                                io.github.ciurlaro.codexmobile.core.AgentElicitationAction.CANCEL
-                            },
+                            io.github.ciurlaro.codexmobile.core.AgentElicitationAction.CANCEL,
                         ),
                     )
                 }
@@ -107,19 +106,14 @@ class MainActivity : ComponentActivity() {
                 if (url != null && url != openedConnectorUrl) {
                     openedConnectorUrl = url
                     connectorAuthentication.launch(
-                        ConnectorAuthActivity.intent(
-                            this@MainActivity,
-                            url,
-                            checkNotNull(state.connectorAuthName),
-                            state.mcpServers.any { it.name == state.connectorAuthName },
-                        ),
+                        ConnectorAuthActivity.intent(this@MainActivity, url),
                     )
                 }
             }
             LaunchedEffect(state.pendingElicitation?.requestId) {
                 state.pendingElicitation?.url?.let { url ->
                     elicitationAuthentication.launch(
-                        ConnectorAuthActivity.elicitationIntent(this@MainActivity, url),
+                        ConnectorAuthActivity.intent(this@MainActivity, url),
                     )
                 }
             }
@@ -163,6 +157,11 @@ class MainActivity : ComponentActivity() {
                         AppUiEvent.StartNewChat -> viewModel.startNewChat()
                         AppUiEvent.OpenSettings -> viewModel.openSettings()
                         AppUiEvent.CloseSettings -> viewModel.closeSettings()
+                        AppUiEvent.OpenHooks -> viewModel.openHooks()
+                        AppUiEvent.CloseHooks -> viewModel.closeHooks()
+                        AppUiEvent.RefreshHooks -> viewModel.refreshHooks()
+                        is AppUiEvent.ToggleHook -> viewModel.setHookEnabled(event.hook, event.enabled)
+                        is AppUiEvent.TrustHook -> viewModel.trustHook(event.hook)
                         is AppUiEvent.OpenExtensions ->
                             viewModel.openExtensions(event.type, event.returnScreen)
                         AppUiEvent.CloseExtensions -> viewModel.closeExtensions()
@@ -172,6 +171,12 @@ class MainActivity : ComponentActivity() {
                         is AppUiEvent.OpenSelector -> viewModel.openSelector(event.selector)
                         AppUiEvent.DismissSelector -> viewModel.dismissSelector()
                         AppUiEvent.Send -> if (viewModel.sendMessage() == SendMessageOutcome.WORKSPACE_REQUIRED) {
+                            showWorkspaceRequired = true
+                        }
+                        AppUiEvent.TogglePlanMode -> viewModel.togglePlanMode()
+                        AppUiEvent.ProceedWithPlan -> if (
+                            viewModel.proceedWithPlan() == SendMessageOutcome.WORKSPACE_REQUIRED
+                        ) {
                             showWorkspaceRequired = true
                         }
                         AppUiEvent.Stop -> viewModel.cancelTurn()
@@ -217,6 +222,7 @@ class MainActivity : ComponentActivity() {
                         is AppUiEvent.InstallSkill -> viewModel.installSkill(event.skill)
                         is AppUiEvent.RequestUninstallSkill -> viewModel.requestUninstallSkill(event.skill)
                         is AppUiEvent.InstallPlugin -> viewModel.installPlugin(event.plugin)
+                        is AppUiEvent.ConnectPlugin -> viewModel.connectPlugin(event.plugin)
                         is AppUiEvent.RequestUninstallPlugin ->
                             viewModel.requestUninstallPlugin(event.plugin, event.displayName)
                         AppUiEvent.ConfirmExtensionRemoval -> viewModel.confirmExtensionRemoval()

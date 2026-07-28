@@ -38,7 +38,7 @@ def dependencies() -> list[tuple[str, str, str]]:
 def generate() -> str:
     version = prop("codexMobile.versionName", r".+")
     provider_revision = prop("codexMobile.providerRevision", r"[0-9a-f]{40}")
-    codex_version = prop("codexMobile.codexVersion", r"0\.144\.6")
+    codex_version = prop("codexMobile.codexVersion", r"0\.145\.0")
     archive_hash = prop("codexMobile.codexArchiveSha256", r"[0-9a-f]{64}")
     binary_hash = prop("codexMobile.codexBinarySha256", r"[0-9a-f]{64}")
     app_ref = f"pkg:generic/codex-mobile@{version}?platform=android"
