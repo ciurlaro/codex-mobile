@@ -2,6 +2,9 @@ package io.github.ciurlaro.codexmobile.agent.codex
 
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.PluginListResponse
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.McpServerElicitationRequestParams
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.ToolRequestUserInputOption
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.ToolRequestUserInputParams
+import io.github.ciurlaro.codexmobile.appserver.protocol.generated.ToolRequestUserInputQuestion
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputMentionUserInput
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputSkillUserInput
 import io.github.ciurlaro.codexmobile.appserver.protocol.generated.UserInputTextUserInput
@@ -39,6 +42,8 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+
+private const val REMOTE_PLUGIN_ID = "plugin_asdk_app_69a1d78e929881919bba0dbda1f6436d"
 
 class SkillsPluginsProtocolTest {
     @Test
@@ -145,7 +150,7 @@ class SkillsPluginsProtocolTest {
                 "plugin/uninstall" -> { events += "plugin-uninstall"; server.respond(message.id, buildJsonObject {}) }
             }
         }
-        val reference = AgentPluginReference("sample@catalog", "sample", "catalog")
+        val reference = AgentPluginReference("sample@catalog", "sample", "catalog", "/marketplace")
 
         val result = CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000, providerHost = provider).use { client ->
             client.installPlugin(reference)
@@ -189,7 +194,7 @@ class SkillsPluginsProtocolTest {
         }
 
         CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000, providerHost = provider).use { client ->
-            client.installPlugin(AgentPluginReference("sample@catalog", "sample", "catalog"))
+            client.installPlugin(AgentPluginReference("sample@catalog", "sample", "catalog", "/marketplace"))
         }
 
         assertEquals(listOf("provider-install", "mcp-disable", "mcp-disable", "provider-complete"), events)
@@ -254,7 +259,14 @@ class SkillsPluginsProtocolTest {
             builtInToolDispatcher = dispatcher,
             providerHost = provider,
         ).use { client ->
-            client.installPlugin(AgentPluginReference("drive@openai-curated", "drive", "openai-curated"))
+            client.installPlugin(
+                AgentPluginReference(
+                    "drive@openai-curated",
+                    "drive",
+                    "openai-curated",
+                    remotePluginId = REMOTE_PLUGIN_ID,
+                ),
+            )
             client.openSession(settings = AgentRuntimeSettings(workingDirectory = "/workspace"))
         }
 
@@ -290,7 +302,7 @@ class SkillsPluginsProtocolTest {
             requestTimeoutMillis = 1_000,
             providerHost = provider,
         ).use { client ->
-            client.uninstallPlugin(AgentPluginReference("sample@catalog", "sample", "catalog"))
+            client.uninstallPlugin(AgentPluginReference("sample@catalog", "sample", "catalog", "/marketplace"))
         }
 
         assertFalse(result.completed)
@@ -302,7 +314,7 @@ class SkillsPluginsProtocolTest {
     fun `prepared provider removal resumes after restart without delaying installed plugins`(): Unit = runBlocking {
         val events = mutableListOf<String>()
         val removed = CountDownLatch(1)
-        val reference = AgentPluginReference("drive@openai-curated", "drive", "openai-curated")
+        val reference = AgentPluginReference("drive@openai-curated", "drive", "openai-curated", "/marketplace")
         val provider = object : PluginProviderHost {
             override suspend fun install(plugin: AgentPluginReference, mcpServerNames: Set<String>) =
                 ProviderInstallDisposition.NOT_REQUIRED
@@ -335,7 +347,7 @@ class SkillsPluginsProtocolTest {
 
     @Test
     fun `pending provider install completes immediately after restart authentication`(): Unit = runBlocking {
-        val reference = AgentPluginReference("drive@openai-curated", "drive", "openai-curated")
+        val reference = AgentPluginReference("drive@openai-curated", "drive", "openai-curated", "/marketplace")
         val completed = CountDownLatch(1)
         val provider = object : PluginProviderHost {
             override suspend fun install(plugin: AgentPluginReference, mcpServerNames: Set<String>) =
@@ -423,10 +435,39 @@ class SkillsPluginsProtocolTest {
     }
 
     @Test
+    fun `maps plan questions to selectable mobile form fields`() {
+        val elicitation = parseUserInputRequest(
+            "9",
+            ToolRequestUserInputParams(
+                itemId = "item-1",
+                threadId = "thread-1",
+                turnId = "turn-1",
+                questions = listOf(
+                    ToolRequestUserInputQuestion(
+                        header = "Dates",
+                        id = "dates",
+                        question = "Are your dates flexible?",
+                        isOther = true,
+                        options = listOf(ToolRequestUserInputOption("Any week works", "Flexible")),
+                    ),
+                ),
+            ),
+        )
+
+        val field = elicitation.form!!.single()
+        assertEquals(AgentFormFieldType.SINGLE_SELECT, field.type)
+        assertEquals("Any week works", field.options.single().description)
+        assertTrue(field.allowOther)
+    }
+
+    @Test
     fun `uses pinned app server capability endpoints`(): Unit = runBlocking {
         val methods = mutableListOf<String>()
         var skillWrite: Boolean? = null
         var pluginWrite: String? = null
+        var pluginReadName: String? = null
+        var pluginInstallName: String? = null
+        var pluginUninstallId: String? = null
         val process = FakeCodexRuntime { message, server ->
             message.method?.let(methods::add)
             when (message.method) {
@@ -443,15 +484,24 @@ class SkillsPluginsProtocolTest {
                 }
                 "plugin/list" -> server.respond(message.id, pluginList(installed = false))
                 "plugin/installed" -> server.respond(message.id, pluginList(installed = true))
-                "plugin/read" -> server.respond(message.id, pluginDetail())
-                "plugin/install" -> server.respond(
-                    message.id,
-                    buildJsonObject {
-                        put("authPolicy", "ON_INSTALL")
-                        putJsonArray("appsNeedingAuth") { add(connector()) }
-                    },
-                )
-                "plugin/uninstall" -> server.respond(message.id, buildJsonObject {})
+                "plugin/read" -> {
+                    pluginReadName = message.objectValue["params"]!!.jsonObject["pluginName"]!!.jsonPrimitive.content
+                    server.respond(message.id, pluginDetail())
+                }
+                "plugin/install" -> {
+                    pluginInstallName = message.objectValue["params"]!!.jsonObject["pluginName"]!!.jsonPrimitive.content
+                    server.respond(
+                        message.id,
+                        buildJsonObject {
+                            put("authPolicy", "ON_INSTALL")
+                            putJsonArray("appsNeedingAuth") { add(connector()) }
+                        },
+                    )
+                }
+                "plugin/uninstall" -> {
+                    pluginUninstallId = message.objectValue["params"]!!.jsonObject["pluginId"]!!.jsonPrimitive.content
+                    server.respond(message.id, buildJsonObject {})
+                }
                 "config/value/write" -> {
                     pluginWrite = message.objectValue["params"]!!.jsonObject["keyPath"]!!.jsonPrimitive.content
                     server.respond(message.id, buildJsonObject {})
@@ -497,6 +547,9 @@ class SkillsPluginsProtocolTest {
             assertEquals("https://accounts.example.com/oauth", client.startMcpOauth("drive"))
             assertEquals(true, skillWrite)
             assertEquals("plugins.drive@openai-curated.enabled", pluginWrite)
+            assertEquals(REMOTE_PLUGIN_ID, pluginReadName)
+            assertEquals(REMOTE_PLUGIN_ID, pluginInstallName)
+            assertEquals(REMOTE_PLUGIN_ID, pluginUninstallId)
             listOf("skills/list", "plugin/list", "plugin/installed", "plugin/read", "plugin/install", "app/list")
                 .forEach { assertTrue(it in methods) }
         } finally {
@@ -725,6 +778,7 @@ class SkillsPluginsProtocolTest {
         val plugins = parsePluginMarketplaces(response.marketplaces)
 
         assertEquals("team-catalog", plugins.single().reference.marketplaceName)
+        assertEquals(REMOTE_PLUGIN_ID, plugins.single().reference.remotePluginId)
     }
 
     @Test
@@ -742,11 +796,15 @@ class SkillsPluginsProtocolTest {
 
         CodexAgentClient({ runtime }, requestTimeoutMillis = 1_000).use { client ->
             client.readPlugin(AgentPluginReference("local@catalog", "local", "catalog", "/marketplace"))
-            client.readPlugin(AgentPluginReference("remote@catalog", "remote", "catalog"))
+            client.readPlugin(
+                AgentPluginReference("remote@catalog", "remote", "catalog", remotePluginId = REMOTE_PLUGIN_ID),
+            )
         }
 
         assertEquals(setOf("pluginName", "marketplacePath"), requests[0].keys)
         assertEquals(setOf("pluginName", "remoteMarketplaceName"), requests[1].keys)
+        assertEquals("local", requests[0]["pluginName"]!!.jsonPrimitive.content)
+        assertEquals(REMOTE_PLUGIN_ID, requests[1]["pluginName"]!!.jsonPrimitive.content)
     }
 
     @Test
@@ -768,7 +826,9 @@ class SkillsPluginsProtocolTest {
         val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
             val error = runCatching {
-                client.installPlugin(AgentPluginReference("missing@remote", "missing", "remote"))
+                client.installPlugin(
+                    AgentPluginReference("missing@remote", "missing", "remote", remotePluginId = REMOTE_PLUGIN_ID),
+                )
             }.exceptionOrNull()
 
             assertEquals("missing@remote", assertIs<AgentPluginUnavailableException>(error).pluginId)
@@ -811,6 +871,7 @@ class SkillsPluginsProtocolTest {
 
     private fun pluginSummary(installed: Boolean, marketplace: String = "openai-curated") = buildJsonObject {
         put("id", "drive@$marketplace")
+        put("remotePluginId", REMOTE_PLUGIN_ID)
         put("name", "drive")
         put("installed", installed)
         put("enabled", true)

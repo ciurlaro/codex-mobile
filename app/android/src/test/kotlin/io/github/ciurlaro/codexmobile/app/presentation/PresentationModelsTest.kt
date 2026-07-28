@@ -3,8 +3,10 @@ package io.github.ciurlaro.codexmobile.app.presentation
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.AnnotatedString
 import io.github.ciurlaro.codexmobile.app.presentation.formatting.effortLabel
+import io.github.ciurlaro.codexmobile.app.presentation.formatting.distinctThoughts
 import io.github.ciurlaro.codexmobile.app.presentation.formatting.normalizeMarkdownTaskLists
 import io.github.ciurlaro.codexmobile.app.presentation.input.shellCommandOrNull
+import io.github.ciurlaro.codexmobile.app.presentation.input.planCommandOrNull
 import io.github.ciurlaro.codexmobile.app.presentation.invocation.promptInvocation
 import io.github.ciurlaro.codexmobile.app.presentation.invocation.suggestedInvocations
 import io.github.ciurlaro.codexmobile.app.presentation.invocation.withRecentInvocation
@@ -15,27 +17,34 @@ import io.github.ciurlaro.codexmobile.app.presentation.model.OPENAI_PLUGIN_SOURC
 import io.github.ciurlaro.codexmobile.app.presentation.model.CustomExtensionSource
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSourceSelection
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionStatus
+import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionNotice
 import io.github.ciurlaro.codexmobile.app.presentation.model.PluginCatalogStatus
 import io.github.ciurlaro.codexmobile.app.presentation.model.canonicalPluginSourceId
+import io.github.ciurlaro.codexmobile.app.presentation.model.afterExpiry
 import io.github.ciurlaro.codexmobile.app.presentation.model.enabledMarketplaceNames
 import io.github.ciurlaro.codexmobile.app.presentation.model.extensionSourceItems
 import io.github.ciurlaro.codexmobile.app.presentation.model.groupedByPins
 import io.github.ciurlaro.codexmobile.app.presentation.model.initialExtensionSourceSelection
+import io.github.ciurlaro.codexmobile.app.presentation.model.reconcilePendingPluginSetups
 import io.github.ciurlaro.codexmobile.app.presentation.model.uninstalledStatus
 import io.github.ciurlaro.codexmobile.app.presentation.state.withStreamingAssistant
 import io.github.ciurlaro.codexmobile.app.presentation.state.withSubmittedTurn
+import io.github.ciurlaro.codexmobile.app.presentation.state.withNewChat
 import io.github.ciurlaro.codexmobile.app.presentation.state.withoutConversation
 import io.github.ciurlaro.codexmobile.app.presentation.state.connectorsNeedingOnUseAuthentication
 import io.github.ciurlaro.codexmobile.app.presentation.validation.isValidElicitationAnswer
 import io.github.ciurlaro.codexmobile.app.ui.chat.shellCommandVisualTransformation
+import io.github.ciurlaro.codexmobile.app.ui.chat.planCommandVisualTransformation
 import io.github.ciurlaro.codexmobile.app.ui.extensions.extensionPageSize
 import io.github.ciurlaro.codexmobile.app.ui.extensions.pageTokens
 import io.github.ciurlaro.codexmobile.app.ui.extensions.pluginEmptyMessage
 import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentCollaborationMode
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentConnector
 import io.github.ciurlaro.codexmobile.core.AgentFormField
 import io.github.ciurlaro.codexmobile.core.AgentFormFieldType
+import io.github.ciurlaro.codexmobile.core.AgentFormOption
 import io.github.ciurlaro.codexmobile.core.AgentFormValue
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentPluginAuthPolicy
@@ -132,6 +141,7 @@ class PresentationModelsTest {
 
         assertEquals(ExtensionStatus.UNINSTALLED, plugin.uninstalledStatus(emptySet(), emptySet()))
         assertEquals("Market", ExtensionStatus.UNINSTALLED.label)
+        assertEquals("Setup pending", ExtensionStatus.SETUP_PENDING.label)
         assertEquals(ExtensionStatus.UNAVAILABLE, plugin.uninstalledStatus(emptySet(), setOf("documents")))
         assertEquals(null, plugin.uninstalledStatus(setOf("documents"), emptySet()))
         assertEquals(4, extensionPageSize(420f))
@@ -154,6 +164,14 @@ class PresentationModelsTest {
     }
 
     @Test
+    fun distinctThoughtsPreserveTheirOwnContent() {
+        assertEquals(
+            listOf("Inspecting files", "Comparing\nresults", "Writing answer"),
+            "Inspecting files\n\nComparing\nresults\n\n\nWriting answer".distinctThoughts(),
+        )
+    }
+
+    @Test
     fun plusPickerUsesTheTypedCapabilityCatalog() {
         assertEquals("web_search", AgentCapability.WEB_SEARCH.id)
         assertEquals("Web search", AgentCapability.WEB_SEARCH.displayLabel)
@@ -165,6 +183,18 @@ class PresentationModelsTest {
         assertEquals("", "!".shellCommandOrNull())
         assertEquals(null, "show !help".shellCommandOrNull())
         assertEquals(null, " !ls".shellCommandOrNull())
+    }
+
+    @Test
+    fun planShortcutIsLeadingCaseInsensitiveAndKeepsItsPrompt() {
+        assertEquals("Design the fix", "/PLAN  Design the fix".planCommandOrNull()?.prompt)
+        assertEquals("", "/plan".planCommandOrNull()?.prompt)
+        assertEquals(null, "use /plan here".planCommandOrNull())
+        assertEquals(null, "/planner".planCommandOrNull())
+
+        val transformed = planCommandVisualTransformation.filter(AnnotatedString("/plan inspect"))
+        assertEquals("/plan inspect", transformed.text.text)
+        assertEquals(Color(0xFFFFA94D), transformed.text.spanStyles.single().item.color)
     }
 
     @Test
@@ -237,6 +267,22 @@ class PresentationModelsTest {
         assertEquals(emptySet(), removed.pinnedConversationIds)
         assertEquals(null, removed.sessionId)
         assertEquals("Conversation deleted", removed.statusMessage)
+    }
+
+    @Test
+    fun planTurnsStayMarkedAndNewChatsReturnToDefaultMode() {
+        val planned = AppUiState(collaborationMode = AgentCollaborationMode.PLAN).withSubmittedTurn(
+            request = AgentTurnRequest(
+                prompt = "Plan a trip",
+                clientMessageId = "codex-mobile:plan:test",
+                collaborationMode = AgentCollaborationMode.PLAN,
+            ),
+            assistantMessageId = "assistant",
+            shellCommand = null,
+        )
+
+        assertEquals(AgentCollaborationMode.PLAN, planned.messages.first().collaborationMode)
+        assertEquals(AgentCollaborationMode.DEFAULT, planned.withNewChat().collaborationMode)
     }
 
     @Test
@@ -344,6 +390,16 @@ class PresentationModelsTest {
         assertFalse(isValidElicitationAnswer(integer, AgentFormValue.Number(3.5)))
         assertFalse(isValidElicitationAnswer(integer, AgentFormValue.Number(6.0)))
         assertFalse(isValidElicitationAnswer(integer, AgentFormValue.Text("3")))
+
+        val choice = AgentFormField(
+            name = "dates",
+            title = "Dates",
+            required = true,
+            type = AgentFormFieldType.SINGLE_SELECT,
+            options = listOf(AgentFormOption("fixed")),
+            allowOther = true,
+        )
+        assertTrue(isValidElicitationAnswer(choice, AgentFormValue.Text("another week")))
     }
 
     @Test
@@ -369,6 +425,56 @@ class PresentationModelsTest {
             selectedInvocations = listOf(AgentInvocation.Plugin("drive", plugin.reference.uri)),
             installedPlugins = listOf(plugin),
             connectors = listOf(disconnected, unrelated),
+        )
+
+        assertEquals(listOf(disconnected), state.connectorsNeedingOnUseAuthentication())
+    }
+
+    @Test
+    fun pendingPluginSetupSurvivesRestartUntilEveryConnectorIsAccessible() {
+        val pending = mapOf("drive" to setOf("account", "files"), "removed" to setOf("legacy"))
+        val connectors = listOf(
+            AgentConnector("account", "Account", isAccessible = true),
+            AgentConnector("files", "Files", installUrl = "https://example.com/connect"),
+        )
+
+        assertEquals(
+            mapOf("drive" to setOf("files")),
+            reconcilePendingPluginSetups(pending, connectors, installedPluginIds = setOf("drive")),
+        )
+    }
+
+    @Test
+    fun expiringNoticeCannotClearANewerNotice() {
+        val old = ExtensionNotice("Installed")
+        val current = ExtensionNotice("Setup still required", isError = true)
+
+        assertEquals(null, old.afterExpiry(old))
+        assertEquals(current, current.afterExpiry(old))
+    }
+
+    @Test
+    fun pendingOnInstallConnectorBlocksUseUntilItIsConnected() {
+        val plugin = AgentPluginSummary(
+            reference = AgentPluginReference("drive@openai-curated", "drive", "openai-curated"),
+            displayName = "Drive",
+            description = "Drive files",
+            installed = true,
+            enabled = true,
+            installPolicy = AgentPluginInstallPolicy.AVAILABLE,
+            authPolicy = AgentPluginAuthPolicy.ON_INSTALL,
+            available = true,
+        )
+        val disconnected = AgentConnector(
+            "account",
+            "OpenAI account",
+            installUrl = "https://example.com/connect",
+        )
+        val state = AppUiState(
+            selectedInvocations = listOf(AgentInvocation.Plugin("drive", plugin.reference.uri)),
+            installedPlugins = listOf(plugin),
+            connectors = listOf(disconnected),
+            pendingPluginSetups = mapOf(plugin.reference.id to setOf(disconnected.id)),
         )
 
         assertEquals(listOf(disconnected), state.connectorsNeedingOnUseAuthentication())

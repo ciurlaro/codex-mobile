@@ -34,6 +34,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -54,6 +55,7 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -68,6 +70,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
+import io.github.ciurlaro.codexmobile.app.R
 import io.github.ciurlaro.codexmobile.app.presentation.event.AppUiEvent
 import io.github.ciurlaro.codexmobile.app.presentation.state.AppUiState
 import io.github.ciurlaro.codexmobile.app.presentation.model.groupedByPins
@@ -250,7 +253,12 @@ internal fun HistoryDrawer(
                     .background(ChatColors.ElevatedStrong, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("CM", color = ChatColors.Primary, fontWeight = FontWeight.SemiBold)
+                Icon(
+                    painter = painterResource(R.drawable.ic_codex_status),
+                    contentDescription = null,
+                    tint = ChatColors.Primary,
+                    modifier = Modifier.size(24.dp),
+                )
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {

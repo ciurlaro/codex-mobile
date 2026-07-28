@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "io.github.ciurlaro.codexmobile"
-version = "0.144.6-1"
+version = "0.145.0-1"
 
 dependencyLocking { lockAllConfigurations() }
 
@@ -34,7 +34,7 @@ val protocolProvenance = layout.projectDirectory.file("protocol/provenance.json"
 val verifyProtocolSource = tasks.register("verifyProtocolSource") {
     notCompatibleWithConfigurationCache("Reads and hashes pinned protocol provenance directly")
     inputs.files(protocolSchema, completeProtocolSchema, protocolProvenance)
-    inputs.property("expectedSha256", "007e12d25541eb0a50bc778dfcff9e6ab88b3124c9425c4e8f79391d3538bec0")
+    inputs.property("expectedSha256", "32b26f2ab3fb7a4a409db958f438f48b0ef106e3a01468f8618fdf65bc823cc4")
     doLast {
         fun File.sha256(): String = inputStream().use { input ->
             val digest = MessageDigest.getInstance("SHA-256")
@@ -50,7 +50,7 @@ val verifyProtocolSource = tasks.register("verifyProtocolSource") {
         check(actual == inputs.properties.getValue("expectedSha256")) {
             "Pinned App Server protocol schema digest changed: $actual"
         }
-        check(completeProtocolSchema.asFile.sha256() == "5c40798d0ea83e14988a6f73e854f905f35df8b8c41c4ac61afb67f8698a4c4f") {
+        check(completeProtocolSchema.asFile.sha256() == "8039a1222460b3846a3688c61eb4b2626b451d61b9c2b36b83fea0ce341ce0be") {
             "Pinned complete App Server protocol schema digest changed"
         }
         @Suppress("UNCHECKED_CAST")

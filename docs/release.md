@@ -7,7 +7,7 @@
 - Android **All files access** plus one selected shared-storage directory used as each turn's starting `cwd`.
 - Standard GitHub marketplace plugins and the bundled official Android providers.
 - Ordinary shell work through App Server, four approval policies, model speed tiers, and foreground execution.
-- Typed mutations under Auto review fall back to explicit one-use user approval on App Server `0.144.6`.
+- Typed mutations under Auto review fall back to explicit one-use user approval on App Server `0.145.0`.
 
 The host release checks out the exact `codexMobile.providerRevision` and bundles its Documents and Telegram libraries in the base APK. A full APK update removes legacy provider splits while preserving application data.
 
@@ -46,7 +46,7 @@ The command verifies the signed release, performs a full in-place update with `a
 
 | Input | Pinned evidence |
 |---|---|
-| Codex App Server | `0.144.6`; archive SHA-256 `3539380f431aa72ce1e9ba83cf4d9b2c2a70d12ddf3280bc67c8c59f93bb9eb5`; ARM64 payload SHA-256 `09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd` |
+| Codex App Server | `0.145.0`; archive SHA-256 `3a185f6a1e2ec3ce7ebe9ea5ab23a81bfab75470337e66e235b881ca40ac8932`; ARM64 payload SHA-256 `9c5954b50520b68d7d181804965b554f09add95cc8fb0db6a7750111a1296b60` |
 | Gradle | Wrapper/distribution `9.4.1` with checksums in `gradle/wrapper` |
 | Dependencies | Strict lock files and `gradle/verification-metadata.xml` |
 | Inventory | Deterministic CycloneDX 1.6 `docs/sbom.cdx.json`, checked by `scripts/generate-sbom.py --check` |

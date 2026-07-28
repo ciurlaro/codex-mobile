@@ -39,10 +39,10 @@ public data class AccountChatgptAccount(
 
 @Serializable
 public data class AccountAmazonBedrockAccount(
-    @SerialName("credentialSource")
-    public val credentialSource: AmazonBedrockCredentialSource? = null,
     @SerialName("type")
     public val type: String = "amazonBedrock",
+    @SerialName("usesCodexManagedCredentials")
+    public val usesCodexManagedCredentials: Boolean? = null,
 ) : Account {
     init { require(type == "amazonBedrock") }
 }
@@ -208,12 +208,6 @@ public object AgentMessageInputContentSerializer : JsonContentPolymorphicSeriali
 }
 
 public typealias AgentPath = String
-
-@Serializable
-public enum class AmazonBedrockCredentialSource {
-    @SerialName("codexManaged") CODEX_MANAGED,
-    @SerialName("awsManaged") AWS_MANAGED,
-}
 
 public typealias AnalyticsConfig = JsonElement
 
@@ -394,6 +388,16 @@ public data class AppToolConfig(
 )
 
 @Serializable
+public data class AppToolSummary(
+    @SerialName("description")
+    public val description: String,
+    @SerialName("name")
+    public val name: String,
+    @SerialName("title")
+    public val title: String? = null,
+)
+
+@Serializable
 public class AppToolsConfig
 
 @Serializable
@@ -444,6 +448,20 @@ public data class AppsDefaultConfig(
 )
 
 @Serializable
+public data class AppsInstalledParams(
+    @SerialName("forceRefresh")
+    public val forceRefresh: Boolean? = null,
+    @SerialName("threadId")
+    public val threadId: String? = null,
+)
+
+@Serializable
+public data class AppsInstalledResponse(
+    @SerialName("apps")
+    public val apps: List<InstalledApp>,
+)
+
+@Serializable
 public data class AppsListParams(
     @SerialName("cursor")
     public val cursor: String? = null,
@@ -461,6 +479,22 @@ public data class AppsListResponse(
     public val data: List<AppInfo>,
     @SerialName("nextCursor")
     public val nextCursor: String? = null,
+)
+
+@Serializable
+public data class AppsReadParams(
+    @SerialName("appIds")
+    public val appIds: List<String>,
+    @SerialName("includeTools")
+    public val includeTools: Boolean? = null,
+)
+
+@Serializable
+public data class AppsReadResponse(
+    @SerialName("apps")
+    public val apps: List<ConnectorMetadata>,
+    @SerialName("missingAppIds")
+    public val missingAppIds: List<String>,
 )
 
 public typealias AskForApproval = JsonElement
@@ -1017,6 +1051,18 @@ public data class ClientRequestPluginShareDeleteRequest(
 }
 
 @Serializable
+public data class ClientRequestAppReadRequest(
+    @SerialName("id")
+    public val id: RequestId,
+    @SerialName("params")
+    public val params: AppsReadParams,
+    @SerialName("method")
+    public val method: String = "app/read",
+) : ClientRequest {
+    init { require(method == "app/read") }
+}
+
+@Serializable
 public data class ClientRequestAppListRequest(
     @SerialName("id")
     public val id: RequestId,
@@ -1026,6 +1072,18 @@ public data class ClientRequestAppListRequest(
     public val method: String = "app/list",
 ) : ClientRequest {
     init { require(method == "app/list") }
+}
+
+@Serializable
+public data class ClientRequestAppInstalledRequest(
+    @SerialName("id")
+    public val id: RequestId,
+    @SerialName("params")
+    public val params: AppsInstalledParams,
+    @SerialName("method")
+    public val method: String = "app/installed",
+) : ClientRequest {
+    init { require(method == "app/installed") }
 }
 
 @Serializable
@@ -1667,7 +1725,9 @@ public object ClientRequestSerializer : JsonContentPolymorphicSerializer<ClientR
             "plugin/share/list" -> ClientRequestPluginShareListRequest.serializer()
             "plugin/share/checkout" -> ClientRequestPluginShareCheckoutRequest.serializer()
             "plugin/share/delete" -> ClientRequestPluginShareDeleteRequest.serializer()
+            "app/read" -> ClientRequestAppReadRequest.serializer()
             "app/list" -> ClientRequestAppListRequest.serializer()
+            "app/installed" -> ClientRequestAppInstalledRequest.serializer()
             "fs/readFile" -> ClientRequestFsReadFileRequest.serializer()
             "fs/writeFile" -> ClientRequestFsWriteFileRequest.serializer()
             "fs/createDirectory" -> ClientRequestFsCreateDirectoryRequest.serializer()
@@ -1723,6 +1783,13 @@ public object ClientRequestSerializer : JsonContentPolymorphicSerializer<ClientR
 }
 
 public typealias CodexErrorInfo = JsonElement
+
+@Serializable
+public enum class CodexResponseHandoffMode {
+    @SerialName("thinking") THINKING,
+    @SerialName("commentary") COMMENTARY,
+    @SerialName("bemTags") BEM_TAGS,
+}
 
 @Serializable
 public data class CollabAgentState(
@@ -2261,6 +2328,8 @@ public data class ConfiguredHookHandlerCommandConfiguredHookHandler(
     public val async: Boolean,
     @SerialName("command")
     public val command: String,
+    @SerialName("additionalContextLimit")
+    public val additionalContextLimit: Long? = null,
     @SerialName("commandWindows")
     public val commandWindows: String? = null,
     @SerialName("statusMessage")
@@ -2307,6 +2376,28 @@ public data class ConfiguredHookMatcherGroup(
     public val matcher: String? = null,
 )
 
+@Serializable
+public data class ConnectorMetadata(
+    @SerialName("id")
+    public val id: String,
+    @SerialName("name")
+    public val name: String,
+    @SerialName("description")
+    public val description: String? = null,
+    @SerialName("distributionChannel")
+    public val distributionChannel: String? = null,
+    @SerialName("iconUrl")
+    public val iconUrl: String? = null,
+    @SerialName("iconUrlDark")
+    public val iconUrlDark: String? = null,
+    @SerialName("installUrl")
+    public val installUrl: String? = null,
+    @SerialName("pluginDisplayNames")
+    public val pluginDisplayNames: List<String>? = null,
+    @SerialName("toolSummaries")
+    public val toolSummaries: List<AppToolSummary>? = null,
+)
+
 public typealias ConsumeAccountRateLimitResetCreditOutcome = JsonElement
 
 @Serializable
@@ -2349,6 +2440,16 @@ public data class ContentItemInputImageContentItem(
 }
 
 @Serializable
+public data class ContentItemInputAudioContentItem(
+    @SerialName("audio_url")
+    public val audio_url: String,
+    @SerialName("type")
+    public val type: String = "input_audio",
+) : ContentItem {
+    init { require(type == "input_audio") }
+}
+
+@Serializable
 public data class ContentItemOutputTextContentItem(
     @SerialName("text")
     public val text: String,
@@ -2363,6 +2464,7 @@ public object ContentItemSerializer : JsonContentPolymorphicSerializer<ContentIt
         when (element.jsonObject["type"]?.jsonPrimitive?.content) {
             "input_text" -> ContentItemInputTextContentItem.serializer()
             "input_image" -> ContentItemInputImageContentItem.serializer()
+            "input_audio" -> ContentItemInputAudioContentItem.serializer()
             "output_text" -> ContentItemOutputTextContentItem.serializer()
             else -> error("Unknown ContentItem type")
         }
@@ -2424,11 +2526,22 @@ public data class DynamicToolCallOutputContentItemInputImageDynamicToolCallOutpu
     init { require(type == "inputImage") }
 }
 
+@Serializable
+public data class DynamicToolCallOutputContentItemInputAudioDynamicToolCallOutputContentItem(
+    @SerialName("audioUrl")
+    public val audioUrl: String,
+    @SerialName("type")
+    public val type: String = "inputAudio",
+) : DynamicToolCallOutputContentItem {
+    init { require(type == "inputAudio") }
+}
+
 public object DynamicToolCallOutputContentItemSerializer : JsonContentPolymorphicSerializer<DynamicToolCallOutputContentItem>(DynamicToolCallOutputContentItem::class) {
     override fun selectDeserializer(element: JsonElement): DeserializationStrategy<DynamicToolCallOutputContentItem> =
         when (element.jsonObject["type"]?.jsonPrimitive?.content) {
             "inputText" -> DynamicToolCallOutputContentItemInputTextDynamicToolCallOutputContentItem.serializer()
             "inputImage" -> DynamicToolCallOutputContentItemInputImageDynamicToolCallOutputContentItem.serializer()
+            "inputAudio" -> DynamicToolCallOutputContentItemInputAudioDynamicToolCallOutputContentItem.serializer()
             else -> error("Unknown DynamicToolCallOutputContentItem type")
         }
 }
@@ -2534,6 +2647,14 @@ public object DynamicToolSpecSerializer : JsonContentPolymorphicSerializer<Dynam
 }
 
 @Serializable
+public data class EnvironmentConnectionNotification(
+    @SerialName("environmentId")
+    public val environmentId: String,
+    @SerialName("threadId")
+    public val threadId: String,
+)
+
+@Serializable
 public data class ErrorNotification(
     @SerialName("error")
     public val error: TurnError,
@@ -2625,6 +2746,10 @@ public data class ExternalAgentConfigDetectParams(
     public val cwds: List<String>? = null,
     @SerialName("includeHome")
     public val includeHome: Boolean? = null,
+    @SerialName("migrationSource")
+    public val migrationSource: String? = null,
+    @SerialName("source")
+    public val source: String? = null,
 )
 
 @Serializable
@@ -2643,6 +2768,8 @@ public data class ExternalAgentConfigImportCompletedNotification(
 
 @Serializable
 public data class ExternalAgentConfigImportHistoriesReadResponse(
+    @SerialName("connectors")
+    public val connectors: List<ExternalAgentImportedConnectorCandidate>,
     @SerialName("data")
     public val data: List<ExternalAgentConfigImportHistory>,
 )
@@ -2673,6 +2800,8 @@ public data class ExternalAgentConfigImportItemTypeFailure(
     public val errorType: String? = null,
     @SerialName("source")
     public val source: String? = null,
+    @SerialName("subErrorType")
+    public val subErrorType: String? = null,
 )
 
 @Serializable
@@ -2691,6 +2820,8 @@ public data class ExternalAgentConfigImportItemTypeSuccess(
 public data class ExternalAgentConfigImportParams(
     @SerialName("migrationItems")
     public val migrationItems: List<ExternalAgentConfigMigrationItem>,
+    @SerialName("migrationSource")
+    public val migrationSource: String? = null,
     @SerialName("source")
     public val source: String? = null,
 )
@@ -2741,7 +2872,23 @@ public enum class ExternalAgentConfigMigrationItemType {
     @SerialName("SUBAGENTS") SUBAGENTS,
     @SerialName("HOOKS") HOOKS,
     @SerialName("COMMANDS") COMMANDS,
+    @SerialName("MEMORY") MEMORY,
     @SerialName("SESSIONS") SESSIONS,
+}
+
+@Serializable
+public data class ExternalAgentImportedConnectorCandidate(
+    @SerialName("name")
+    public val name: String,
+    @SerialName("sessionCount")
+    public val sessionCount: Long,
+    @SerialName("source")
+    public val source: ExternalAgentImportedConnectorSource,
+)
+
+@Serializable
+public enum class ExternalAgentImportedConnectorSource {
+    @SerialName("remoteMcpServersConfig") REMOTE_MCP_SERVERS_CONFIG,
 }
 
 @Serializable
@@ -2941,7 +3088,7 @@ public data class FileSystemSpecialPathKindFileSystemSpecialPath(
     @SerialName("kind")
     public val kind: String = "project_roots",
     @SerialName("subpath")
-    public val subpath: String? = null,
+    public val subpath: LegacyAppPathString? = null,
 ) : FileSystemSpecialPath {
     init { require(kind == "project_roots") }
 }
@@ -2969,7 +3116,7 @@ public data class FileSystemSpecialPathUnknown(
     @SerialName("kind")
     public val kind: String = "unknown",
     @SerialName("subpath")
-    public val subpath: String? = null,
+    public val subpath: LegacyAppPathString? = null,
 ) : FileSystemSpecialPath {
     init { require(kind == "unknown") }
 }
@@ -3166,6 +3313,16 @@ public data class FunctionCallOutputContentItemInputImageFunctionCallOutputConte
 }
 
 @Serializable
+public data class FunctionCallOutputContentItemInputAudioFunctionCallOutputContentItem(
+    @SerialName("audio_url")
+    public val audio_url: String,
+    @SerialName("type")
+    public val type: String = "input_audio",
+) : FunctionCallOutputContentItem {
+    init { require(type == "input_audio") }
+}
+
+@Serializable
 public data class FunctionCallOutputContentItemEncryptedContentFunctionCallOutputContentItem(
     @SerialName("encrypted_content")
     public val encrypted_content: String,
@@ -3180,6 +3337,7 @@ public object FunctionCallOutputContentItemSerializer : JsonContentPolymorphicSe
         when (element.jsonObject["type"]?.jsonPrimitive?.content) {
             "input_text" -> FunctionCallOutputContentItemInputTextFunctionCallOutputContentItem.serializer()
             "input_image" -> FunctionCallOutputContentItemInputImageFunctionCallOutputContentItem.serializer()
+            "input_audio" -> FunctionCallOutputContentItemInputAudioFunctionCallOutputContentItem.serializer()
             "encrypted_content" -> FunctionCallOutputContentItemEncryptedContentFunctionCallOutputContentItem.serializer()
             else -> error("Unknown FunctionCallOutputContentItem type")
         }
@@ -3478,6 +3636,7 @@ public enum class HookEventName {
     @SerialName("preCompact") PRE_COMPACT,
     @SerialName("postCompact") POST_COMPACT,
     @SerialName("sessionStart") SESSION_START,
+    @SerialName("sessionEnd") SESSION_END,
     @SerialName("userPromptSubmit") USER_PROMPT_SUBMIT,
     @SerialName("subagentStart") SUBAGENT_START,
     @SerialName("subagentStop") SUBAGENT_STOP,
@@ -3521,6 +3680,8 @@ public data class HookMetadata(
     public val timeoutSec: Long,
     @SerialName("trustStatus")
     public val trustStatus: HookTrustStatus,
+    @SerialName("additionalContextLimit")
+    public val additionalContextLimit: Long? = null,
     @SerialName("command")
     public val command: String? = null,
     @SerialName("matcher")
@@ -3707,6 +3868,18 @@ public data class InitializeResponse(
 )
 
 public typealias InputModality = JsonElement
+
+@Serializable
+public data class InstalledApp(
+    @SerialName("callable")
+    public val callable: Boolean,
+    @SerialName("enabled")
+    public val enabled: Boolean,
+    @SerialName("id")
+    public val id: String,
+    @SerialName("runtimeName")
+    public val runtimeName: String? = null,
+)
 
 @Serializable
 public data class InternalChatMessageMetadataPassthrough(
@@ -3933,6 +4106,18 @@ public data class LoginAccountParamsChatgptAuthTokens(
     init { require(type == "chatgptAuthTokens") }
 }
 
+@Serializable
+public data class LoginAccountParamsAmazonBedrock(
+    @SerialName("apiKey")
+    public val apiKey: String,
+    @SerialName("region")
+    public val region: String,
+    @SerialName("type")
+    public val type: String = "amazonBedrock",
+) : LoginAccountParams {
+    init { require(type == "amazonBedrock") }
+}
+
 public object LoginAccountParamsSerializer : JsonContentPolymorphicSerializer<LoginAccountParams>(LoginAccountParams::class) {
     override fun selectDeserializer(element: JsonElement): DeserializationStrategy<LoginAccountParams> =
         when (element.jsonObject["type"]?.jsonPrimitive?.content) {
@@ -3940,6 +4125,7 @@ public object LoginAccountParamsSerializer : JsonContentPolymorphicSerializer<Lo
             "chatgpt" -> LoginAccountParamsChatgpt.serializer()
             "chatgptDeviceCode" -> LoginAccountParamsChatgptDeviceCode.serializer()
             "chatgptAuthTokens" -> LoginAccountParamsChatgptAuthTokens.serializer()
+            "amazonBedrock" -> LoginAccountParamsAmazonBedrock.serializer()
             else -> error("Unknown LoginAccountParams type")
         }
 }
@@ -3989,6 +4175,14 @@ public data class LoginAccountResponseChatgptAuthTokens(
     init { require(type == "chatgptAuthTokens") }
 }
 
+@Serializable
+public data class LoginAccountResponseAmazonBedrock(
+    @SerialName("type")
+    public val type: String = "amazonBedrock",
+) : LoginAccountResponse {
+    init { require(type == "amazonBedrock") }
+}
+
 public object LoginAccountResponseSerializer : JsonContentPolymorphicSerializer<LoginAccountResponse>(LoginAccountResponse::class) {
     override fun selectDeserializer(element: JsonElement): DeserializationStrategy<LoginAccountResponse> =
         when (element.jsonObject["type"]?.jsonPrimitive?.content) {
@@ -3996,6 +4190,7 @@ public object LoginAccountResponseSerializer : JsonContentPolymorphicSerializer<
             "chatgpt" -> LoginAccountResponseChatgpt.serializer()
             "chatgptDeviceCode" -> LoginAccountResponseChatgptDeviceCode.serializer()
             "chatgptAuthTokens" -> LoginAccountResponseChatgptAuthTokens.serializer()
+            "amazonBedrock" -> LoginAccountResponseAmazonBedrock.serializer()
             else -> error("Unknown LoginAccountResponse type")
         }
 }
@@ -4031,6 +4226,8 @@ public data class ManagedHooksRequirements(
     public val SubagentStop: List<ConfiguredHookMatcherGroup>,
     @SerialName("UserPromptSubmit")
     public val UserPromptSubmit: List<ConfiguredHookMatcherGroup>,
+    @SerialName("SessionEnd")
+    public val SessionEnd: List<ConfiguredHookMatcherGroup>? = null,
     @SerialName("managedDir")
     public val managedDir: String? = null,
     @SerialName("windowsManagedDir")
@@ -4569,8 +4766,6 @@ public data class McpToolCallAppContext(
     public val linkId: String? = null,
     @SerialName("resourceUri")
     public val resourceUri: String? = null,
-    @SerialName("templateId")
-    public val templateId: String? = null,
 )
 
 @Serializable
@@ -4644,6 +4839,8 @@ public data class MigrationDetails(
     public val hooks: List<HookMigration>? = null,
     @SerialName("mcpServers")
     public val mcpServers: List<McpServerMigration>? = null,
+    @SerialName("memory")
+    public val memory: List<String>? = null,
     @SerialName("plugins")
     public val plugins: List<PluginsMigration>? = null,
     @SerialName("sessions")
@@ -5157,6 +5354,8 @@ public data class PluginDetail(
     public val description: String? = null,
     @SerialName("marketplacePath")
     public val marketplacePath: AbsolutePathBuf? = null,
+    @SerialName("scheduledTasks")
+    public val scheduledTasks: List<ScheduledTaskSummary>? = null,
     @SerialName("shareUrl")
     public val shareUrl: String? = null,
 )
@@ -5454,6 +5653,7 @@ public enum class PluginShareTargetRole {
 public enum class PluginShareUpdateDiscoverability {
     @SerialName("UNLISTED") UNLISTED,
     @SerialName("PRIVATE") PRIVATE,
+    @SerialName("LISTED") LISTED,
 }
 
 @Serializable
@@ -5578,6 +5778,8 @@ public data class PluginSummary(
     public val keywords: List<String>? = null,
     @SerialName("localVersion")
     public val localVersion: String? = null,
+    @SerialName("mustShowInstallationInterstitial")
+    public val mustShowInstallationInterstitial: Boolean? = null,
     @SerialName("remotePluginId")
     public val remotePluginId: String? = null,
     @SerialName("shareContext")
@@ -5708,6 +5910,8 @@ public data class RateLimitSnapshot(
     public val rateLimitReachedType: RateLimitReachedType? = null,
     @SerialName("secondary")
     public val secondary: RateLimitWindow? = null,
+    @SerialName("spendControlReached")
+    public val spendControlReached: Boolean? = null,
 )
 
 @Serializable
@@ -5718,6 +5922,18 @@ public data class RateLimitWindow(
     public val resetsAt: Long? = null,
     @SerialName("windowDurationMins")
     public val windowDurationMins: Long? = null,
+)
+
+@Serializable
+public data class RawResponseCompletedNotification(
+    @SerialName("responseId")
+    public val responseId: String,
+    @SerialName("threadId")
+    public val threadId: String,
+    @SerialName("turnId")
+    public val turnId: String,
+    @SerialName("usage")
+    public val usage: TokenUsageBreakdown? = null,
 )
 
 @Serializable
@@ -5734,6 +5950,7 @@ public data class RawResponseItemCompletedNotification(
 public enum class RealtimeConversationVersion {
     @SerialName("v1") V1,
     @SerialName("v2") V2,
+    @SerialName("v3") V3,
 }
 
 @Serializable
@@ -6474,6 +6691,87 @@ public data class SandboxWorkspaceWrite(
     public val writable_roots: List<String>? = null,
 )
 
+@Serializable(with = ScheduledTaskScheduleSerializer::class)
+public sealed interface ScheduledTaskSchedule
+
+@Serializable
+public data class ScheduledTaskScheduleHourlyScheduledTaskSchedule(
+    @SerialName("intervalHours")
+    public val intervalHours: Long,
+    @SerialName("days")
+    public val days: List<ScheduledTaskWeekday>? = null,
+    @SerialName("type")
+    public val type: String = "hourly",
+) : ScheduledTaskSchedule {
+    init { require(type == "hourly") }
+}
+
+@Serializable
+public data class ScheduledTaskScheduleDailyScheduledTaskSchedule(
+    @SerialName("time")
+    public val time: String,
+    @SerialName("type")
+    public val type: String = "daily",
+) : ScheduledTaskSchedule {
+    init { require(type == "daily") }
+}
+
+@Serializable
+public data class ScheduledTaskScheduleWeekdaysScheduledTaskSchedule(
+    @SerialName("time")
+    public val time: String,
+    @SerialName("type")
+    public val type: String = "weekdays",
+) : ScheduledTaskSchedule {
+    init { require(type == "weekdays") }
+}
+
+@Serializable
+public data class ScheduledTaskScheduleWeeklyScheduledTaskSchedule(
+    @SerialName("days")
+    public val days: List<ScheduledTaskWeekday>,
+    @SerialName("time")
+    public val time: String,
+    @SerialName("type")
+    public val type: String = "weekly",
+) : ScheduledTaskSchedule {
+    init { require(type == "weekly") }
+}
+
+public object ScheduledTaskScheduleSerializer : JsonContentPolymorphicSerializer<ScheduledTaskSchedule>(ScheduledTaskSchedule::class) {
+    override fun selectDeserializer(element: JsonElement): DeserializationStrategy<ScheduledTaskSchedule> =
+        when (element.jsonObject["type"]?.jsonPrimitive?.content) {
+            "hourly" -> ScheduledTaskScheduleHourlyScheduledTaskSchedule.serializer()
+            "daily" -> ScheduledTaskScheduleDailyScheduledTaskSchedule.serializer()
+            "weekdays" -> ScheduledTaskScheduleWeekdaysScheduledTaskSchedule.serializer()
+            "weekly" -> ScheduledTaskScheduleWeeklyScheduledTaskSchedule.serializer()
+            else -> error("Unknown ScheduledTaskSchedule type")
+        }
+}
+
+@Serializable
+public data class ScheduledTaskSummary(
+    @SerialName("key")
+    public val key: String,
+    @SerialName("name")
+    public val name: String,
+    @SerialName("prompt")
+    public val prompt: String,
+    @SerialName("schedule")
+    public val schedule: ScheduledTaskSchedule,
+)
+
+@Serializable
+public enum class ScheduledTaskWeekday {
+    @SerialName("MO") MO,
+    @SerialName("TU") TU,
+    @SerialName("WE") WE,
+    @SerialName("TH") TH,
+    @SerialName("FR") FR,
+    @SerialName("SA") SA,
+    @SerialName("SU") SU,
+}
+
 @Serializable
 public data class SelectedCapabilityRoot(
     @SerialName("id")
@@ -6501,6 +6799,8 @@ public sealed interface ServerNotification
 public data class ServerNotificationErrorNotification(
     @SerialName("params")
     public val params: ErrorNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "error",
 ) : ServerNotification {
@@ -6511,6 +6811,8 @@ public data class ServerNotificationErrorNotification(
 public data class ServerNotificationThreadStartedNotification(
     @SerialName("params")
     public val params: ThreadStartedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/started",
 ) : ServerNotification {
@@ -6521,6 +6823,8 @@ public data class ServerNotificationThreadStartedNotification(
 public data class ServerNotificationThreadStatusChangedNotification(
     @SerialName("params")
     public val params: ThreadStatusChangedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/status/changed",
 ) : ServerNotification {
@@ -6531,6 +6835,8 @@ public data class ServerNotificationThreadStatusChangedNotification(
 public data class ServerNotificationThreadArchivedNotification(
     @SerialName("params")
     public val params: ThreadArchivedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/archived",
 ) : ServerNotification {
@@ -6541,6 +6847,8 @@ public data class ServerNotificationThreadArchivedNotification(
 public data class ServerNotificationThreadDeletedNotification(
     @SerialName("params")
     public val params: ThreadDeletedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/deleted",
 ) : ServerNotification {
@@ -6551,6 +6859,8 @@ public data class ServerNotificationThreadDeletedNotification(
 public data class ServerNotificationThreadUnarchivedNotification(
     @SerialName("params")
     public val params: ThreadUnarchivedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/unarchived",
 ) : ServerNotification {
@@ -6561,6 +6871,8 @@ public data class ServerNotificationThreadUnarchivedNotification(
 public data class ServerNotificationThreadClosedNotification(
     @SerialName("params")
     public val params: ThreadClosedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/closed",
 ) : ServerNotification {
@@ -6571,6 +6883,8 @@ public data class ServerNotificationThreadClosedNotification(
 public data class ServerNotificationSkillsChangedNotification(
     @SerialName("params")
     public val params: SkillsChangedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "skills/changed",
 ) : ServerNotification {
@@ -6581,6 +6895,8 @@ public data class ServerNotificationSkillsChangedNotification(
 public data class ServerNotificationThreadNameUpdatedNotification(
     @SerialName("params")
     public val params: ThreadNameUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/name/updated",
 ) : ServerNotification {
@@ -6591,6 +6907,8 @@ public data class ServerNotificationThreadNameUpdatedNotification(
 public data class ServerNotificationThreadGoalUpdatedNotification(
     @SerialName("params")
     public val params: ThreadGoalUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/goal/updated",
 ) : ServerNotification {
@@ -6601,6 +6919,8 @@ public data class ServerNotificationThreadGoalUpdatedNotification(
 public data class ServerNotificationThreadGoalClearedNotification(
     @SerialName("params")
     public val params: ThreadGoalClearedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/goal/cleared",
 ) : ServerNotification {
@@ -6608,9 +6928,35 @@ public data class ServerNotificationThreadGoalClearedNotification(
 }
 
 @Serializable
+public data class ServerNotificationThreadEnvironmentConnectedNotification(
+    @SerialName("params")
+    public val params: EnvironmentConnectionNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
+    @SerialName("method")
+    public val method: String = "thread/environment/connected",
+) : ServerNotification {
+    init { require(method == "thread/environment/connected") }
+}
+
+@Serializable
+public data class ServerNotificationThreadEnvironmentDisconnectedNotification(
+    @SerialName("params")
+    public val params: EnvironmentConnectionNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
+    @SerialName("method")
+    public val method: String = "thread/environment/disconnected",
+) : ServerNotification {
+    init { require(method == "thread/environment/disconnected") }
+}
+
+@Serializable
 public data class ServerNotificationThreadSettingsUpdatedNotification(
     @SerialName("params")
     public val params: ThreadSettingsUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/settings/updated",
 ) : ServerNotification {
@@ -6621,6 +6967,8 @@ public data class ServerNotificationThreadSettingsUpdatedNotification(
 public data class ServerNotificationThreadTokenUsageUpdatedNotification(
     @SerialName("params")
     public val params: ThreadTokenUsageUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/tokenUsage/updated",
 ) : ServerNotification {
@@ -6631,6 +6979,8 @@ public data class ServerNotificationThreadTokenUsageUpdatedNotification(
 public data class ServerNotificationTurnStartedNotification(
     @SerialName("params")
     public val params: TurnStartedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "turn/started",
 ) : ServerNotification {
@@ -6641,6 +6991,8 @@ public data class ServerNotificationTurnStartedNotification(
 public data class ServerNotificationHookStartedNotification(
     @SerialName("params")
     public val params: HookStartedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "hook/started",
 ) : ServerNotification {
@@ -6651,6 +7003,8 @@ public data class ServerNotificationHookStartedNotification(
 public data class ServerNotificationTurnCompletedNotification(
     @SerialName("params")
     public val params: TurnCompletedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "turn/completed",
 ) : ServerNotification {
@@ -6661,6 +7015,8 @@ public data class ServerNotificationTurnCompletedNotification(
 public data class ServerNotificationHookCompletedNotification(
     @SerialName("params")
     public val params: HookCompletedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "hook/completed",
 ) : ServerNotification {
@@ -6671,6 +7027,8 @@ public data class ServerNotificationHookCompletedNotification(
 public data class ServerNotificationTurnDiffUpdatedNotification(
     @SerialName("params")
     public val params: TurnDiffUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "turn/diff/updated",
 ) : ServerNotification {
@@ -6681,6 +7039,8 @@ public data class ServerNotificationTurnDiffUpdatedNotification(
 public data class ServerNotificationTurnPlanUpdatedNotification(
     @SerialName("params")
     public val params: TurnPlanUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "turn/plan/updated",
 ) : ServerNotification {
@@ -6691,6 +7051,8 @@ public data class ServerNotificationTurnPlanUpdatedNotification(
 public data class ServerNotificationItemStartedNotification(
     @SerialName("params")
     public val params: ItemStartedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/started",
 ) : ServerNotification {
@@ -6701,6 +7063,8 @@ public data class ServerNotificationItemStartedNotification(
 public data class ServerNotificationItemAutoApprovalReviewStartedNotification(
     @SerialName("params")
     public val params: ItemGuardianApprovalReviewStartedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/autoApprovalReview/started",
 ) : ServerNotification {
@@ -6711,6 +7075,8 @@ public data class ServerNotificationItemAutoApprovalReviewStartedNotification(
 public data class ServerNotificationItemAutoApprovalReviewCompletedNotification(
     @SerialName("params")
     public val params: ItemGuardianApprovalReviewCompletedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/autoApprovalReview/completed",
 ) : ServerNotification {
@@ -6721,6 +7087,8 @@ public data class ServerNotificationItemAutoApprovalReviewCompletedNotification(
 public data class ServerNotificationItemCompletedNotification(
     @SerialName("params")
     public val params: ItemCompletedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/completed",
 ) : ServerNotification {
@@ -6731,6 +7099,8 @@ public data class ServerNotificationItemCompletedNotification(
 public data class ServerNotificationItemAgentMessageDeltaNotification(
     @SerialName("params")
     public val params: AgentMessageDeltaNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/agentMessage/delta",
 ) : ServerNotification {
@@ -6741,6 +7111,8 @@ public data class ServerNotificationItemAgentMessageDeltaNotification(
 public data class ServerNotificationItemPlanDeltaNotification(
     @SerialName("params")
     public val params: PlanDeltaNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/plan/delta",
 ) : ServerNotification {
@@ -6751,6 +7123,8 @@ public data class ServerNotificationItemPlanDeltaNotification(
 public data class ServerNotificationCommandExecOutputDeltaNotification(
     @SerialName("params")
     public val params: CommandExecOutputDeltaNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "command/exec/outputDelta",
 ) : ServerNotification {
@@ -6761,6 +7135,8 @@ public data class ServerNotificationCommandExecOutputDeltaNotification(
 public data class ServerNotificationProcessOutputDeltaNotification(
     @SerialName("params")
     public val params: ProcessOutputDeltaNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "process/outputDelta",
 ) : ServerNotification {
@@ -6771,6 +7147,8 @@ public data class ServerNotificationProcessOutputDeltaNotification(
 public data class ServerNotificationProcessExitedNotification(
     @SerialName("params")
     public val params: ProcessExitedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "process/exited",
 ) : ServerNotification {
@@ -6781,6 +7159,8 @@ public data class ServerNotificationProcessExitedNotification(
 public data class ServerNotificationItemCommandExecutionOutputDeltaNotification(
     @SerialName("params")
     public val params: CommandExecutionOutputDeltaNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/commandExecution/outputDelta",
 ) : ServerNotification {
@@ -6791,6 +7171,8 @@ public data class ServerNotificationItemCommandExecutionOutputDeltaNotification(
 public data class ServerNotificationItemCommandExecutionTerminalInteractionNotification(
     @SerialName("params")
     public val params: TerminalInteractionNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/commandExecution/terminalInteraction",
 ) : ServerNotification {
@@ -6801,6 +7183,8 @@ public data class ServerNotificationItemCommandExecutionTerminalInteractionNotif
 public data class ServerNotificationItemFileChangeOutputDeltaNotification(
     @SerialName("params")
     public val params: FileChangeOutputDeltaNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/fileChange/outputDelta",
 ) : ServerNotification {
@@ -6811,6 +7195,8 @@ public data class ServerNotificationItemFileChangeOutputDeltaNotification(
 public data class ServerNotificationItemFileChangePatchUpdatedNotification(
     @SerialName("params")
     public val params: FileChangePatchUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/fileChange/patchUpdated",
 ) : ServerNotification {
@@ -6821,6 +7207,8 @@ public data class ServerNotificationItemFileChangePatchUpdatedNotification(
 public data class ServerNotificationServerRequestResolvedNotification(
     @SerialName("params")
     public val params: ServerRequestResolvedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "serverRequest/resolved",
 ) : ServerNotification {
@@ -6831,6 +7219,8 @@ public data class ServerNotificationServerRequestResolvedNotification(
 public data class ServerNotificationItemMcpToolCallProgressNotification(
     @SerialName("params")
     public val params: McpToolCallProgressNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/mcpToolCall/progress",
 ) : ServerNotification {
@@ -6841,6 +7231,8 @@ public data class ServerNotificationItemMcpToolCallProgressNotification(
 public data class ServerNotificationMcpServerOauthLoginCompletedNotification(
     @SerialName("params")
     public val params: McpServerOauthLoginCompletedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "mcpServer/oauthLogin/completed",
 ) : ServerNotification {
@@ -6851,6 +7243,8 @@ public data class ServerNotificationMcpServerOauthLoginCompletedNotification(
 public data class ServerNotificationMcpServerStartupStatusUpdatedNotification(
     @SerialName("params")
     public val params: McpServerStatusUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "mcpServer/startupStatus/updated",
 ) : ServerNotification {
@@ -6861,6 +7255,8 @@ public data class ServerNotificationMcpServerStartupStatusUpdatedNotification(
 public data class ServerNotificationAccountUpdatedNotification(
     @SerialName("params")
     public val params: AccountUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "account/updated",
 ) : ServerNotification {
@@ -6871,6 +7267,8 @@ public data class ServerNotificationAccountUpdatedNotification(
 public data class ServerNotificationAccountRateLimitsUpdatedNotification(
     @SerialName("params")
     public val params: AccountRateLimitsUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "account/rateLimits/updated",
 ) : ServerNotification {
@@ -6881,6 +7279,8 @@ public data class ServerNotificationAccountRateLimitsUpdatedNotification(
 public data class ServerNotificationAppListUpdatedNotification(
     @SerialName("params")
     public val params: AppListUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "app/list/updated",
 ) : ServerNotification {
@@ -6891,6 +7291,8 @@ public data class ServerNotificationAppListUpdatedNotification(
 public data class ServerNotificationRemoteControlStatusChangedNotification(
     @SerialName("params")
     public val params: RemoteControlStatusChangedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "remoteControl/status/changed",
 ) : ServerNotification {
@@ -6901,6 +7303,8 @@ public data class ServerNotificationRemoteControlStatusChangedNotification(
 public data class ServerNotificationExternalAgentConfigImportProgressNotification(
     @SerialName("params")
     public val params: ExternalAgentConfigImportProgressNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "externalAgentConfig/import/progress",
 ) : ServerNotification {
@@ -6911,6 +7315,8 @@ public data class ServerNotificationExternalAgentConfigImportProgressNotificatio
 public data class ServerNotificationExternalAgentConfigImportCompletedNotification(
     @SerialName("params")
     public val params: ExternalAgentConfigImportCompletedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "externalAgentConfig/import/completed",
 ) : ServerNotification {
@@ -6921,6 +7327,8 @@ public data class ServerNotificationExternalAgentConfigImportCompletedNotificati
 public data class ServerNotificationFsChangedNotification(
     @SerialName("params")
     public val params: FsChangedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "fs/changed",
 ) : ServerNotification {
@@ -6931,6 +7339,8 @@ public data class ServerNotificationFsChangedNotification(
 public data class ServerNotificationItemReasoningSummaryTextDeltaNotification(
     @SerialName("params")
     public val params: ReasoningSummaryTextDeltaNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/reasoning/summaryTextDelta",
 ) : ServerNotification {
@@ -6941,6 +7351,8 @@ public data class ServerNotificationItemReasoningSummaryTextDeltaNotification(
 public data class ServerNotificationItemReasoningSummaryPartAddedNotification(
     @SerialName("params")
     public val params: ReasoningSummaryPartAddedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/reasoning/summaryPartAdded",
 ) : ServerNotification {
@@ -6951,6 +7363,8 @@ public data class ServerNotificationItemReasoningSummaryPartAddedNotification(
 public data class ServerNotificationItemReasoningTextDeltaNotification(
     @SerialName("params")
     public val params: ReasoningTextDeltaNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "item/reasoning/textDelta",
 ) : ServerNotification {
@@ -6961,6 +7375,8 @@ public data class ServerNotificationItemReasoningTextDeltaNotification(
 public data class ServerNotificationThreadCompactedNotification(
     @SerialName("params")
     public val params: ContextCompactedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/compacted",
 ) : ServerNotification {
@@ -6971,6 +7387,8 @@ public data class ServerNotificationThreadCompactedNotification(
 public data class ServerNotificationModelReroutedNotification(
     @SerialName("params")
     public val params: ModelReroutedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "model/rerouted",
 ) : ServerNotification {
@@ -6981,6 +7399,8 @@ public data class ServerNotificationModelReroutedNotification(
 public data class ServerNotificationModelVerificationNotification(
     @SerialName("params")
     public val params: ModelVerificationNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "model/verification",
 ) : ServerNotification {
@@ -6991,6 +7411,8 @@ public data class ServerNotificationModelVerificationNotification(
 public data class ServerNotificationTurnModerationMetadataNotification(
     @SerialName("params")
     public val params: TurnModerationMetadataNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "turn/moderationMetadata",
 ) : ServerNotification {
@@ -7001,6 +7423,8 @@ public data class ServerNotificationTurnModerationMetadataNotification(
 public data class ServerNotificationModelSafetyBufferingUpdatedNotification(
     @SerialName("params")
     public val params: ModelSafetyBufferingUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "model/safetyBuffering/updated",
 ) : ServerNotification {
@@ -7011,6 +7435,8 @@ public data class ServerNotificationModelSafetyBufferingUpdatedNotification(
 public data class ServerNotificationWarningNotification(
     @SerialName("params")
     public val params: WarningNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "warning",
 ) : ServerNotification {
@@ -7021,6 +7447,8 @@ public data class ServerNotificationWarningNotification(
 public data class ServerNotificationGuardianWarningNotification(
     @SerialName("params")
     public val params: GuardianWarningNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "guardianWarning",
 ) : ServerNotification {
@@ -7031,6 +7459,8 @@ public data class ServerNotificationGuardianWarningNotification(
 public data class ServerNotificationDeprecationNoticeNotification(
     @SerialName("params")
     public val params: DeprecationNoticeNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "deprecationNotice",
 ) : ServerNotification {
@@ -7041,6 +7471,8 @@ public data class ServerNotificationDeprecationNoticeNotification(
 public data class ServerNotificationConfigWarningNotification(
     @SerialName("params")
     public val params: ConfigWarningNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "configWarning",
 ) : ServerNotification {
@@ -7051,6 +7483,8 @@ public data class ServerNotificationConfigWarningNotification(
 public data class ServerNotificationFuzzyFileSearchSessionUpdatedNotification(
     @SerialName("params")
     public val params: FuzzyFileSearchSessionUpdatedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "fuzzyFileSearch/sessionUpdated",
 ) : ServerNotification {
@@ -7061,6 +7495,8 @@ public data class ServerNotificationFuzzyFileSearchSessionUpdatedNotification(
 public data class ServerNotificationFuzzyFileSearchSessionCompletedNotification(
     @SerialName("params")
     public val params: FuzzyFileSearchSessionCompletedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "fuzzyFileSearch/sessionCompleted",
 ) : ServerNotification {
@@ -7071,6 +7507,8 @@ public data class ServerNotificationFuzzyFileSearchSessionCompletedNotification(
 public data class ServerNotificationThreadRealtimeStartedNotification(
     @SerialName("params")
     public val params: ThreadRealtimeStartedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/realtime/started",
 ) : ServerNotification {
@@ -7081,6 +7519,8 @@ public data class ServerNotificationThreadRealtimeStartedNotification(
 public data class ServerNotificationThreadRealtimeItemAddedNotification(
     @SerialName("params")
     public val params: ThreadRealtimeItemAddedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/realtime/itemAdded",
 ) : ServerNotification {
@@ -7091,6 +7531,8 @@ public data class ServerNotificationThreadRealtimeItemAddedNotification(
 public data class ServerNotificationThreadRealtimeTranscriptDeltaNotification(
     @SerialName("params")
     public val params: ThreadRealtimeTranscriptDeltaNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/realtime/transcript/delta",
 ) : ServerNotification {
@@ -7101,6 +7543,8 @@ public data class ServerNotificationThreadRealtimeTranscriptDeltaNotification(
 public data class ServerNotificationThreadRealtimeTranscriptDoneNotification(
     @SerialName("params")
     public val params: ThreadRealtimeTranscriptDoneNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/realtime/transcript/done",
 ) : ServerNotification {
@@ -7111,6 +7555,8 @@ public data class ServerNotificationThreadRealtimeTranscriptDoneNotification(
 public data class ServerNotificationThreadRealtimeOutputAudioDeltaNotification(
     @SerialName("params")
     public val params: ThreadRealtimeOutputAudioDeltaNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/realtime/outputAudio/delta",
 ) : ServerNotification {
@@ -7121,6 +7567,8 @@ public data class ServerNotificationThreadRealtimeOutputAudioDeltaNotification(
 public data class ServerNotificationThreadRealtimeSdpNotification(
     @SerialName("params")
     public val params: ThreadRealtimeSdpNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/realtime/sdp",
 ) : ServerNotification {
@@ -7131,6 +7579,8 @@ public data class ServerNotificationThreadRealtimeSdpNotification(
 public data class ServerNotificationThreadRealtimeErrorNotification(
     @SerialName("params")
     public val params: ThreadRealtimeErrorNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/realtime/error",
 ) : ServerNotification {
@@ -7141,6 +7591,8 @@ public data class ServerNotificationThreadRealtimeErrorNotification(
 public data class ServerNotificationThreadRealtimeClosedNotification(
     @SerialName("params")
     public val params: ThreadRealtimeClosedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "thread/realtime/closed",
 ) : ServerNotification {
@@ -7151,6 +7603,8 @@ public data class ServerNotificationThreadRealtimeClosedNotification(
 public data class ServerNotificationWindowsWorldWritableWarningNotification(
     @SerialName("params")
     public val params: WindowsWorldWritableWarningNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "windows/worldWritableWarning",
 ) : ServerNotification {
@@ -7161,6 +7615,8 @@ public data class ServerNotificationWindowsWorldWritableWarningNotification(
 public data class ServerNotificationWindowsSandboxSetupCompletedNotification(
     @SerialName("params")
     public val params: WindowsSandboxSetupCompletedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "windowsSandbox/setupCompleted",
 ) : ServerNotification {
@@ -7171,6 +7627,8 @@ public data class ServerNotificationWindowsSandboxSetupCompletedNotification(
 public data class ServerNotificationAccountLoginCompletedNotification(
     @SerialName("params")
     public val params: AccountLoginCompletedNotification,
+    @SerialName("emittedAtMs")
+    public val emittedAtMs: Long? = null,
     @SerialName("method")
     public val method: String = "account/login/completed",
 ) : ServerNotification {
@@ -7191,6 +7649,8 @@ public object ServerNotificationSerializer : JsonContentPolymorphicSerializer<Se
             "thread/name/updated" -> ServerNotificationThreadNameUpdatedNotification.serializer()
             "thread/goal/updated" -> ServerNotificationThreadGoalUpdatedNotification.serializer()
             "thread/goal/cleared" -> ServerNotificationThreadGoalClearedNotification.serializer()
+            "thread/environment/connected" -> ServerNotificationThreadEnvironmentConnectedNotification.serializer()
+            "thread/environment/disconnected" -> ServerNotificationThreadEnvironmentDisconnectedNotification.serializer()
             "thread/settings/updated" -> ServerNotificationThreadSettingsUpdatedNotification.serializer()
             "thread/tokenUsage/updated" -> ServerNotificationThreadTokenUsageUpdatedNotification.serializer()
             "turn/started" -> ServerNotificationTurnStartedNotification.serializer()
@@ -8132,6 +8592,8 @@ public data class ThreadItemWebSearchThreadItem(
     public val query: String,
     @SerialName("action")
     public val action: WebSearchAction? = null,
+    @SerialName("results")
+    public val results: List<JsonElement>? = null,
     @SerialName("type")
     public val type: String = "webSearch",
 ) : ThreadItem {
@@ -8238,6 +8700,14 @@ public object ThreadItemSerializer : JsonContentPolymorphicSerializer<ThreadItem
             else -> error("Unknown ThreadItem type")
         }
 }
+
+@Serializable
+public data class ThreadItemEntry(
+    @SerialName("item")
+    public val item: ThreadItem,
+    @SerialName("turnId")
+    public val turnId: String,
+)
 
 public typealias ThreadListCwdFilter = JsonElement
 
@@ -8371,6 +8841,14 @@ public data class ThreadRealtimeErrorNotification(
     public val message: String,
     @SerialName("threadId")
     public val threadId: String,
+)
+
+@Serializable
+public data class ThreadRealtimeInitialItem(
+    @SerialName("role")
+    public val role: ConversationTextRole,
+    @SerialName("text")
+    public val text: String,
 )
 
 @Serializable
@@ -8819,6 +9297,8 @@ public data class TokenUsageBreakdown(
     public val reasoningOutputTokens: Long,
     @SerialName("totalTokens")
     public val totalTokens: Long,
+    @SerialName("cacheWriteInputTokens")
+    public val cacheWriteInputTokens: Long? = null,
 )
 
 @Serializable
@@ -8941,6 +9421,8 @@ public data class TurnEnvironmentParams(
     public val cwd: LegacyAppPathString,
     @SerialName("environmentId")
     public val environmentId: String,
+    @SerialName("runtimeWorkspaceRoots")
+    public val runtimeWorkspaceRoots: List<LegacyAppPathString>? = null,
 )
 
 @Serializable
@@ -9031,6 +9513,8 @@ public data class TurnStartParams(
     public val serviceTier: String? = null,
     @SerialName("summary")
     public val summary: ReasoningSummary? = null,
+    @SerialName("collaborationMode")
+    public val collaborationMode: CollaborationMode? = null,
 )
 
 @Serializable
@@ -9125,6 +9609,26 @@ public data class UserInputLocalImageUserInput(
 }
 
 @Serializable
+public data class UserInputAudioUserInput(
+    @SerialName("url")
+    public val url: String,
+    @SerialName("type")
+    public val type: String = "audio",
+) : UserInput {
+    init { require(type == "audio") }
+}
+
+@Serializable
+public data class UserInputLocalAudioUserInput(
+    @SerialName("path")
+    public val path: String,
+    @SerialName("type")
+    public val type: String = "localAudio",
+) : UserInput {
+    init { require(type == "localAudio") }
+}
+
+@Serializable
 public data class UserInputSkillUserInput(
     @SerialName("name")
     public val name: String,
@@ -9154,6 +9658,8 @@ public object UserInputSerializer : JsonContentPolymorphicSerializer<UserInput>(
             "text" -> UserInputTextUserInput.serializer()
             "image" -> UserInputImageUserInput.serializer()
             "localImage" -> UserInputLocalImageUserInput.serializer()
+            "audio" -> UserInputAudioUserInput.serializer()
+            "localAudio" -> UserInputLocalAudioUserInput.serializer()
             "skill" -> UserInputSkillUserInput.serializer()
             "mention" -> UserInputMentionUserInput.serializer()
             else -> error("Unknown UserInput type")

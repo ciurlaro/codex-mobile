@@ -33,6 +33,8 @@ internal class AppPreferencesStore(context: Context) {
         get() = preferences.getStringSet(ENABLED_PLUGIN_SOURCES, null)?.toSet()
     val savedCustomExtensionSources: List<CustomExtensionSource>
         get() = preferences.getString(CUSTOM_EXTENSION_SOURCES, null)?.let(::decodeCustomExtensionSources).orEmpty()
+    val pendingPluginSetups: Map<String, Set<String>>
+        get() = preferences.getString(PENDING_PLUGIN_SETUPS, null)?.let(::decodePendingPluginSetups).orEmpty()
     val appWasUpgraded: Boolean
         get() = runCatching {
             appContext.packageManager.getPackageInfo(appContext.packageName, 0)
@@ -82,6 +84,11 @@ internal class AppPreferencesStore(context: Context) {
         preferences.edit().putBoolean(AUTHENTICATION_HANDOFF_PENDING, pending).commit()
     }
 
+    @Suppress("ApplySharedPref")
+    fun savePendingPluginSetups(setups: Map<String, Set<String>>) {
+        preferences.edit().putString(PENDING_PLUGIN_SETUPS, encodePendingPluginSetups(setups)).commit()
+    }
+
     private companion object {
         const val CHAT_PREFERENCES = "chat-ui"
         const val LAST_MODEL = "last-model"
@@ -95,9 +102,39 @@ internal class AppPreferencesStore(context: Context) {
         const val ENABLED_PLUGIN_SOURCES = "enabled-plugin-sources"
         const val CUSTOM_EXTENSION_SOURCES = "custom-extension-sources"
         const val HAD_AUTHENTICATED_SESSION = "had-authenticated-session"
+        const val PENDING_PLUGIN_SETUPS = "pending-plugin-setups"
     }
 
 }
+
+private fun encodePendingPluginSetups(setups: Map<String, Set<String>>): String = JSONArray().apply {
+    setups.toSortedMap().forEach { (pluginId, connectorIds) ->
+        if (pluginId.isNotBlank() && connectorIds.isNotEmpty()) {
+            put(
+                JSONObject()
+                    .put("pluginId", pluginId)
+                    .put("connectorIds", JSONArray(connectorIds.filter(String::isNotBlank).sorted())),
+            )
+        }
+    }
+}.toString()
+
+private fun decodePendingPluginSetups(value: String): Map<String, Set<String>> = runCatching {
+    val array = JSONArray(value)
+    buildMap {
+        repeat(array.length()) { index ->
+            val item = array.getJSONObject(index)
+            val pluginId = item.optString("pluginId")
+            val connectorArray = item.optJSONArray("connectorIds") ?: JSONArray()
+            val connectorIds = buildSet {
+                repeat(connectorArray.length()) { connectorIndex ->
+                    connectorArray.optString(connectorIndex).takeIf(String::isNotBlank)?.let(::add)
+                }
+            }
+            if (pluginId.isNotBlank() && connectorIds.isNotEmpty()) put(pluginId, connectorIds)
+        }
+    }
+}.getOrDefault(emptyMap())
 
 private fun encodeCustomExtensionSources(sources: List<CustomExtensionSource>): String = JSONArray().apply {
     sources.distinctBy(CustomExtensionSource::id).forEach { source ->

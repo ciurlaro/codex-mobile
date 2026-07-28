@@ -21,6 +21,10 @@ import io.github.ciurlaro.codexmobile.core.AgentConnector
 import io.github.ciurlaro.codexmobile.core.AgentElicitation
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentMcpServer
+import io.github.ciurlaro.codexmobile.core.AgentCollaborationMode
+import io.github.ciurlaro.codexmobile.core.AgentHook
+import io.github.ciurlaro.codexmobile.core.AgentHookActivity
+import io.github.ciurlaro.codexmobile.core.AgentPlanProgress
 import io.github.ciurlaro.codexmobile.core.AgentModel
 import io.github.ciurlaro.codexmobile.core.AgentPluginSummary
 import io.github.ciurlaro.codexmobile.core.AgentSkill
@@ -32,6 +36,9 @@ data class AppUiState(
     val statusMessage: String = "Ready to sign in",
     val streamedText: String = "",
     val streamedReasoning: String = "",
+    val streamedPlan: String = "",
+    val planProgress: AgentPlanProgress? = null,
+    val hookActivities: List<AgentHookActivity> = emptyList(),
     val sessionId: SessionId? = null,
     val isAuthenticated: Boolean = false,
     val conversations: List<AgentConversationSummary> = emptyList(),
@@ -68,6 +75,7 @@ data class AppUiState(
     val enabledExtensionSourceIds: Set<String> = emptySet(),
     val customExtensionSources: List<CustomExtensionSource> = emptyList(),
     val unavailablePluginIds: Set<String> = emptySet(),
+    val pendingPluginSetups: Map<String, Set<String>> = emptyMap(),
     val skillsError: String? = null,
     val availableSkillsError: String? = null,
     val pluginCatalogError: String? = null,
@@ -79,6 +87,11 @@ data class AppUiState(
     val selectedEffort: String? = null,
     val selectedSpeedTier: String? = null,
     val approvalPreset: AgentApprovalPreset = AgentApprovalPreset.AUTO_REVIEW,
+    val collaborationMode: AgentCollaborationMode = AgentCollaborationMode.DEFAULT,
+    val hooks: List<AgentHook> = emptyList(),
+    val hooksWarnings: List<String> = emptyList(),
+    val hooksError: String? = null,
+    val isHooksLoading: Boolean = false,
     val isHistoryOpen: Boolean = false,
     val screen: AppScreen = AppScreen.CHAT,
     val extensionsReturnScreen: AppScreen = AppScreen.SETTINGS,
@@ -106,6 +119,9 @@ data class AppUiState(
 
     val pluginActionsEnabled: Boolean
         get() = pluginCatalogStatus == PluginCatalogStatus.LIVE
+
+    val pendingPluginIds: Set<String>
+        get() = pendingPluginSetups.keys
 
     val extensionSources: List<ExtensionSourceUi>
         get() = extensionSourceItems(

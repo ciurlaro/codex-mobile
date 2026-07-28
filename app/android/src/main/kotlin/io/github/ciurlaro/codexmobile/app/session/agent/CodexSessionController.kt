@@ -10,6 +10,7 @@ import io.github.ciurlaro.codexmobile.core.AgentElicitationAction
 import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentMcpServer
+import io.github.ciurlaro.codexmobile.core.AgentHookCatalog
 import io.github.ciurlaro.codexmobile.core.AgentModel
 import io.github.ciurlaro.codexmobile.core.AgentPluginCatalog
 import io.github.ciurlaro.codexmobile.core.AgentPluginDetail
@@ -141,6 +142,10 @@ internal class CodexSessionController(
                 statusMessage = statusMessage,
                 streamedText = "",
                 streamedReasoning = "",
+                streamedPlan = "",
+                planItemId = null,
+                planProgress = null,
+                hookActivities = emptyList(),
                 reasoningItemId = null,
                 reasoningSummaryIndex = null,
                 shellExitCode = null,
@@ -179,6 +184,10 @@ internal class CodexSessionController(
                 statusMessage = "Ready",
                 streamedText = "",
                 streamedReasoning = "",
+                streamedPlan = "",
+                planItemId = null,
+                planProgress = null,
+                hookActivities = emptyList(),
                 reasoningItemId = null,
                 reasoningSummaryIndex = null,
                 sessionId = null,
@@ -199,6 +208,10 @@ internal class CodexSessionController(
                 statusMessage = "Loading conversation…",
                 streamedText = "",
                 streamedReasoning = "",
+                streamedPlan = "",
+                planItemId = null,
+                planProgress = null,
+                hookActivities = emptyList(),
                 reasoningItemId = null,
                 reasoningSummaryIndex = null,
                 diagnosticCode = null,
@@ -282,6 +295,15 @@ internal class CodexSessionController(
         agentClient.listConnectors(state.value.sessionId, forceReload)
 
     suspend fun listMcpServers(): List<AgentMcpServer> = agentClient.listMcpServers()
+
+    suspend fun listHooks(workingDirectory: String): AgentHookCatalog =
+        agentClient.listHooks(workingDirectory)
+
+    suspend fun setHookEnabled(key: String, enabled: Boolean) =
+        runExternalOperation("Updating hook") { agentClient.setHookEnabled(key, enabled) }
+
+    suspend fun trustHook(key: String, currentHash: String) =
+        runExternalOperation("Trusting hook") { agentClient.trustHook(key, currentHash) }
 
     suspend fun startMcpOauth(serverName: String): String =
         runExternalOperation("Connecting to $serverName") {
@@ -403,9 +425,26 @@ internal class CodexSessionController(
                 )
             }
 
-            is AgentEvent.TextDelta -> appendStreamedText(event.sessionId, event.text)
+            is AgentEvent.TextDelta -> if (event.isCommentary) {
+                appendThoughtText(event.sessionId, event.text, event.itemId ?: "commentary", null)
+            } else {
+                appendStreamedText(event.sessionId, event.text)
+            }
 
             is AgentEvent.ReasoningSummaryDelta -> appendReasoningSummary(event)
+
+            is AgentEvent.PlanDelta -> appendPlan(event)
+
+            is AgentEvent.PlanUpdated -> mutableState.update {
+                if (it.sessionId == event.sessionId) it.copy(planProgress = event.progress) else it
+            }
+
+            is AgentEvent.HookActivityChanged -> mutableState.update { current ->
+                if (current.sessionId != event.sessionId) current else current.copy(
+                    hookActivities = (current.hookActivities.filterNot { it.id == event.activity.id } +
+                        event.activity).takeLast(MAX_HOOK_ACTIVITIES),
+                )
+            }
 
             is AgentEvent.ShellOutputDelta -> appendStreamedText(event.sessionId, event.text)
 
@@ -513,19 +552,31 @@ internal class CodexSessionController(
         }
     }
 
-    private fun appendReasoningSummary(event: AgentEvent.ReasoningSummaryDelta) {
+    private fun appendReasoningSummary(event: AgentEvent.ReasoningSummaryDelta) = appendThoughtText(
+        event.sessionId,
+        event.text,
+        event.itemId,
+        event.summaryIndex,
+    )
+
+    private fun appendThoughtText(
+        sessionId: SessionId,
+        text: String,
+        itemId: String,
+        summaryIndex: Long?,
+    ) {
         mutableState.update {
             if (
-                it.sessionId != event.sessionId ||
+                it.sessionId != sessionId ||
                 it.streamedReasoning.endsWith(TRUNCATION_MARKER)
             ) {
                 it
             } else {
                 val separator = if (
                     it.streamedReasoning.isNotEmpty() &&
-                    (it.reasoningItemId != event.itemId || it.reasoningSummaryIndex != event.summaryIndex)
+                    (it.reasoningItemId != itemId || it.reasoningSummaryIndex != summaryIndex)
                 ) "\n\n" else ""
-                val delta = separator + event.text
+                val delta = separator + text
                 val remaining = MAX_STREAMED_TEXT_CHARS - it.streamedReasoning.length
                 val next = if (delta.length <= remaining) {
                     it.streamedReasoning + delta
@@ -534,8 +585,26 @@ internal class CodexSessionController(
                 }
                 it.copy(
                     streamedReasoning = next,
-                    reasoningItemId = event.itemId,
-                    reasoningSummaryIndex = event.summaryIndex,
+                    reasoningItemId = itemId,
+                    reasoningSummaryIndex = summaryIndex,
+                )
+            }
+        }
+    }
+
+    private fun appendPlan(event: AgentEvent.PlanDelta) {
+        mutableState.update {
+            if (it.sessionId != event.sessionId || it.streamedPlan.endsWith(TRUNCATION_MARKER)) {
+                it
+            } else {
+                val next = if (it.planItemId == null || it.planItemId == event.itemId) {
+                    it.streamedPlan + event.text
+                } else {
+                    event.text
+                }
+                it.copy(
+                    streamedPlan = next.take(MAX_STREAMED_TEXT_CHARS),
+                    planItemId = event.itemId,
                 )
             }
         }
@@ -610,6 +679,7 @@ internal class CodexSessionController(
         const val MAX_STREAMED_TEXT_CHARS = 256 * 1024
         const val MAX_VISIBLE_ERROR_CHARS = 500
         const val STOP_TIMEOUT_MILLIS = 5_000L
+        const val MAX_HOOK_ACTIVITIES = 20
         const val TRUNCATION_MARKER = "\n[Response truncated]"
     }
 }

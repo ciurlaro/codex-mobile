@@ -10,6 +10,7 @@ import io.github.ciurlaro.codexmobile.core.AgentClient
 import io.github.ciurlaro.codexmobile.core.AgentCatalogFreshness
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentConnector
+import io.github.ciurlaro.codexmobile.core.AgentCollaborationMode
 import io.github.ciurlaro.codexmobile.core.AgentConversation
 import io.github.ciurlaro.codexmobile.core.AgentConversationSummary
 import io.github.ciurlaro.codexmobile.core.AgentElicitationAction
@@ -17,6 +18,11 @@ import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentFormValue
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
+import io.github.ciurlaro.codexmobile.core.AgentHook
+import io.github.ciurlaro.codexmobile.core.AgentHookActivity
+import io.github.ciurlaro.codexmobile.core.AgentHookCatalog
+import io.github.ciurlaro.codexmobile.core.AgentHookRunStatus
+import io.github.ciurlaro.codexmobile.core.AgentHookTrustStatus
 import io.github.ciurlaro.codexmobile.core.AgentMcpServer
 import io.github.ciurlaro.codexmobile.core.AgentMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
@@ -30,6 +36,9 @@ import io.github.ciurlaro.codexmobile.core.AgentPluginInstallResult
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
 import io.github.ciurlaro.codexmobile.core.AgentPluginRemovalResult
 import io.github.ciurlaro.codexmobile.core.AgentPluginUnavailableException
+import io.github.ciurlaro.codexmobile.core.AgentPlanProgress
+import io.github.ciurlaro.codexmobile.core.AgentPlanStep
+import io.github.ciurlaro.codexmobile.core.AgentPlanStepStatus
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentServiceTier
 import io.github.ciurlaro.codexmobile.core.AgentSkillCatalog
@@ -68,6 +77,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonObjectBuilder
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -86,6 +96,7 @@ class CodexAgentClient(
     private val pluginCacheDirectory: File? = null,
     threadProviderStateDirectory: File? = null,
     shellTranscriptDirectory: File? = null,
+    turnInputMetadataDirectory: File? = null,
     private val builtInToolDispatcher: BuiltInToolDispatcher? = null,
     private val providerHost: PluginProviderHost? = null,
     private val pluginRequestTimeoutMillis: Long = 120_000,
@@ -98,15 +109,17 @@ class CodexAgentClient(
     private val cancelledLoginIds = mutableSetOf<String>()
     private val pendingApprovalRequests = ConcurrentHashMap<String, PendingApproval>()
     private val pendingBuiltInApprovals = ConcurrentHashMap<String, PendingBuiltInApproval>()
-    private val pendingElicitationRequests = ConcurrentHashMap<String, JsonElement>()
+    private val pendingElicitationRequests = ConcurrentHashMap<String, PendingElicitation>()
     private val workItems = ConcurrentHashMap<String, Pair<SessionId, AgentWorkActivity>>()
     private val userShellItems = ConcurrentHashMap.newKeySet<String>()
+    private val commentaryItems = ConcurrentHashMap.newKeySet<String>()
     private val knownSkillPaths = ConcurrentHashMap.newKeySet<String>()
     private val openedSessions = ConcurrentHashMap.newKeySet<SessionId>()
     private val sessionRuntimeSettings = ConcurrentHashMap<SessionId, SessionRuntimeSettings>()
     private val pendingAvailabilityNotices = ConcurrentHashMap<SessionId, PendingAvailabilityNotice>()
     private val threadProviderStateStore = ThreadProviderStateStore(threadProviderStateDirectory)
     private val shellTranscriptStore = ShellTranscriptStore(shellTranscriptDirectory)
+    private val turnInputMetadataStore = TurnInputMetadataStore(turnInputMetadataDirectory)
     private val threadProviderStates = ConcurrentHashMap<SessionId, ThreadProviderState>()
     @Volatile
     private var builtInToolDefinitions = builtInToolDispatcher?.definitions().orEmpty()
@@ -612,7 +625,7 @@ class CodexAgentClient(
         }
         pluginRequest(
             AppServerClientMethods.PluginUninstall,
-            PluginUninstallParams(plugin.id),
+            pluginUninstallParams(plugin),
         )
         if (host != null) {
             host.remove(plugin.id)
@@ -671,6 +684,63 @@ class CodexAgentClient(
         )
             .filterNot { it.name == INTERNAL_APPS_MCP_SERVER }
 
+    override suspend fun listHooks(workingDirectory: String): AgentHookCatalog {
+        validateWorkingDirectory(workingDirectory)
+        val entries = connection.request(
+            AppServerClientMethods.HooksList,
+            HooksListParams(listOf(workingDirectory)),
+        ).data
+        return AgentHookCatalog(
+            hooks = entries.flatMap(HooksListEntry::hooks).distinctBy(HookMetadata::key).map { hook ->
+                AgentHook(
+                    key = hook.key,
+                    currentHash = hook.currentHash,
+                    enabled = hook.enabled,
+                    eventName = hook.eventName.name,
+                    handlerType = hook.handlerType.name,
+                    isManaged = hook.isManaged,
+                    source = hook.source.name,
+                    sourcePath = hook.sourcePath,
+                    timeoutSeconds = hook.timeoutSec,
+                    trustStatus = enumValueOf(hook.trustStatus.name),
+                    command = hook.command,
+                    matcher = hook.matcher,
+                    pluginId = hook.pluginId,
+                    statusMessage = hook.statusMessage,
+                )
+            }.sortedBy(AgentHook::key),
+            warnings = entries.flatMap(HooksListEntry::warnings).distinct(),
+            errors = entries.flatMap(HooksListEntry::errors).map { "${it.path}: ${it.message}" }.distinct(),
+        )
+    }
+
+    override suspend fun setHookEnabled(key: String, enabled: Boolean) {
+        require(key.isNotBlank()) { "Hook key must not be blank" }
+        writeHookState(key) { put("enabled", enabled) }
+    }
+
+    override suspend fun trustHook(key: String, currentHash: String) {
+        require(key.isNotBlank()) { "Hook key must not be blank" }
+        require(currentHash.isNotBlank()) { "Hook hash must not be blank" }
+        writeHookState(key) { put("trusted_hash", currentHash) }
+    }
+
+    private suspend fun writeHookState(key: String, state: JsonObjectBuilder.() -> Unit) {
+        connection.request(
+            AppServerClientMethods.ConfigBatchWrite,
+            ConfigBatchWriteParams(
+                edits = listOf(
+                    ConfigEdit(
+                        keyPath = "hooks.state",
+                        mergeStrategy = MergeStrategy.UPSERT,
+                        value = buildJsonObject { putJsonObject(key, state) },
+                    ),
+                ),
+                reloadUserConfig = true,
+            ),
+        )
+    }
+
     override suspend fun startMcpOauth(serverName: String, sessionId: SessionId?): String {
         require(serverName.isNotBlank()) { "MCP server name must not be blank" }
         return connection.request(
@@ -705,11 +775,13 @@ class CodexAgentClient(
         ).thread
         check(thread.id == sessionId.value) { "App-server returned another thread" }
         val transcripts = shellTranscriptStore.read(sessionId.value).groupBy(ShellTranscript::turnId)
+        val recordedInvocations = turnInputMetadataStore.read(sessionId.value)
         val messages = thread.turns.flatMap { turn ->
             transcripts[turn.id].orEmpty().flatMap(::shellTranscriptMessages) + conversationMessages(
                 turn.items.map { item ->
                     PROTOCOL_JSON.encodeToJsonElement(ThreadItem.serializer(), item)
                 },
+                recordedInvocations,
             )
         }
         return AgentConversation(
@@ -738,6 +810,7 @@ class CodexAgentClient(
         threadProviderStates -= sessionId
         threadProviderStateStore.delete(sessionId.value)
         shellTranscriptStore.delete(sessionId.value)
+        turnInputMetadataStore.delete(sessionId.value)
         synchronized(turnStateLock) {
             activeTurns -= sessionId
             startingTurns -= sessionId
@@ -762,7 +835,7 @@ class CodexAgentClient(
         val config = buildJsonObject {
             put("web_search", "live")
             putJsonObject("tools") {
-                putJsonObject("experimental_request_user_input") { put("enabled", false) }
+                putJsonObject("experimental_request_user_input") { put("enabled", true) }
             }
             putJsonObject("features") {
                 put("shell_tool", true)
@@ -773,7 +846,7 @@ class CodexAgentClient(
                 put("plugins", true)
                 put("image_generation", false)
                 put("goals", false)
-                put("hooks", false)
+                put("hooks", true)
                 put("skill_mcp_dependency_install", false)
                 put("workspace_dependencies", false)
                 put("standalone_web_search", false)
@@ -843,6 +916,8 @@ class CodexAgentClient(
         sessionRuntimeSettings[sessionId] = SessionRuntimeSettings(
             workspace = settings.workingDirectory,
             approvalPreset = settings.approvalPreset,
+            model = opened.model,
+            effort = opened.effort,
         )
         eventsChannel.send(opened)
         if (previous == null) {
@@ -892,7 +967,17 @@ class CodexAgentClient(
         sessionRuntimeSettings[sessionId] = SessionRuntimeSettings(
             workspace = snapshot.workingDirectory ?: previousRuntimeSettings?.workspace,
             approvalPreset = snapshot.approvalPreset,
+            model = snapshot.model ?: previousRuntimeSettings?.model,
+            effort = snapshot.effort ?: previousRuntimeSettings?.effort,
         )
+        snapshot.clientMessageId?.takeIf { snapshot.invocations.isNotEmpty() }?.let { clientMessageId ->
+            runCatching {
+                turnInputMetadataStore.upsert(
+                    sessionId.value,
+                    TurnInputMetadata(clientMessageId, snapshot.invocations),
+                )
+            }
+        }
 
         try {
             val result = connection.request(
@@ -906,6 +991,19 @@ class CodexAgentClient(
                     cwd = snapshot.workingDirectory,
                     effort = snapshot.effort,
                     model = snapshot.model,
+                    collaborationMode = if (snapshot.collaborationMode == AgentCollaborationMode.PLAN) {
+                        CollaborationMode(
+                            mode = ModeKind.PLAN,
+                            settings = Settings(
+                                model = snapshot.model ?: previousRuntimeSettings?.model
+                                    ?: error("Active model is unavailable"),
+                                developer_instructions = null,
+                                reasoning_effort = "medium",
+                            ),
+                        )
+                    } else {
+                        null
+                    },
                     serviceTier = snapshot.serviceTier,
                     summary = JsonPrimitive("auto"),
                 ),
@@ -1011,13 +1109,35 @@ class CodexAgentClient(
         requestId: String,
         response: AgentElicitationResponse,
     ) {
-        val wireId = pendingElicitationRequests.remove(requestId)
+        val pending = pendingElicitationRequests.remove(requestId)
             ?: error("Elicitation request is no longer pending")
-        connection.respond(
-            wireId,
-            AppServerServerMethods.McpServerElicitationRequest,
-            elicitationResponse(response),
-        )
+        when (pending) {
+            is PendingElicitation.Mcp -> connection.respond(
+                pending.wireId,
+                AppServerServerMethods.McpServerElicitationRequest,
+                elicitationResponse(response),
+            )
+            is PendingElicitation.UserInput -> connection.respond(
+                pending.wireId,
+                AppServerServerMethods.ItemToolRequestUserInput,
+                ToolRequestUserInputResponse(
+                    answers = if (response.action == AgentElicitationAction.ACCEPT) {
+                        response.content.mapValues { (_, value) ->
+                            ToolRequestUserInputAnswer(
+                                when (value) {
+                                    is AgentFormValue.Text -> listOf(value.value)
+                                    is AgentFormValue.Number -> listOf(value.value.toString())
+                                    is AgentFormValue.BooleanValue -> listOf(value.value.toString())
+                                    is AgentFormValue.TextList -> value.value
+                                },
+                            )
+                        }
+                    } else {
+                        emptyMap()
+                    },
+                ),
+            )
+        }
     }
 
     override fun close() {
@@ -1027,6 +1147,7 @@ class CodexAgentClient(
         pendingElicitationRequests.clear()
         workItems.clear()
         userShellItems.clear()
+        commentaryItems.clear()
         knownSkillPaths.clear()
         openedSessions.clear()
         sessionRuntimeSettings.clear()
@@ -1169,6 +1290,8 @@ class CodexAgentClient(
             )
             is ServerRequestMcpServerElicitationRequestRequest ->
                 handleElicitationRequest(request.id, request.params)
+            is ServerRequestItemToolRequestUserInputRequest ->
+                handleUserInputRequest(request.id, request.params)
             is ServerRequestItemToolCallRequest -> handleBuiltInToolCall(request.id, request.params)
             else -> {
                 val wire = PROTOCOL_JSON.encodeToJsonElement(ServerRequest.serializer(), request).jsonObject
@@ -1357,7 +1480,7 @@ class CodexAgentClient(
             val requestId = id.toString()
             val parsed = parseElicitation(requestId, params)
             check(parsed.sessionId in openedSessions) { "Elicitation session is not open" }
-            check(pendingElicitationRequests.putIfAbsent(requestId, id) == null) {
+            check(pendingElicitationRequests.putIfAbsent(requestId, PendingElicitation.Mcp(id)) == null) {
                 "Elicitation request ID is already pending"
             }
             parsed
@@ -1366,6 +1489,29 @@ class CodexAgentClient(
                 id,
                 AppServerServerMethods.McpServerElicitationRequest,
                 McpServerElicitationRequestResponse(McpServerElicitationAction.DECLINE),
+            )
+            return
+        }
+        eventsChannel.send(AgentEvent.ElicitationRequested(elicitation))
+    }
+
+    private suspend fun handleUserInputRequest(id: JsonElement, params: ToolRequestUserInputParams) {
+        val elicitation = runCatching {
+            val requestId = id.toString()
+            val parsed = parseUserInputRequest(requestId, params)
+            check(parsed.sessionId in openedSessions) { "Plan session is not open" }
+            check(
+                pendingElicitationRequests.putIfAbsent(
+                    requestId,
+                    PendingElicitation.UserInput(id),
+                ) == null,
+            ) { "Plan input request ID is already pending" }
+            parsed
+        }.getOrElse {
+            connection.respond(
+                id,
+                AppServerServerMethods.ItemToolRequestUserInput,
+                ToolRequestUserInputResponse(emptyMap()),
             )
             return
         }
@@ -1464,6 +1610,7 @@ class CodexAgentClient(
                         sessionId = sessionId,
                         text = params.delta,
                         itemId = params.itemId,
+                        isCommentary = params.itemId in commentaryItems,
                     ),
                 )
             }
@@ -1480,6 +1627,49 @@ class CodexAgentClient(
                 )
             }
 
+            is ServerNotificationItemPlanDeltaNotification -> {
+                val params = notification.params
+                eventsChannel.send(
+                    AgentEvent.PlanDelta(
+                        sessionId = SessionId(params.threadId),
+                        text = params.delta,
+                        itemId = params.itemId,
+                    ),
+                )
+            }
+
+            is ServerNotificationTurnPlanUpdatedNotification -> {
+                val params = notification.params
+                eventsChannel.send(
+                    AgentEvent.PlanUpdated(
+                        sessionId = SessionId(params.threadId),
+                        progress = AgentPlanProgress(
+                            explanation = params.explanation,
+                            steps = params.plan.map { step ->
+                                AgentPlanStep(
+                                    text = step.step,
+                                    status = enumValueOf(step.status.name),
+                                )
+                            },
+                        ),
+                    ),
+                )
+            }
+
+            is ServerNotificationHookStartedNotification -> eventsChannel.send(
+                AgentEvent.HookActivityChanged(
+                    SessionId(notification.params.threadId),
+                    notification.params.run.toAgentHookActivity(),
+                ),
+            )
+
+            is ServerNotificationHookCompletedNotification -> eventsChannel.send(
+                AgentEvent.HookActivityChanged(
+                    SessionId(notification.params.threadId),
+                    notification.params.run.toAgentHookActivity(),
+                ),
+            )
+
             is ServerNotificationItemCommandExecutionOutputDeltaNotification -> {
                 val params = notification.params
                 if (params.itemId in userShellItems) {
@@ -1492,17 +1682,23 @@ class CodexAgentClient(
                 }
             }
 
-            is ServerNotificationItemStartedNotification -> updateItemActivity(
-                notification.params.threadId,
-                notification.params.turnId,
-                notification.params.item,
-                started = true,
-            )
+            is ServerNotificationItemStartedNotification -> {
+                val params = notification.params
+                val item = params.item
+                if (
+                    item is ThreadItemAgentMessageThreadItem &&
+                    (item.phase as? JsonPrimitive)?.contentOrNull == "commentary"
+                ) {
+                    commentaryItems += item.id
+                }
+                updateItemActivity(params.threadId, params.turnId, item, started = true)
+            }
 
             is ServerNotificationItemCompletedNotification -> {
                 val params = notification.params
                 completeUserShellItem(params.threadId, params.turnId, params.item)
                 updateItemActivity(params.threadId, params.turnId, params.item, started = false)
+                (params.item as? ThreadItemAgentMessageThreadItem)?.let { commentaryItems -= it.id }
             }
 
             is ServerNotificationTurnCompletedNotification -> {
@@ -1531,6 +1727,15 @@ class CodexAgentClient(
             else -> Unit
         }
     }
+
+    private fun HookRunSummary.toAgentHookActivity() = AgentHookActivity(
+        id = id,
+        eventName = eventName.name,
+        handlerType = handlerType.name,
+        status = enumValueOf(status.name),
+        statusMessage = statusMessage,
+        details = entries.map(HookOutputEntry::text),
+    )
 
     private suspend fun emitAuthenticated() {
         if (authenticated.compareAndSet(false, true)) {
@@ -1665,6 +1870,7 @@ class CodexAgentClient(
             clientId = null,
             role = AgentMessageRole.USER,
             text = "!${transcript.command}",
+            shellCommand = transcript.command,
         ),
         AgentMessage(
             id = transcript.itemId,
@@ -1700,16 +1906,26 @@ class CodexAgentClient(
     }
 
     private fun pluginReadParams(plugin: AgentPluginReference) = PluginReadParams(
-        pluginName = plugin.name,
+        pluginName = plugin.appServerPluginName(),
         marketplacePath = plugin.marketplacePath,
         remoteMarketplaceName = plugin.marketplaceName.takeIf { plugin.marketplacePath == null },
     )
 
     private fun pluginInstallParams(plugin: AgentPluginReference) = PluginInstallParams(
-        pluginName = plugin.name,
+        pluginName = plugin.appServerPluginName(),
         marketplacePath = plugin.marketplacePath,
         remoteMarketplaceName = plugin.marketplaceName.takeIf { plugin.marketplacePath == null },
     )
+
+    private fun pluginUninstallParams(plugin: AgentPluginReference) = PluginUninstallParams(
+        pluginId = if (plugin.marketplacePath == null) plugin.appServerPluginName() else plugin.id,
+    )
+
+    private fun AgentPluginReference.appServerPluginName(): String = if (marketplacePath == null) {
+        requireNotNull(remotePluginId) { "Remote plugin $id is missing its catalog identifier; refresh the catalog" }
+    } else {
+        name
+    }
 
     private fun pluginEnablementParams(pluginId: String, enabled: Boolean) = ConfigValueWriteParams(
         keyPath = "plugins.$pluginId.enabled",
@@ -1779,7 +1995,7 @@ class CodexAgentClient(
             if (plugin.id in installed) {
                 pluginRequest(
                     AppServerClientMethods.PluginUninstall,
-                    PluginUninstallParams(plugin.id),
+                    pluginUninstallParams(plugin),
                 )
             }
             host.remove(plugin.id)
@@ -1881,6 +2097,8 @@ class CodexAgentClient(
     private data class SessionRuntimeSettings(
         val workspace: String?,
         val approvalPreset: io.github.ciurlaro.codexmobile.core.AgentApprovalPreset,
+        val model: String?,
+        val effort: String?,
     )
 
     private data class PendingBuiltInApproval(
@@ -1892,6 +2110,13 @@ class CodexAgentClient(
     )
 
     private data class PendingApproval(val wireId: JsonElement, val type: ApprovalType)
+
+    private sealed interface PendingElicitation {
+        val wireId: JsonElement
+
+        data class Mcp(override val wireId: JsonElement) : PendingElicitation
+        data class UserInput(override val wireId: JsonElement) : PendingElicitation
+    }
 
     private enum class ApprovalType { COMMAND, FILE_CHANGE }
 

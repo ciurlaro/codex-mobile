@@ -3,6 +3,7 @@ package io.github.ciurlaro.codexmobile.app.presentation.state
 import io.github.ciurlaro.codexmobile.app.presentation.model.AppScreen
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatMessage
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
+import io.github.ciurlaro.codexmobile.core.AgentCollaborationMode
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
 import io.github.ciurlaro.codexmobile.core.SessionId
 
@@ -16,6 +17,7 @@ internal fun AppUiState.withSubmittedTurn(
         id = "user-${request.clientMessageId}",
         role = AgentMessageRole.USER,
         text = request.prompt,
+        collaborationMode = request.collaborationMode,
         capabilities = if (shellCommand == null) request.capabilities else emptySet(),
         invocations = if (shellCommand == null) request.invocations else emptyList(),
         model = request.model,
@@ -37,8 +39,12 @@ internal fun AppUiState.withNewChat() = copy(
     statusMessage = if (isAuthenticated) "Ready" else statusMessage,
     streamedText = "",
     streamedReasoning = "",
+    streamedPlan = "",
+    planProgress = null,
+    hookActivities = emptyList(),
     sessionId = null,
     messages = emptyList(),
+    collaborationMode = AgentCollaborationMode.DEFAULT,
     draft = "",
     selectedCapabilities = emptySet(),
     selectedInvocations = emptyList(),
@@ -66,6 +72,9 @@ internal fun List<ChatMessage>.withStreamingAssistant(
     assistantMessageId: String,
     text: String,
     reasoning: String = "",
+    plan: String = "",
+    planProgress: io.github.ciurlaro.codexmobile.core.AgentPlanProgress? = null,
+    hookActivities: List<io.github.ciurlaro.codexmobile.core.AgentHookActivity> = emptyList(),
     isStreaming: Boolean,
     exitCode: Int?,
 ): List<ChatMessage> = map { message ->
@@ -73,6 +82,9 @@ internal fun List<ChatMessage>.withStreamingAssistant(
         message.copy(
             text = text,
             reasoning = reasoning.takeIf(String::isNotEmpty),
+            plan = plan.takeIf(String::isNotEmpty),
+            planProgress = planProgress,
+            hookActivities = hookActivities,
             isStreaming = isStreaming,
             exitCode = exitCode,
         )
@@ -82,6 +94,6 @@ internal fun List<ChatMessage>.withStreamingAssistant(
 }.let { updated ->
     if (isStreaming) updated else updated.filterNot {
         it.id == assistantMessageId && it.text.isEmpty() &&
-            it.reasoning.isNullOrEmpty() && it.shellCommand == null
+            it.reasoning.isNullOrEmpty() && it.plan.isNullOrEmpty() && it.shellCommand == null
     }
 }

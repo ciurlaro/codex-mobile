@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import io.github.ciurlaro.codexmobile.app.lifecycle.CodexMobileApplication
 import io.github.ciurlaro.codexmobile.app.persistence.AppPreferencesStore
 import io.github.ciurlaro.codexmobile.app.presentation.input.shellCommandOrNull
+import io.github.ciurlaro.codexmobile.app.presentation.input.planCommandOrNull
 import io.github.ciurlaro.codexmobile.app.presentation.input.withoutActiveInvocationToken
 import io.github.ciurlaro.codexmobile.app.presentation.invocation.withRecentInvocation
 import io.github.ciurlaro.codexmobile.app.presentation.mapper.toChatMessage
@@ -16,6 +17,7 @@ import io.github.ciurlaro.codexmobile.app.presentation.state.AppUiState
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionActionError
 import io.github.ciurlaro.codexmobile.app.presentation.model.CustomExtensionSource
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionNotice
+import io.github.ciurlaro.codexmobile.app.presentation.model.afterExpiry
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionRemoval
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionSourceSelection
 import io.github.ciurlaro.codexmobile.app.presentation.model.ExtensionStatus
@@ -28,6 +30,7 @@ import io.github.ciurlaro.codexmobile.app.presentation.model.PluginCatalogStatus
 import io.github.ciurlaro.codexmobile.app.presentation.model.canonicalPluginSourceId
 import io.github.ciurlaro.codexmobile.app.presentation.model.enabledMarketplaceNames
 import io.github.ciurlaro.codexmobile.app.presentation.model.initialExtensionSourceSelection
+import io.github.ciurlaro.codexmobile.app.presentation.model.reconcilePendingPluginSetups
 import io.github.ciurlaro.codexmobile.app.presentation.state.withNewChat
 import io.github.ciurlaro.codexmobile.app.presentation.state.withStreamingAssistant
 import io.github.ciurlaro.codexmobile.app.presentation.state.withSubmittedTurn
@@ -43,9 +46,13 @@ import io.github.ciurlaro.codexmobile.core.AgentApprovalPreset
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentCatalogFreshness
 import io.github.ciurlaro.codexmobile.core.AgentConnector
+import io.github.ciurlaro.codexmobile.core.AgentCollaborationMode
+import io.github.ciurlaro.codexmobile.core.PLAN_CLIENT_MESSAGE_PREFIX
+import io.github.ciurlaro.codexmobile.core.AgentHook
 import io.github.ciurlaro.codexmobile.core.AgentEvent
 import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
+import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentModel
 import io.github.ciurlaro.codexmobile.core.AgentPluginAuthPolicy
 import io.github.ciurlaro.codexmobile.core.AgentPluginReference
@@ -66,10 +73,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
     private val appContext = application.applicationContext
@@ -81,6 +92,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         savedCustomSources = uiPreferences.savedCustomExtensionSources,
         appWasUpgraded = uiPreferences.appWasUpgraded,
     )
+    private val restoredPendingPluginSetups = uiPreferences.pendingPluginSetups
     private val mutableState = MutableStateFlow(
         AppUiState(
             hasStorageAccess = container.platform.hasStoragePermission(),
@@ -95,6 +107,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             knownExtensionSourceIds = initialExtensionSources.knownIds,
             enabledExtensionSourceIds = initialExtensionSources.enabledIds,
             customExtensionSources = initialExtensionSources.customSources,
+            pendingPluginSetups = restoredPendingPluginSetups,
         ),
     )
     private var serviceController: CodexSessionController? = null
@@ -116,8 +129,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var pluginRefreshPending = false
     private var reconciledPluginSourceIds = emptySet<String>()
     private var extensionSourceJob: Job? = null
-    private var integrationsLoaded = false
+    private var extensionNoticeJob: Job? = null
+    private var integrationsLoaded = restoredPendingPluginSetups.isNotEmpty()
     private val pendingConnectorAuthentications = ArrayDeque<AgentConnector>()
+    private var connectorAuthenticationJob: Job? = null
+    private var connectorRefreshJob: Job? = null
+    private val connectorRefreshMutex = Mutex()
     internal var serviceInstanceId: String? = null
         private set
 
@@ -223,6 +240,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     internal fun sendMessage(): SendMessageOutcome {
         val before = mutableState.value
         val shellCommand = before.draft.shellCommandOrNull()
+        val planCommand = if (shellCommand == null) before.draft.planCommandOrNull() else null
+        if (
+            planCommand != null && planCommand.prompt.isBlank() &&
+            before.selectedCapabilities.isEmpty() && before.selectedInvocations.isEmpty()
+        ) {
+            mutableState.update {
+                it.copy(
+                    draft = "",
+                    collaborationMode = AgentCollaborationMode.PLAN,
+                    statusMessage = "Plan mode enabled",
+                )
+            }
+            return SendMessageOutcome.HANDLED
+        }
         if (
             before.draft.isBlank() && before.selectedCapabilities.isEmpty() &&
             before.selectedInvocations.isEmpty()
@@ -241,9 +272,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             mutableState.update { it.copy(statusMessage = "Start a background session first") }
             return SendMessageOutcome.HANDLED
         }
-        val clientMessageId = UUID.randomUUID().toString()
+        val collaborationMode = if (planCommand != null) {
+            AgentCollaborationMode.PLAN
+        } else {
+            before.collaborationMode
+        }
+        val clientMessageId = UUID.randomUUID().toString().let { id ->
+            if (collaborationMode == AgentCollaborationMode.PLAN) "$PLAN_CLIENT_MESSAGE_PREFIX$id" else id
+        }
         val request = AgentTurnRequest(
-            prompt = before.draft.trim(),
+            prompt = planCommand?.prompt ?: before.draft.trim(),
             clientMessageId = clientMessageId,
             model = before.selectedModel,
             effort = before.selectedEffort,
@@ -252,6 +290,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             capabilities = before.selectedCapabilities,
             invocations = before.selectedInvocations,
             workingDirectory = workingDirectory,
+            collaborationMode = collaborationMode,
         )
         val submitted = if (shellCommand != null) {
             controller.submitShell(
@@ -269,8 +308,39 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         val assistantId = "stream-$clientMessageId"
         activeAssistantMessageId = assistantId
-        mutableState.update { it.withSubmittedTurn(request, assistantId, shellCommand) }
+        mutableState.update {
+            it.copy(collaborationMode = collaborationMode)
+                .withSubmittedTurn(request, assistantId, shellCommand)
+        }
         return SendMessageOutcome.HANDLED
+    }
+
+    fun togglePlanMode() {
+        mutableState.update {
+            val next = if (it.collaborationMode == AgentCollaborationMode.PLAN) {
+                AgentCollaborationMode.DEFAULT
+            } else {
+                AgentCollaborationMode.PLAN
+            }
+            it.copy(
+                collaborationMode = next,
+                statusMessage = if (next == AgentCollaborationMode.PLAN) {
+                    "Plan mode enabled"
+                } else {
+                    "Default mode enabled"
+                },
+            )
+        }
+    }
+
+    internal fun proceedWithPlan(): SendMessageOutcome {
+        mutableState.update {
+            it.copy(
+                collaborationMode = AgentCollaborationMode.DEFAULT,
+                draft = "Implement the proposed plan.",
+            )
+        }
+        return sendMessage()
     }
 
     fun updateDraft(value: String) {
@@ -336,9 +406,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val conversation = controller.readConversation(sessionId)
                 if (pendingConversationId == sessionId) {
+                    val restoredMessages = conversation.messages.map { message -> message.toChatMessage() }
+                    val collaborationMode = restoredMessages.lastOrNull { message ->
+                        message.role == AgentMessageRole.USER && message.shellCommand == null
+                    }?.collaborationMode ?: AgentCollaborationMode.DEFAULT
                     mutableState.update {
                         it.copy(
-                            messages = conversation.messages.map { message -> message.toChatMessage() },
+                            messages = restoredMessages,
+                            collaborationMode = collaborationMode,
                             isConversationLoading = false,
                         )
                     }
@@ -434,7 +509,91 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         mutableState.update { it.copy(screen = AppScreen.CHAT, activeSelector = null) }
     }
 
+    fun openHooks() {
+        mutableState.update { it.copy(screen = AppScreen.HOOKS, activeSelector = null) }
+        loadHooks()
+    }
+
+    fun closeHooks() {
+        mutableState.update { it.copy(screen = AppScreen.SETTINGS) }
+    }
+
+    fun refreshHooks() = loadHooks()
+
+    fun setHookEnabled(hook: AgentHook, enabled: Boolean) {
+        if (hook.isManaged) return
+        val controller = serviceController ?: return
+        mutableState.update { it.copy(isHooksLoading = true, hooksError = null) }
+        viewModelScope.launch {
+            runCatching { controller.setHookEnabled(hook.key, enabled) }
+                .onSuccess { loadHooks() }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    mutableState.update {
+                        it.copy(
+                            isHooksLoading = false,
+                            hooksError = error.message?.take(300) ?: "Hook could not be updated",
+                        )
+                    }
+                }
+        }
+    }
+
+    fun trustHook(hook: AgentHook) {
+        if (hook.isManaged) return
+        val controller = serviceController ?: return
+        mutableState.update { it.copy(isHooksLoading = true, hooksError = null) }
+        viewModelScope.launch {
+            runCatching { controller.trustHook(hook.key, hook.currentHash) }
+                .onSuccess { loadHooks() }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    mutableState.update {
+                        it.copy(
+                            isHooksLoading = false,
+                            hooksError = error.message?.take(300) ?: "Hook could not be trusted",
+                        )
+                    }
+                }
+        }
+    }
+
+    private fun loadHooks() {
+        val controller = serviceController
+        val workingDirectory = container.platform.activeWorkspacePath()
+        if (controller == null || workingDirectory == null) {
+            mutableState.update {
+                it.copy(isHooksLoading = false, hooksError = "Select a workspace and sign in to load hooks")
+            }
+            return
+        }
+        mutableState.update { it.copy(isHooksLoading = true, hooksError = null) }
+        viewModelScope.launch {
+            runCatching { controller.listHooks(workingDirectory) }
+                .onSuccess { catalog ->
+                    mutableState.update {
+                        it.copy(
+                            hooks = catalog.hooks,
+                            hooksWarnings = catalog.warnings,
+                            hooksError = catalog.errors.joinToString("\n").ifBlank { null },
+                            isHooksLoading = false,
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    if (error is CancellationException) throw error
+                    mutableState.update {
+                        it.copy(
+                            hooksError = error.message?.take(300) ?: "Hooks could not be loaded",
+                            isHooksLoading = false,
+                        )
+                    }
+                }
+        }
+    }
+
     fun openExtensions(type: ExtensionType, returnScreen: AppScreen) {
+        cancelExtensionNotice()
         mutableState.update {
             it.copy(
                 screen = AppScreen.EXTENSIONS,
@@ -457,6 +616,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeExtensions() {
+        cancelExtensionNotice()
         mutableState.update {
             it.copy(
                 screen = it.extensionsReturnScreen,
@@ -469,6 +629,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshExtensions() {
+        cancelExtensionNotice()
         mutableState.update {
             it.copy(
                 extensionActionError = null,
@@ -478,12 +639,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (mutableState.value.extensionType == ExtensionType.PLUGINS) reconciledPluginSourceIds = emptySet()
         loadCurrentExtensions(forceReload = true)
+        if (mutableState.value.pendingPluginSetups.isNotEmpty()) {
+            serviceController?.let { controller ->
+                viewModelScope.launch { refreshConnectors(controller, forceReload = true) }
+            }
+        }
     }
 
     fun selectExtensionType(type: ExtensionType) {
         mutableState.update {
             it.copy(
                 extensionType = type,
+                extensionStatus = if (type == ExtensionType.SKILLS && it.extensionStatus == ExtensionStatus.SETUP_PENDING) {
+                    ExtensionStatus.INSTALLED
+                } else {
+                    it.extensionStatus
+                },
                 extensionSearch = "",
                 extensionActionError = null,
             )
@@ -507,6 +678,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openExtensionSources() {
+        cancelExtensionNotice()
         mutableState.update { it.copy(extensionSourcesOpen = true, extensionNotice = null) }
     }
 
@@ -589,6 +761,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 supportsSkills = skills.isNotEmpty() || existing?.supportsSkills == true && skillResult.isFailure,
                 supportsPlugins = marketplaceName != null || existing?.supportsPlugins == true && pluginResult.isFailure,
             )
+            val notice = when {
+                skills.isNotEmpty() && marketplaceName != null -> "Source added for skills and plugins"
+                skills.isNotEmpty() -> "Source added for skills; plugin check failed: " +
+                    (pluginResult.exceptionOrNull()?.message ?: "no marketplace found").take(120)
+                marketplaceName != null -> "Source added for plugins; skill check failed: " +
+                    (skillResult.exceptionOrNull()?.message ?: "no skills found").take(120)
+                else -> "Source settings were preserved"
+            }
             extensionSourceJob = null
             mutableState.update {
                 it.copy(
@@ -600,18 +780,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     pluginCatalogStatus = PluginCatalogStatus.NOT_LOADED,
                     isExtensionSourceLoading = false,
                     extensionSourceError = null,
-                    extensionNotice = ExtensionNotice(
-                        when {
-                            skills.isNotEmpty() && marketplaceName != null -> "Source added for skills and plugins"
-                            skills.isNotEmpty() -> "Source added for skills; plugin check failed: " +
-                                (pluginResult.exceptionOrNull()?.message ?: "no marketplace found").take(120)
-                            marketplaceName != null -> "Source added for plugins; skill check failed: " +
-                                (skillResult.exceptionOrNull()?.message ?: "no skills found").take(120)
-                            else -> "Source settings were preserved"
-                        },
-                    ),
                 )
             }
+            showExtensionNotice(notice)
             if (marketplaceName != null) reconciledPluginSourceIds += source.id
             persistExtensionSourceSelection()
         }
@@ -646,16 +817,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         "plugin:${plugin.id}",
         "Plugin could not be installed",
     ) {
+        val controller = serviceController ?: return@extensionMutation
         val installed = mutableState.value.availablePlugins
             .firstOrNull { it.reference.id == plugin.id }
             ?.copy(installed = true, enabled = true)
-        val result = serviceController?.installPlugin(plugin) ?: return@extensionMutation
+        val result = controller.installPlugin(plugin)
+        val requiredConnectors = if (result.authPolicy == AgentPluginAuthPolicy.ON_INSTALL) {
+            val detailConnectors = runCatching { controller.readPlugin(plugin).connectors }.getOrDefault(emptyList())
+            (detailConnectors + result.connectorsNeedingAuthentication)
+                .associateBy(AgentConnector::id)
+                .values
+                .toList()
+        } else {
+            emptyList()
+        }
         val displayName = installed?.displayName ?: plugin.name.replaceFirstChar(Char::uppercase)
-        val notice = result.message ?: "$displayName installed"
         mutableState.update {
             it.copy(
-                statusMessage = notice,
-                extensionNotice = ExtensionNotice(notice),
                 installedPlugins = installed?.let { summary ->
                     (it.installedPlugins.filterNot { candidate -> candidate.reference.id == plugin.id } + summary)
                 } ?: it.installedPlugins,
@@ -664,9 +842,64 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 extensionActionError = null,
             )
         }
+        if (requiredConnectors.isNotEmpty()) {
+            integrationsLoaded = true
+            setPendingPluginSetup(plugin.id, requiredConnectors.mapTo(mutableSetOf(), AgentConnector::id))
+            refreshConnectors(controller, forceReload = true)
+        }
+        val pendingConnectorIds = mutableState.value.pendingPluginSetups[plugin.id].orEmpty()
+        val setupPending = pendingConnectorIds.isNotEmpty()
+        val notice = result.message ?: if (setupPending) {
+            "$displayName installed · setup required"
+        } else {
+            "$displayName installed"
+        }
+        mutableState.update {
+            it.copy(
+                statusMessage = notice,
+                extensionStatus = if (setupPending) ExtensionStatus.SETUP_PENDING else it.extensionStatus,
+            )
+        }
+        showExtensionNotice(notice)
         loadPluginCatalog(forceReload = true)
-        if (result.authPolicy == AgentPluginAuthPolicy.ON_INSTALL) {
-            enqueueConnectorAuthentication(result.connectorsNeedingAuthentication)
+        if (setupPending) {
+            val latest = mutableState.value.connectors.associateBy(AgentConnector::id)
+            enqueueConnectorAuthentication(
+                pendingConnectorIds.mapNotNull { id -> latest[id] ?: requiredConnectors.firstOrNull { it.id == id } },
+            )
+        }
+    }
+
+    fun connectPlugin(plugin: AgentPluginReference) {
+        val operationId = "connect:${plugin.id}"
+        val current = mutableState.value
+        if (current.extensionOperationId == operationId || current.connectorAuthName in current.pendingPluginSetups[plugin.id].orEmpty()) {
+            return
+        }
+        extensionMutation(operationId, "Plugin setup could not be opened") {
+            val controller = serviceController ?: error("Codex is not ready")
+            integrationsLoaded = true
+            val details = runCatching { controller.readPlugin(plugin).connectors }.getOrDefault(emptyList())
+            val refreshed = refreshConnectors(controller, forceReload = true).orEmpty()
+            val pendingIds = mutableState.value.pendingPluginSetups[plugin.id].orEmpty()
+            if (pendingIds.isEmpty()) {
+                mutableState.update {
+                    it.copy(
+                        statusMessage = "Plugin setup complete",
+                        extensionStatus = ExtensionStatus.INSTALLED,
+                    )
+                }
+                showExtensionNotice("Plugin setup complete")
+                return@extensionMutation
+            }
+            val connectors = (details + refreshed)
+                .associateBy(AgentConnector::id)
+                .filterKeys { it in pendingIds }
+                .values
+                .filter { !it.isAccessible && it.installUrl != null }
+            check(connectors.isNotEmpty()) { "A connection link is not available yet; refresh and try again" }
+            enqueueConnectorAuthentication(connectors)
+            mutableState.update { it.copy(statusMessage = "Complete plugin setup in the secure window") }
         }
     }
 
@@ -681,10 +914,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             "$displayName could not be uninstalled"
         }
+        if (result.completed) setPendingPluginSetup(plugin.id, emptySet())
         mutableState.update {
             it.copy(
                 statusMessage = notice,
-                extensionNotice = ExtensionNotice(notice, isError = !result.completed),
                 installedPlugins = if (result.completed) {
                     it.installedPlugins.filterNot { candidate -> candidate.reference.id == plugin.id }
                 } else {
@@ -703,6 +936,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 providerSettings = container.platform.providerSettings(),
             )
         }
+        showExtensionNotice(notice, isError = !result.completed)
         loadPluginCatalog(forceReload = true)
     }
 
@@ -742,21 +976,51 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun connectorAuthenticationFinished(success: Boolean) {
+    fun connectorAuthenticationReturned() {
+        val connectorId = mutableState.value.connectorAuthName ?: return
         mutableState.update {
             it.copy(
                 connectorAuthUrl = null,
                 connectorAuthName = null,
-                statusMessage = if (success) "Integration connected" else it.statusMessage,
             )
         }
-        serviceController?.let { controller ->
-            viewModelScope.launch { refreshConnectors(controller, forceReload = true) }
-        }
-        if (success) {
-            beginNextConnectorAuthentication()
-        } else {
+        val controller = serviceController ?: run {
             pendingConnectorAuthentications.clear()
+            return
+        }
+        connectorAuthenticationJob?.cancel()
+        connectorAuthenticationJob = viewModelScope.launch {
+            var connected = withTimeoutOrNull(CONNECTOR_UPDATE_WAIT_MILLIS) {
+                mutableState.first { state ->
+                    state.connectors.any { it.id == connectorId && it.isAccessible }
+                }
+            } != null
+            if (!connected) {
+                connected = refreshConnectors(controller, forceReload = true)
+                    ?.any { it.id == connectorId && it.isAccessible } == true
+            }
+            if (connected) {
+                mutableState.update {
+                    it.copy(
+                        statusMessage = "Integration connected",
+                        extensionStatus = if (it.pendingPluginSetups.isEmpty()) {
+                            ExtensionStatus.INSTALLED
+                        } else {
+                            it.extensionStatus
+                        },
+                    )
+                }
+                showExtensionNotice("Integration connected")
+                beginNextConnectorAuthentication()
+            } else {
+                pendingConnectorAuthentications.clear()
+                mutableState.update {
+                    it.copy(
+                        statusMessage = "Plugin setup still required",
+                    )
+                }
+                showExtensionNotice("Plugin setup still required", isError = true)
+            }
         }
     }
 
@@ -976,6 +1240,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         skillsJob?.cancel()
         availableSkillsJob?.cancel()
         pluginsJob?.cancel()
+        connectorAuthenticationJob?.cancel()
+        connectorRefreshJob?.cancel()
+        extensionNoticeJob?.cancel()
         serviceConnection.unbind()
         serviceController = null
         notificationsEnabled = null
@@ -1014,7 +1281,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (session.connectorsRevision != connectorsRevision) {
                     connectorsRevision = session.connectorsRevision
-                    if (integrationsLoaded) launch { refreshConnectors(binder.controller, forceReload = true) }
+                    if (integrationsLoaded && connectorRefreshJob?.isActive != true) {
+                        connectorRefreshJob = launch {
+                            refreshConnectors(binder.controller, forceReload = false)
+                        }
+                    }
                 }
                 if (session.isAuthenticated && !chatDataRequested) {
                     chatDataRequested = true
@@ -1052,6 +1323,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         persistSelection()
         loadSkills(forceReload = false)
         loadPluginCatalog(forceReload = false)
+        if (mutableState.value.pendingPluginSetups.isNotEmpty()) {
+            integrationsLoaded = true
+            refreshConnectors(controller, forceReload = true)
+        }
         if (mutableState.value.screen == AppScreen.EXTENSIONS) loadCurrentExtensions(forceReload = false)
     }
 
@@ -1061,7 +1336,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             ExtensionType.SKILLS -> when (current.extensionStatus) {
                 ExtensionStatus.INSTALLED -> loadSkills(forceReload)
                 ExtensionStatus.UNINSTALLED -> loadAvailableSkills(forceReload)
-                ExtensionStatus.UNAVAILABLE -> Unit
+                ExtensionStatus.SETUP_PENDING, ExtensionStatus.UNAVAILABLE -> Unit
             }
             ExtensionType.PLUGINS -> loadPluginCatalog(forceReload)
         }
@@ -1254,14 +1529,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 installedPlugins.isNotEmpty() || availablePlugins.isNotEmpty() -> PluginCatalogStatus.STALE
                 else -> PluginCatalogStatus.ERROR
             }
+            val confirmedAvailableIds = availableCatalog
+                ?.takeIf { it.freshness == AgentCatalogFreshness.LIVE && it.errors.isEmpty() }
+                ?.plugins
+                ?.filter(AgentPluginSummary::available)
+                ?.mapTo(mutableSetOf()) { it.reference.id }
+                .orEmpty()
             mutableState.update {
                 it.copy(
                     installedPlugins = installedPlugins,
                     availablePlugins = availablePlugins,
                     pluginCatalogStatus = status,
                     pluginCatalogError = errors.joinToString("\n").ifBlank { null },
+                    unavailablePluginIds = it.unavailablePluginIds - confirmedAvailableIds,
                 )
             }
+            if (live) reconcileStoredPluginSetups(mutableState.value.connectors, installedIds)
 
             val cached = !forceReload && listOfNotNull(installedCatalog, availableCatalog).any {
                 it.freshness != AgentCatalogFreshness.LIVE
@@ -1327,15 +1610,49 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun refreshConnectors(
         controller: CodexSessionController,
         forceReload: Boolean,
-    ) {
-        val connectors = runCatching { controller.listConnectors(forceReload) }
-        val servers = runCatching { controller.listMcpServers() }
-        mutableState.update {
-            it.copy(
-                connectors = connectors.getOrNull() ?: it.connectors,
-                mcpServers = servers.getOrNull() ?: it.mcpServers,
-            )
+    ): List<AgentConnector>? = connectorRefreshMutex.withLock {
+        val refreshedConnectors = runCatching { controller.listConnectors(forceReload) }.getOrNull()
+        if (refreshedConnectors != null) {
+            mutableState.update { it.copy(connectors = refreshedConnectors) }
+            reconcileStoredPluginSetups(refreshedConnectors)
         }
+        refreshedConnectors
+    }
+
+    private fun setPendingPluginSetup(pluginId: String, connectorIds: Set<String>) {
+        val normalized = connectorIds.filter(String::isNotBlank).toSet()
+        val updated = mutableState.value.pendingPluginSetups.toMutableMap().apply {
+            if (normalized.isEmpty()) remove(pluginId) else put(pluginId, normalized)
+        }.toMap()
+        mutableState.update { it.copy(pendingPluginSetups = updated) }
+        uiPreferences.savePendingPluginSetups(updated)
+    }
+
+    private fun reconcileStoredPluginSetups(
+        connectors: List<AgentConnector>,
+        installedPluginIds: Set<String>? = null,
+    ) {
+        val current = mutableState.value.pendingPluginSetups
+        val reconciled = reconcilePendingPluginSetups(current, connectors, installedPluginIds)
+        if (reconciled == current) return
+        mutableState.update { it.copy(pendingPluginSetups = reconciled) }
+        uiPreferences.savePendingPluginSetups(reconciled)
+    }
+
+    private fun showExtensionNotice(message: String, isError: Boolean = false) {
+        val notice = ExtensionNotice(message, isError)
+        extensionNoticeJob?.cancel()
+        mutableState.update { it.copy(extensionNotice = notice) }
+        extensionNoticeJob = viewModelScope.launch {
+            delay(EXTENSION_NOTICE_DURATION_MILLIS)
+            mutableState.update { state -> state.copy(extensionNotice = state.extensionNotice.afterExpiry(notice)) }
+            extensionNoticeJob = null
+        }
+    }
+
+    private fun cancelExtensionNotice() {
+        extensionNoticeJob?.cancel()
+        extensionNoticeJob = null
     }
 
     private fun extensionMutation(operationId: String, message: String, block: suspend () -> Unit) {
@@ -1403,6 +1720,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun beginOnUseAuthentication(state: AppUiState): Boolean {
+        val pendingPlugin = state.selectedInvocations.filterIsInstance<AgentInvocation.Plugin>()
+            .mapNotNull { invocation -> state.plugins.firstOrNull { it.reference.uri == invocation.uri } }
+            .firstOrNull { it.reference.id in state.pendingPluginSetups }
+        if (pendingPlugin != null) {
+            connectPlugin(pendingPlugin.reference)
+            mutableState.update { it.copy(statusMessage = "Connect the selected plugin to continue") }
+            return true
+        }
         val connectors = state.connectorsNeedingOnUseAuthentication()
         if (connectors.isEmpty()) return false
         enqueueConnectorAuthentication(connectors)
@@ -1461,6 +1786,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     assistantMessageId = it,
                     text = session.streamedText,
                     reasoning = session.streamedReasoning,
+                    plan = session.streamedPlan,
+                    planProgress = session.planProgress,
+                    hookActivities = session.hookActivities,
                     isStreaming = session.isTurnActive,
                     exitCode = session.shellExitCode,
                 )
@@ -1469,6 +1797,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 statusMessage = session.statusMessage,
                 streamedText = session.streamedText,
                 streamedReasoning = session.streamedReasoning,
+                streamedPlan = session.streamedPlan,
+                planProgress = session.planProgress,
+                hookActivities = session.hookActivities,
                 sessionId = session.sessionId,
                 isAuthenticated = session.isAuthenticated,
                 messages = messages,
@@ -1563,10 +1894,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         skillsJob?.cancel()
         availableSkillsJob?.cancel()
         pluginsJob?.cancel()
+        connectorAuthenticationJob?.cancel()
+        connectorRefreshJob?.cancel()
         extensionSourceJob?.cancel()
         skillsJob = null
         availableSkillsJob = null
         pluginsJob = null
+        connectorAuthenticationJob = null
+        connectorRefreshJob = null
         extensionSourceJob = null
     }
 
@@ -1580,6 +1915,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         const val MAX_CONVERSATION_TITLE_LENGTH = 80
         const val EXISTING_SERVICE_BIND_TIMEOUT_MILLIS = 1_000L
         const val AUTHENTICATION_RECOVERY_DELAY_MILLIS = 150L
+        const val CONNECTOR_UPDATE_WAIT_MILLIS = 1_500L
+        const val EXTENSION_NOTICE_DURATION_MILLIS = 4_000L
     }
 }
 

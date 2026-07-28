@@ -132,6 +132,17 @@ internal fun SettingsScreen(
                             "${state.plugins.count { it.installed && it.enabled }} plugins",
                         onClick = { onEvent(AppUiEvent.OpenExtensions()) },
                     )
+                    SettingsDivider()
+                    SettingsRow(
+                        glyph = IconGlyph.LINK,
+                        title = "Hooks",
+                        subtitle = if (state.hooks.isEmpty()) {
+                            "Review and manage lifecycle hooks"
+                        } else {
+                            "${state.hooks.count { it.enabled }} of ${state.hooks.size} enabled"
+                        },
+                        onClick = { onEvent(AppUiEvent.OpenHooks) },
+                    )
                 }
             }
             item("access-settings") {

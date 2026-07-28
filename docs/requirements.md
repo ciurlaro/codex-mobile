@@ -4,7 +4,7 @@
 
 | ID | Outcome |
 |---|---|
-| R1 | Package, authenticate, converse, stream, cancel, and restart Codex App Server `0.144.6`. |
+| R1 | Package, authenticate, converse, stream, cancel, and restart Codex App Server `0.145.0`. |
 | R2 | Let the user grant all-files access and select the absolute `cwd` sent with every turn. |
 | R3 | Preserve ordinary shell work through App Server. |
 | R4 | Materialize public GitHub Codex marketplaces as bounded, atomically refreshed local snapshots, register them through App Server, and render a cache-first catalog during one bounded refresh. |
@@ -16,6 +16,8 @@
 | R10 | Keep App Server as the only standalone child process launched by the Android host. |
 | R11 | Preserve official plugins, ChatGPT authentication, foreground lifecycle, Markdown, model selection, and conversations. |
 | R12 | Keep user-supplied provider secrets out of add-on artifacts and scope encrypted runtime values independently to each plugin. |
+| R13 | Expose Codex Plan mode, structured plan progress, and trusted workspace hooks through the native App Server protocol. |
+| R14 | Render native inline and display math, keep chat text selectable, and let users copy a complete final answer. |
 
 ## Constraints
 

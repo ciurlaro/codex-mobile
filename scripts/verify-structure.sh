@@ -40,16 +40,16 @@ required=(
 )
 for path in "${required[@]}"; do test -f "$path" || { echo "missing required file: $path" >&2; exit 1; }; done
 
-grep -qx 'codexMobile.codexVersion=0.144.6' gradle.properties
+grep -qx 'codexMobile.codexVersion=0.145.0' gradle.properties
 grep -qx 'codexMobile.providerRevision=a40fefe7c3a60da14e65fef05106a07e1734afdf' gradle.properties
 grep -q 'includeBuild("app-server-client")' settings.gradle.kts
 grep -q 'repository: ciurlaro/codex-mobile-plugins' .github/workflows/verify.yml
 grep -q 'ref: a40fefe7c3a60da14e65fef05106a07e1734afdf' .github/workflows/verify.yml
-grep -q 'version = "0.144.6-1"' app-server-client/build.gradle.kts
-grep -q 'const val APP_SERVER_VERSION = "0.144.6"' \
+grep -q 'version = "0.145.0-1"' app-server-client/build.gradle.kts
+grep -q 'const val APP_SERVER_VERSION = "0.145.0"' \
   app-server-client/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/AppServerProtocolIdentity.kt
 test "$(shasum -a 256 app-server-client/protocol/codex_app_server_protocol.v2.schemas.json | cut -d' ' -f1)" = \
-  '007e12d25541eb0a50bc778dfcff9e6ab88b3124c9425c4e8f79391d3538bec0'
+  '32b26f2ab3fb7a4a409db958f438f48b0ef106e3a01468f8618fdf65bc823cc4'
 grep -q 'GNU GENERAL PUBLIC LICENSE' LICENSE
 grep -q 'GNU GPL version 3 section 7' LICENSES/MLKIT-EXCEPTION.txt
 grep -qx '30934b849c0aec49f66b77c37ab95f021dba5c841e2caf005b513806f7b20765' release-signing-certificate.sha256

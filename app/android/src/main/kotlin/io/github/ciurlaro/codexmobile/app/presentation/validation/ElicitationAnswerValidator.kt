@@ -19,7 +19,7 @@ internal fun isValidElicitationAnswer(field: AgentFormField, value: AgentFormVal
         } == true
         AgentFormFieldType.BOOLEAN -> value is AgentFormValue.BooleanValue
         AgentFormFieldType.SINGLE_SELECT -> value is AgentFormValue.Text &&
-            field.options.any { it.value == value.value }
+            (field.options.any { it.value == value.value } || field.allowOther && value.value.isNotBlank())
         AgentFormFieldType.MULTI_SELECT -> value is AgentFormValue.TextList &&
             value.value.all { selected -> field.options.any { it.value == selected } }
     }

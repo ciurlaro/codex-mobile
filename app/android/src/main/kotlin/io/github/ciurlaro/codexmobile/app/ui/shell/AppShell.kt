@@ -14,6 +14,7 @@ import io.github.ciurlaro.codexmobile.app.ui.chat.ChatScreen
 import io.github.ciurlaro.codexmobile.app.ui.chat.ChatSelectorOverlay
 import io.github.ciurlaro.codexmobile.app.ui.extensions.ExtensionsScreen
 import io.github.ciurlaro.codexmobile.app.ui.settings.SettingsScreen
+import io.github.ciurlaro.codexmobile.app.ui.settings.HooksScreen
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatColors
 
 @Composable
@@ -27,6 +28,7 @@ internal fun AppShell(
                 AppScreen.CHAT -> ChatScreen(state, onEvent)
                 AppScreen.SETTINGS -> SettingsScreen(state, onEvent)
                 AppScreen.EXTENSIONS -> ExtensionsScreen(state, onEvent)
+                AppScreen.HOOKS -> HooksScreen(state, onEvent)
             }
             if (state.activeSelector != null) {
                 ChatSelectorOverlay(
@@ -46,6 +48,7 @@ internal fun AppShell(
             state.activeSelector != null -> onEvent(AppUiEvent.DismissSelector)
             state.isHistoryOpen -> onEvent(AppUiEvent.CloseHistory)
             state.screen == AppScreen.SETTINGS -> onEvent(AppUiEvent.CloseSettings)
+            state.screen == AppScreen.HOOKS -> onEvent(AppUiEvent.CloseHooks)
             state.extensionSourcesOpen -> onEvent(AppUiEvent.CloseExtensionSources)
             state.screen == AppScreen.EXTENSIONS -> onEvent(AppUiEvent.CloseExtensions)
         }

@@ -1,6 +1,6 @@
 # Codex Mobile
 
-Codex Mobile is a lean Android host for the pinned Codex App Server `0.144.6`. It provides ChatGPT authentication, conversations, ordinary App Server shell support, workspace selection, approvals, plugin management, typed provider dispatch, and mutation recovery.
+Codex Mobile is a lean Android host for the pinned Codex App Server `0.145.0`. It provides ChatGPT authentication, conversations, ordinary App Server shell support, workspace selection, approvals, plugin management, typed provider dispatch, and mutation recovery.
 
 Plugins come from standard Codex GitHub marketplaces. The host downloads, validates, and atomically refreshes each public GitHub marketplace as a bounded local snapshot before registering it with App Server. Ordinary plugins remain installable from any such source. The official Documents and Telegram Android providers are compiled into the base APK from a pinned [`ciurlaro/codex-mobile-plugins`](https://github.com/ciurlaro/codex-mobile-plugins) revision. Their marketplace metadata activates bundled code only after its provider API, host version, schema, entry point, and MCP declarations match; installation never updates the Android package.
 

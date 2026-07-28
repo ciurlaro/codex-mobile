@@ -11,15 +11,20 @@ internal fun AppUiState.selectedModelOrNull(): AgentModel? =
 internal fun AppUiState.connectorsNeedingOnUseAuthentication(): List<AgentConnector> {
     val selectedPlugins = selectedInvocations.filterIsInstance<AgentInvocation.Plugin>().mapNotNull { invocation ->
         plugins.firstOrNull { it.reference.uri == invocation.uri }
-            ?.takeIf { it.authPolicy == AgentPluginAuthPolicy.ON_USE }
     }
+    val selectedPendingConnectorIds = selectedPlugins
+        .flatMapTo(mutableSetOf()) { pendingPluginSetups[it.reference.id].orEmpty() }
     return connectors.filter { connector ->
-        !connector.isAccessible && connector.installUrl != null && selectedPlugins.any { plugin ->
-            connector.id.equals(plugin.reference.name, ignoreCase = true) ||
-                connector.pluginNames.any {
-                    it.equals(plugin.displayName, ignoreCase = true) ||
-                        it.equals(plugin.reference.name, ignoreCase = true)
-                }
-        }
+        !connector.isAccessible && connector.installUrl != null && (
+            connector.id in selectedPendingConnectorIds || selectedPlugins.any { plugin ->
+                plugin.authPolicy == AgentPluginAuthPolicy.ON_USE && (
+                    connector.id.equals(plugin.reference.name, ignoreCase = true) ||
+                        connector.pluginNames.any {
+                            it.equals(plugin.displayName, ignoreCase = true) ||
+                                it.equals(plugin.reference.name, ignoreCase = true)
+                        }
+                )
+            }
+        )
     }
 }

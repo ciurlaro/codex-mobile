@@ -1,7 +1,13 @@
 package io.github.ciurlaro.codexmobile.agent.codex
 
 import io.github.ciurlaro.codexmobile.core.AgentCapability
+import io.github.ciurlaro.codexmobile.core.AgentCollaborationMode
+import io.github.ciurlaro.codexmobile.core.AgentElicitationAction
+import io.github.ciurlaro.codexmobile.core.AgentElicitationResponse
 import io.github.ciurlaro.codexmobile.core.AgentEvent
+import io.github.ciurlaro.codexmobile.core.AgentFormValue
+import io.github.ciurlaro.codexmobile.core.AgentHookTrustStatus
+import io.github.ciurlaro.codexmobile.core.AgentInvocation
 import io.github.ciurlaro.codexmobile.core.AgentMessageRole
 import io.github.ciurlaro.codexmobile.core.AgentRuntimeSettings
 import io.github.ciurlaro.codexmobile.core.AgentTurnRequest
@@ -15,6 +21,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
 import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterIsInstance
 import kotlinx.coroutines.flow.first
@@ -31,9 +38,169 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
 
 class ChatRuntimeContractTest {
+    @Test
+    fun `restores only invocations recorded by the original structured message`() {
+        val directory = Files.createTempDirectory("turn-inputs").toFile()
+        val plugin = AgentInvocation.Plugin(
+            name = "google-contacts",
+            uri = "plugin://google-contacts@openai-curated",
+        )
+        val store = TurnInputMetadataStore(directory)
+        store.upsert("thread-1", TurnInputMetadata("client-chip", listOf(plugin)))
+
+        val messages = conversationMessages(
+            listOf(
+                plainUserMessage("user-chip", "client-chip", "@google-contacts\n\nFind a contact"),
+                plainUserMessage("user-text", "client-text", "@someone\n\nThis is regular text"),
+                plainUserMessage("user-plan", "codex-mobile:plan:client-plan", "Plan a trip"),
+            ),
+            store.read("thread-1"),
+        )
+
+        assertEquals("Find a contact", messages[0].text)
+        assertEquals(listOf(plugin), messages[0].invocations)
+        assertEquals("@someone\n\nThis is regular text", messages[1].text)
+        assertTrue(messages[1].invocations.isEmpty())
+        assertEquals(AgentCollaborationMode.PLAN, messages[2].collaborationMode)
+    }
+
+    @Test
+    fun `plan input requests use the existing elicitation flow`(): Unit = runBlocking {
+        val answer = CompletableDeferred<JsonObject>()
+        val process = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "thread/resume" -> server.respond(message.id, buildJsonObject {
+                    putJsonObject("thread") { put("id", "thread-1") }
+                })
+                null -> if (message.id == 91L) {
+                    answer.complete(message.objectValue.getValue("result").jsonObject)
+                }
+            }
+        }
+        CodexAgentClient({ process }, requestTimeoutMillis = 1_000).use { client ->
+            client.openSession(SessionId("thread-1"))
+            val requested = async {
+                withTimeout(1_000) { client.events.filterIsInstance<AgentEvent.ElicitationRequested>().first() }
+            }
+            process.request(91, "item/tool/requestUserInput", buildJsonObject {
+                put("itemId", "item-1")
+                put("threadId", "thread-1")
+                put("turnId", "turn-1")
+                putJsonArray("questions") {
+                    add(buildJsonObject {
+                        put("header", "Dates")
+                        put("id", "dates")
+                        put("question", "Are your travel dates flexible?")
+                        put("isOther", true)
+                        putJsonArray("options") {
+                            add(buildJsonObject {
+                                put("label", "Flexible")
+                                put("description", "Any week works")
+                            })
+                            add(buildJsonObject {
+                                put("label", "Fixed")
+                                put("description", "Use exact dates")
+                            })
+                        }
+                    })
+                }
+            })
+
+            val elicitation = requested.await()
+            assertEquals("Plan", elicitation.elicitation.serverName)
+            assertTrue(elicitation.elicitation.form!!.single().allowOther)
+            client.resolveElicitation(
+                elicitation.elicitation.requestId,
+                AgentElicitationResponse(
+                    AgentElicitationAction.ACCEPT,
+                    mapOf("dates" to AgentFormValue.Text("Flexible")),
+                ),
+            )
+            assertEquals(
+                "Flexible",
+                answer.await()["answers"]!!.jsonObject["dates"]!!.jsonObject["answers"]!!
+                    .jsonArray.single().jsonPrimitive.content,
+            )
+        }
+    }
+
+    @Test
+    fun `lists hooks and writes only the selected hook state`(): Unit = runBlocking {
+        val writes = mutableListOf<JsonObject>()
+        val process = FakeCodexRuntime { message, server ->
+            when (message.method) {
+                "initialize" -> server.respond(message.id, buildJsonObject {})
+                "hooks/list" -> server.respond(
+                    message.id,
+                    buildJsonObject {
+                        put("data", buildJsonArray {
+                            add(buildJsonObject {
+                                put("cwd", "/workspace")
+                                put("warnings", buildJsonArray {})
+                                put("errors", buildJsonArray {})
+                                put("hooks", buildJsonArray {
+                                    add(buildJsonObject {
+                                        put("currentHash", "sha256:current")
+                                        put("displayOrder", 0)
+                                        put("enabled", false)
+                                        put("eventName", "preToolUse")
+                                        put("handlerType", "command")
+                                        put("isManaged", false)
+                                        put("key", "project-hook")
+                                        put("source", "project")
+                                        put("sourcePath", "/workspace/.codex/hooks.json")
+                                        put("timeoutSec", 10)
+                                        put("trustStatus", "untrusted")
+                                        put("command", "./check")
+                                    })
+                                })
+                            })
+                        })
+                    },
+                )
+                "config/batchWrite" -> {
+                    writes += message.params
+                    server.respond(
+                        message.id,
+                        buildJsonObject {
+                            put("filePath", "/data/user/0/app/files/.codex/config.toml")
+                            put("status", "ok")
+                            put("version", "1")
+                        },
+                    )
+                }
+            }
+        }
+        val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
+        try {
+            val hook = client.listHooks("/workspace").hooks.single()
+            assertEquals(AgentHookTrustStatus.UNTRUSTED, hook.trustStatus)
+            assertEquals("./check", hook.command)
+
+            client.trustHook(hook.key, hook.currentHash)
+            client.setHookEnabled(hook.key, true)
+
+            assertEquals(2, writes.size)
+            writes.forEach { assertEquals("hooks.state", it["edits"]!!.jsonArray.single().jsonObject.requiredString("keyPath")) }
+            assertEquals(
+                "sha256:current",
+                writes[0]["edits"]!!.jsonArray.single().jsonObject["value"]!!.jsonObject
+                    .getValue("project-hook").jsonObject.requiredString("trusted_hash"),
+            )
+            assertTrue(
+                writes[1]["edits"]!!.jsonArray.single().jsonObject["value"]!!.jsonObject
+                    .getValue("project-hook").jsonObject.requiredBoolean("enabled"),
+            )
+        } finally {
+            client.close()
+        }
+    }
+
     @Test
     fun `renames and deletes conversations through stable thread methods`(): Unit = runBlocking {
         var renameParams: JsonObject? = null
@@ -289,8 +456,17 @@ class ChatRuntimeContractTest {
                                                         )
                                                         add(
                                                             buildJsonObject {
+                                                                put("id", "commentary-1")
+                                                                put("type", "agentMessage")
+                                                                put("phase", "commentary")
+                                                                put("text", "Checking the result")
+                                                            },
+                                                        )
+                                                        add(
+                                                            buildJsonObject {
                                                                 put("id", "codex-1")
                                                                 put("type", "agentMessage")
+                                                                put("phase", "final_answer")
                                                                 put("text", "Answer")
                                                             },
                                                         )
@@ -330,7 +506,7 @@ class ChatRuntimeContractTest {
             assertEquals(setOf(AgentCapability.WEB_SEARCH), user.capabilities)
             assertEquals(AgentMessageRole.CODEX, conversation.messages[1].role)
             assertEquals("Answer", conversation.messages[1].text)
-            assertEquals("Checked the sources", conversation.messages[1].reasoning)
+            assertEquals("Checked the sources\n\nChecking the result", conversation.messages[1].reasoning)
         } finally {
             client.close()
         }
@@ -388,6 +564,10 @@ class ChatRuntimeContractTest {
             assertEquals("thread-1", resume.requiredString("threadId"))
             val config = resume["config"]!!.jsonObject
             assertEquals("live", config.requiredString("web_search"))
+            assertTrue(
+                config["tools"]!!.jsonObject["experimental_request_user_input"]!!
+                    .jsonObject.requiredBoolean("enabled"),
+            )
             val features = config["features"]!!.jsonObject
             assertFalse("web_search_request" in features)
             assertFalse("web_search_cached" in features)
@@ -407,6 +587,7 @@ class ChatRuntimeContractTest {
                     effort = "xhigh",
                     capabilities = setOf(AgentCapability.WEB_SEARCH),
                     workingDirectory = "/storage/emulated/0/Documents",
+                    collaborationMode = AgentCollaborationMode.PLAN,
                 ),
             )
 
@@ -416,6 +597,12 @@ class ChatRuntimeContractTest {
             assertEquals("xhigh", turn.requiredString("effort"))
             assertEquals("/storage/emulated/0/Documents", turn.requiredString("cwd"))
             assertEquals("auto", turn.requiredString("summary"))
+            val collaborationMode = turn["collaborationMode"]!!.jsonObject
+            assertEquals("plan", collaborationMode.requiredString("mode"))
+            val modeSettings = collaborationMode["settings"]!!.jsonObject
+            assertEquals("runtime-model-next", modeSettings.requiredString("model"))
+            assertEquals("medium", modeSettings.requiredString("reasoning_effort"))
+            assertFalse("developer_instructions" in modeSettings)
             assertEquals("Inspecting", reasoning.await().text)
             val input = turn["input"]!!.jsonArray.single().jsonObject
             val expectedText = "${AgentCapability.WEB_SEARCH.promptLabel}\n\nFind the current answer"
@@ -523,6 +710,18 @@ private fun taggedUserMessage(id: String, clientId: String, prompt: String): Jso
             },
         )
     }
+}
+
+private fun plainUserMessage(id: String, clientId: String, text: String) = buildJsonObject {
+    put("id", id)
+    put("clientId", clientId)
+    put("type", "userMessage")
+    put("content", buildJsonArray {
+        add(buildJsonObject {
+            put("type", "text")
+            put("text", text)
+        })
+    })
 }
 
 private fun JsonObject.requiredString(name: String): String =

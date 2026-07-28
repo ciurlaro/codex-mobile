@@ -143,14 +143,16 @@ dependencies {
     implementation(project(":platform:android"))
 
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.browser)
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.material3)
     implementation(libs.markdown.material3)
+    implementation(libs.ratex.android)
 
     testImplementation(kotlin("test-junit"))
     androidTestImplementation(libs.androidx.test.ext.junit)
     androidTestImplementation(libs.androidx.test.runner)
-    androidTestImplementation("io.github.ciurlaro.codexmobile:app-server-client:0.144.6-1")
+    androidTestImplementation("io.github.ciurlaro.codexmobile:app-server-client:0.145.0-1")
     androidTestImplementation("io.github.ciurlaro.codexmobile:provider-api:2.0.0")
 }

@@ -20,6 +20,7 @@ internal class AppContainer(context: Context) {
         pluginCacheDirectory = java.io.File(appContext.cacheDir, "plugin-catalogs"),
         threadProviderStateDirectory = java.io.File(appContext.noBackupFilesDir, "thread-providers"),
         shellTranscriptDirectory = java.io.File(appContext.noBackupFilesDir, "shell-transcripts"),
+        turnInputMetadataDirectory = java.io.File(appContext.noBackupFilesDir, "turn-inputs"),
         builtInToolDispatcher = platform.builtInToolDispatcher,
         providerHost = platform.providerPackages,
     )

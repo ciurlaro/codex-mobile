@@ -48,6 +48,7 @@ import io.github.ciurlaro.codexmobile.app.presentation.formatting.effortLabel
 import io.github.ciurlaro.codexmobile.app.presentation.invocation.PromptInvocation
 import io.github.ciurlaro.codexmobile.app.presentation.invocation.promptInvocation
 import io.github.ciurlaro.codexmobile.app.presentation.invocation.suggestedInvocationItems
+import io.github.ciurlaro.codexmobile.app.presentation.input.planCommandOrNull
 import io.github.ciurlaro.codexmobile.app.presentation.state.AppUiState
 import io.github.ciurlaro.codexmobile.app.presentation.model.ChatSelector
 import io.github.ciurlaro.codexmobile.app.ui.icons.AppIcon
@@ -57,6 +58,7 @@ import io.github.ciurlaro.codexmobile.app.ui.theme.ChatColors
 import io.github.ciurlaro.codexmobile.app.ui.theme.ChatDimensions
 import io.github.ciurlaro.codexmobile.core.AgentCapability
 import io.github.ciurlaro.codexmobile.core.AgentInvocation
+import io.github.ciurlaro.codexmobile.core.AgentCollaborationMode
 
 @Composable
 internal fun ChatComposer(
@@ -65,6 +67,10 @@ internal fun ChatComposer(
 ) {
     var focused by remember { mutableStateOf(false) }
     val shellMode = state.draft.startsWith('!')
+    val planCommand = state.draft.planCommandOrNull()
+    val planMode = !shellMode && (
+        state.collaborationMode == AgentCollaborationMode.PLAN || planCommand != null
+    )
     val expanded = focused || state.draft.contains('\n') || state.selectedCapabilities.isNotEmpty() ||
         state.selectedInvocations.isNotEmpty()
     val canSend = state.isAuthenticated &&
@@ -72,11 +78,19 @@ internal fun ChatComposer(
         else state.draft.isNotBlank() || state.selectedCapabilities.isNotEmpty() ||
             state.selectedInvocations.isNotEmpty()
     val composerColor by animateColorAsState(
-        if (shellMode) Color(0xFF182433) else ChatColors.Elevated,
+        when {
+            shellMode -> Color(0xFF182433)
+            planMode -> Color(0xFF332719)
+            else -> ChatColors.Elevated
+        },
         label = "composer-mode",
     )
     val composerBorder by animateColorAsState(
-        if (shellMode) ChatColors.Accent else ChatColors.Border,
+        when {
+            shellMode -> ChatColors.Accent
+            planMode -> ChatColors.PlanAccent
+            else -> ChatColors.Border
+        },
         label = "composer-border",
     )
     Column(
@@ -89,13 +103,19 @@ internal fun ChatComposer(
                 RoundedCornerShape(ChatDimensions.ComposerCorner),
             )
             .semantics {
-                if (shellMode) stateDescription = "Shell command mode"
+                stateDescription = when {
+                    shellMode -> "Shell command mode"
+                    planMode -> "Plan mode"
+                    else -> "Default mode"
+                }
             }
             .animateContentSize()
             .padding(horizontal = 10.dp, vertical = 9.dp),
     ) {
         if (shellMode) {
             Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) { ShellHeader() }
+        } else if (planMode) {
+            Box(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) { PlanHeader() }
         }
         state.selectedCapabilities.forEach { capability ->
             CapabilityChip(capability) { onEvent(AppUiEvent.RemoveCapability(capability)) }
@@ -124,11 +144,11 @@ internal fun ChatComposer(
                 fontFamily = if (shellMode) FontFamily.Monospace else FontFamily.Default,
                 fontWeight = if (shellMode) FontWeight.Medium else FontWeight.Normal,
             ),
-            cursorBrush = SolidColor(ChatColors.Accent),
-            visualTransformation = if (shellMode) {
-                shellCommandVisualTransformation
-            } else {
-                VisualTransformation.None
+            cursorBrush = SolidColor(if (planMode) ChatColors.PlanAccent else ChatColors.Accent),
+            visualTransformation = when {
+                shellMode -> shellCommandVisualTransformation
+                planCommand != null -> planCommandVisualTransformation
+                else -> VisualTransformation.None
             },
             decorationBox = { innerTextField ->
                 Box(contentAlignment = Alignment.TopStart) {
@@ -163,6 +183,16 @@ internal fun ChatComposer(
                 modifier = Modifier.weight(1f),
                 onClick = { onEvent(AppUiEvent.OpenSelector(ChatSelector.EFFORT)) },
             )
+            CircleIconButton(
+                label = if (planMode) "Disable Plan mode" else "Enable Plan mode",
+                glyph = IconGlyph.CHECKLIST,
+                enabled = !state.isTurnActive && !shellMode,
+                containerColor = if (planMode) {
+                    ChatColors.PlanAccent.copy(alpha = 0.24f)
+                } else {
+                    Color.Transparent
+                },
+            ) { onEvent(AppUiEvent.TogglePlanMode) }
             CircleIconButton(
                 label = when {
                     state.isTurnActive -> "Stop response"

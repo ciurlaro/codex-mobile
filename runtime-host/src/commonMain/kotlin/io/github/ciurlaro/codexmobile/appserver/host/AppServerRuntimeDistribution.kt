@@ -50,12 +50,12 @@ data class AppServerRuntimeDistribution(
 
 object CodexMobileAppServerRuntime {
     val DISTRIBUTION = AppServerRuntimeDistribution(
-        appServerVersion = "0.144.6",
-        upstreamRevision = "5d1fbf26c43abc65a203928b2e31561cb039e06d",
-        schemaSha256 = "007e12d25541eb0a50bc778dfcff9e6ab88b3124c9425c4e8f79391d3538bec0",
+        appServerVersion = "0.145.0",
+        upstreamRevision = "25af12f7e61572b0bc18ddb1008be543b91519b0",
+        schemaSha256 = "32b26f2ab3fb7a4a409db958f438f48b0ef106e3a01468f8618fdf65bc823cc4",
         targetTriple = "aarch64-unknown-linux-musl",
         architecture = RuntimeArchitecture.AARCH64,
-        archiveSha256 = "3539380f431aa72ce1e9ba83cf4d9b2c2a70d12ddf3280bc67c8c59f93bb9eb5",
-        binarySha256 = "09d6a41d6189b14317ec5d556251e5195e9a4235c28867fc75ee5c1d54be02cd",
+        archiveSha256 = "3a185f6a1e2ec3ce7ebe9ea5ab23a81bfab75470337e66e235b881ca40ac8932",
+        binarySha256 = "9c5954b50520b68d7d181804965b554f09add95cc8fb0db6a7750111a1296b60",
     )
 }

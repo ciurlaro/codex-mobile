@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "io.github.ciurlaro.codexmobile"
-version = "0.144.6-1"
+version = "0.145.0-1"
 
 kotlin {
     jvm()
