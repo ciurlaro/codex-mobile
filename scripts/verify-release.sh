@@ -34,9 +34,9 @@ grep -Fq "Class descriptor  : 'Lio/github/ciurlaro/codexmobile/platform/android/
 
 base=$(unzip -Z1 "$apk")
 bundle=$(unzip -Z1 "$aab")
-expected_native=$'lib/arm64-v8a/libandroidx.graphics.path.so\nlib/arm64-v8a/libcodex_app_server.so\nlib/arm64-v8a/libmlkit_google_ocr_pipeline.so\nlib/arm64-v8a/libpdfium.so\nlib/arm64-v8a/libpdfiumandroid.so\nlib/arm64-v8a/libtdjsonjava.so'
+expected_native=$'lib/arm64-v8a/libandroidx.graphics.path.so\nlib/arm64-v8a/libcodex_app_server.so\nlib/arm64-v8a/libmlkit_google_ocr_pipeline.so\nlib/arm64-v8a/libpdfium.so\nlib/arm64-v8a/libpdfiumandroid.so\nlib/arm64-v8a/libratex_ffi.so\nlib/arm64-v8a/libtdjsonjava.so'
 test "$(grep '^lib/.*\.so$' <<<"$base" | sort)" = "$expected_native"
-expected_bundle_native=$'base/lib/arm64-v8a/libandroidx.graphics.path.so\nbase/lib/arm64-v8a/libcodex_app_server.so\nbase/lib/arm64-v8a/libmlkit_google_ocr_pipeline.so\nbase/lib/arm64-v8a/libpdfium.so\nbase/lib/arm64-v8a/libpdfiumandroid.so\nbase/lib/arm64-v8a/libtdjsonjava.so'
+expected_bundle_native=$'base/lib/arm64-v8a/libandroidx.graphics.path.so\nbase/lib/arm64-v8a/libcodex_app_server.so\nbase/lib/arm64-v8a/libmlkit_google_ocr_pipeline.so\nbase/lib/arm64-v8a/libpdfium.so\nbase/lib/arm64-v8a/libpdfiumandroid.so\nbase/lib/arm64-v8a/libratex_ffi.so\nbase/lib/arm64-v8a/libtdjsonjava.so'
 test "$(grep '/lib/.*\.so$' <<<"$bundle" | sort)" = "$expected_bundle_native"
 ! grep -q '^base/assets/codex/plugins/' <<<"$bundle"
 ! grep -q '^assets/codex/plugins/' <<<"$base"
