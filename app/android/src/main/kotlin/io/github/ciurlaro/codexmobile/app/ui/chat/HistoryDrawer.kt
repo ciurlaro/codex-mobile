@@ -268,174 +268,20 @@ internal fun HistoryDrawer(
             AppIcon(IconGlyph.CHEVRON_RIGHT, Modifier.size(20.dp), ChatColors.Secondary)
         }
     }
-    renameConversation?.let { conversation ->
-        AlertDialog(
-            onDismissRequest = { renameConversation = null },
-            title = { Text("Rename conversation") },
-            text = {
-                OutlinedTextField(
-                    value = renameText,
-                    onValueChange = { renameText = it.take(80) },
-                    label = { Text("Name") },
-                    singleLine = true,
-                )
-            },
-            dismissButton = {
-                TextButton(onClick = { renameConversation = null }) { Text("Cancel") }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = renameText.isNotBlank(),
-                    onClick = {
-                        onEvent(AppUiEvent.RenameConversation(conversation.sessionId, renameText))
-                        renameConversation = null
-                    },
-                ) { Text("Rename") }
-            },
-        )
-    }
-    deleteConversation?.let { conversation ->
-        AlertDialog(
-            onDismissRequest = { deleteConversation = null },
-            title = { Text("Delete conversation?") },
-            text = { Text("“${conversation.title}” will be permanently deleted.") },
-            dismissButton = {
-                TextButton(onClick = { deleteConversation = null }) { Text("Cancel") }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        onEvent(AppUiEvent.DeleteConversation(conversation.sessionId))
-                        deleteConversation = null
-                    },
-                ) { Text("Delete", color = ChatColors.Danger) }
-            },
-        )
-    }
-}
-
-@Composable
-private fun ConversationSectionTitle(title: String) {
-    Text(
-        text = title,
-        color = ChatColors.Primary,
-        style = MaterialTheme.typography.titleMedium,
-        modifier = Modifier.padding(start = 14.dp, top = 12.dp, bottom = 4.dp),
-    )
-}
-
-@Composable
-private fun HistoryConversationRow(
-    conversation: AgentConversationSummary,
-    selected: Boolean,
-    pinned: Boolean,
-    menuExpanded: Boolean,
-    menuPosition: Offset,
-    onSelect: () -> Unit,
-    onOpenMenu: (Offset) -> Unit,
-    onDismissMenu: () -> Unit,
-    onTogglePin: () -> Unit,
-    onRename: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    val interactionSource = remember { MutableInteractionSource() }
-    val pressed by interactionSource.collectIsPressedAsState()
-    val background by animateColorAsState(
-        targetValue = when {
-            pressed -> ChatColors.Elevated
-            selected -> ChatColors.ElevatedStrong
-            else -> Color.Transparent
+    HistoryDialogs(
+        renameConversation = renameConversation,
+        renameText = renameText,
+        deleteConversation = deleteConversation,
+        onRenameTextChanged = { renameText = it },
+        onDismissRename = { renameConversation = null },
+        onConfirmRename = { conversation ->
+            onEvent(AppUiEvent.RenameConversation(conversation.sessionId, renameText))
+            renameConversation = null
         },
-        animationSpec = tween(90),
-        label = "history-press",
+        onDismissDelete = { deleteConversation = null },
+        onConfirmDelete = { conversation ->
+            onEvent(AppUiEvent.DeleteConversation(conversation.sessionId))
+            deleteConversation = null
+        },
     )
-    Box {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = ChatDimensions.TouchTarget)
-                .clip(RoundedCornerShape(16.dp))
-                .background(background)
-                .indication(interactionSource, ripple(color = ChatColors.Primary.copy(alpha = 0.14f)))
-                .pointerInput(conversation.sessionId) {
-                    detectTapGestures(
-                        onPress = { position ->
-                            val press = PressInteraction.Press(position)
-                            interactionSource.emit(press)
-                            interactionSource.emit(
-                                if (tryAwaitRelease()) PressInteraction.Release(press)
-                                else PressInteraction.Cancel(press),
-                            )
-                        },
-                        onTap = { onSelect() },
-                        onLongPress = onOpenMenu,
-                    )
-                }
-                .semantics(mergeDescendants = true) {
-                    role = Role.Button
-                    if (selected) stateDescription = "Current conversation"
-                    onClick("Open conversation") {
-                        onSelect()
-                        true
-                    }
-                    onLongClick("Conversation actions") {
-                        onOpenMenu(Offset.Zero)
-                        true
-                    }
-                }
-                .padding(horizontal = 14.dp, vertical = 11.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = conversation.title,
-                modifier = Modifier.weight(1f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-                color = if (selected) ChatColors.Primary else ChatColors.Secondary,
-                style = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = 15.sp,
-                    lineHeight = 20.sp,
-                ),
-            )
-            if (selected) {
-                Spacer(Modifier.width(8.dp))
-                Box(
-                    Modifier
-                        .size(7.dp)
-                        .background(ChatColors.Accent, CircleShape),
-                )
-            }
-        }
-        Box(
-            Modifier
-                .offset {
-                    IntOffset(menuPosition.x.roundToInt(), menuPosition.y.roundToInt())
-                }
-                .size(1.dp),
-        ) {
-            DropdownMenu(expanded = menuExpanded, onDismissRequest = onDismissMenu) {
-                DropdownMenuItem(
-                    text = { Text(if (pinned) "Unpin" else "Pin") },
-                    leadingIcon = {
-                        AppIcon(IconGlyph.PIN, Modifier.size(22.dp), ChatColors.Primary)
-                    },
-                    onClick = onTogglePin,
-                )
-                DropdownMenuItem(
-                    text = { Text("Rename") },
-                    leadingIcon = {
-                        AppIcon(IconGlyph.EDIT, Modifier.size(22.dp), ChatColors.Primary)
-                    },
-                    onClick = onRename,
-                )
-                DropdownMenuItem(
-                    text = { Text("Delete", color = ChatColors.Danger) },
-                    leadingIcon = {
-                        AppIcon(IconGlyph.TRASH, Modifier.size(22.dp), ChatColors.Danger)
-                    },
-                    onClick = onDelete,
-                )
-            }
-        }
-    }
 }

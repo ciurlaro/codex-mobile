@@ -1,21 +1,16 @@
 plugins {
-    kotlin("multiplatform") version "2.3.10"
+    id("codexmobile.kotlin-multiplatform")
     `maven-publish`
 }
 
 group = "io.github.ciurlaro.codexmobile"
-version = "2.0.0"
-
-dependencyLocking { lockAllConfigurations() }
+version = libs.versions.provider.api.get()
 
 kotlin {
-    jvm()
     sourceSets {
         commonMain.dependencies {
-            api("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
+            api(libs.kotlinx.serialization.json)
         }
         commonTest.dependencies { implementation(kotlin("test")) }
     }
 }
-
-tasks.withType<Test>().configureEach { useJUnitPlatform() }

@@ -1,6 +1,6 @@
 {
     "formatVersion": 1,
-    "generatorVersion": "2",
+    "generatorVersion": "3",
     "schemaSha256": "8039a1222460b3846a3688c61eb4b2626b451d61b9c2b36b83fea0ce341ce0be",
     "clientRequests": [
         {
