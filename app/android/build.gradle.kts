@@ -1,6 +1,7 @@
+import java.io.File
+
 plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.compose)
+    id("codexmobile.android-application")
 }
 
 val releaseStorePath = providers.gradleProperty("codexMobile.release.storeFile")
@@ -27,15 +28,10 @@ val codexArchiveSha256 = providers.gradleProperty("codexMobile.codexArchiveSha25
 val codexBinarySha256 = providers.gradleProperty("codexMobile.codexBinarySha256")
 android {
     namespace = "io.github.ciurlaro.codexmobile.app"
-    compileSdk = 37
-
     defaultConfig {
         applicationId = "io.github.ciurlaro.codexmobile"
-        minSdk = 26
-        targetSdk = 37
         versionCode = appVersionCode.get()
         versionName = appVersionName.get()
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         if (visualCaptureRequested || visualCheckRequested) {
             testInstrumentationRunnerArguments["class"] =
                 "io.github.ciurlaro.codexmobile.app.VisualRegressionTest"
@@ -45,10 +41,6 @@ android {
         ndk {
             abiFilters += "arm64-v8a"
         }
-    }
-
-    buildFeatures {
-        compose = true
     }
 
     dependenciesInfo {
@@ -77,11 +69,6 @@ android {
             )
             if (releaseSigningConfigured) signingConfig = signingConfigs.getByName("release")
         }
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
     }
 
     packaging {
@@ -119,18 +106,9 @@ tasks.named("preBuild").configure {
     dependsOn(prepareCodexRuntime)
 }
 
-val verifyReleaseSigning = tasks.register("verifyReleaseSigning") {
-    inputs.property("configured", releaseSigningConfigured)
-    inputs.property("storePath", releaseStorePath.orElse(""))
-    doLast {
-        check(inputs.properties["configured"] == true) {
-            "Release signing requires codexMobile.release.{storeFile,storePassword,keyAlias,keyPassword} " +
-                "Gradle properties or the matching CODEX_MOBILE_RELEASE_* environment variables"
-        }
-        check(File(inputs.properties.getValue("storePath").toString()).isFile) {
-            "Release keystore does not exist"
-        }
-    }
+val verifyReleaseSigning = tasks.register<VerifyReleaseSigningTask>("verifyReleaseSigning") {
+    configured.set(releaseSigningConfigured)
+    storeFile.set(layout.file(releaseStorePath.map(::File)))
 }
 
 tasks.matching { it.name == "assembleRelease" || it.name == "bundleRelease" }.configureEach {
@@ -151,8 +129,7 @@ dependencies {
     implementation(libs.ratex.android)
 
     testImplementation(kotlin("test-junit"))
-    androidTestImplementation(libs.androidx.test.ext.junit)
-    androidTestImplementation(libs.androidx.test.runner)
-    androidTestImplementation("io.github.ciurlaro.codexmobile:app-server-client:0.145.0-1")
-    androidTestImplementation("io.github.ciurlaro.codexmobile:provider-api:2.0.0")
+    androidTestImplementation(libs.bundles.android.test)
+    androidTestImplementation(libs.codex.app.server.client)
+    androidTestImplementation(libs.codex.provider.api)
 }
