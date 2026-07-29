@@ -42,11 +42,7 @@ class CodexRuntimeDeviceTest {
     @Test
     fun runtimePackagingPreparationAndChecksum() {
         val runtime = runtimeFile()
-        val expectedSha256 = if (Build.SUPPORTED_ABIS.firstOrNull() == "x86_64") {
-            X86_64_EXECUTABLE_SHA256
-        } else {
-            ARM64_EXECUTABLE_SHA256
-        }
+        val expectedSha256 = EXECUTABLE_SHA256.getValue(Build.SUPPORTED_ABIS.first())
 
         assertTrue("runtime missing from nativeLibraryDir", runtime.isFile)
         assertTrue("runtime is not executable", runtime.canExecute())
@@ -296,9 +292,9 @@ class CodexRuntimeDeviceTest {
     }
 
     private companion object {
-        const val ARM64_EXECUTABLE_SHA256 =
-            "9c5954b50520b68d7d181804965b554f09add95cc8fb0db6a7750111a1296b60"
-        const val X86_64_EXECUTABLE_SHA256 =
-            "49dae43c3be16bc6fc0adb16859244f054a6382656738f1fc280ab3b390b1e49"
+        val EXECUTABLE_SHA256 = mapOf(
+            "arm64-v8a" to "9c5954b50520b68d7d181804965b554f09add95cc8fb0db6a7750111a1296b60",
+            "x86_64" to "49dae43c3be16bc6fc0adb16859244f054a6382656738f1fc280ab3b390b1e49",
+        )
     }
 }
