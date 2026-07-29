@@ -1,7 +1,6 @@
 package io.github.ciurlaro.codexmobile.app.runtime.bootstrap
 
 import android.content.Context
-import android.os.Build
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import io.github.ciurlaro.codexmobile.appserver.runtime.CodexAppServerRuntime
 import io.github.ciurlaro.codexmobile.appserver.runtime.CodexRuntimeConfiguration
@@ -33,7 +32,7 @@ internal class AndroidRuntimeBootstrap(
                 privateDirectory = Path(appContext.noBackupFilesDir.absolutePath),
                 temporaryDirectory = Path(appContext.cacheDir.absolutePath),
                 nativeLibraryDirectory = Path(appContext.applicationInfo.nativeLibraryDir),
-                activeAbi = Build.SUPPORTED_ABIS.firstOrNull().orEmpty(),
+                activeAbi = "arm64-v8a",
                 certificateSources = certificates,
                 sqliteDriver = AndroidSQLiteDriver(),
                 inheritedEnvironment = listOf("PATH", "LANG", "LC_ALL", "TERM")
