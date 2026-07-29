@@ -22,6 +22,8 @@ run_instrumentation() {
 
 adb install -r "$app"
 adb install -r "$app_test"
+adb shell cmd package compile -f -m speed io.github.ciurlaro.codexmobile.debug
+adb shell cmd package compile -f -m speed io.github.ciurlaro.codexmobile.debug.test
 adb shell mkdir -p /sdcard/Download/codex-mobile-ci
 adb shell appops set io.github.ciurlaro.codexmobile.debug MANAGE_EXTERNAL_STORAGE allow
 runtime_tests=(
