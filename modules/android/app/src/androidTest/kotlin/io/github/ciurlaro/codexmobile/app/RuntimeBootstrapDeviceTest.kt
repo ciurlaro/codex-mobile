@@ -90,7 +90,7 @@ class RuntimeBootstrapDeviceTest {
         try {
             runtime.start()
             val initialized = async {
-                withTimeout(120_000) {
+                withTimeout(30_000) {
                     runtime.events.first { event ->
                         event is CodexRuntimeEvent.Received && "\"id\":1" in event.line.value
                     }

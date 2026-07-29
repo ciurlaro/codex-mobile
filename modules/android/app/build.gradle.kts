@@ -26,6 +26,9 @@ val appVersionName = providers.gradleProperty("codexMobile.versionName")
 val codexVersion = providers.gradleProperty("codexMobile.codexVersion")
 val codexArchiveSha256 = providers.gradleProperty("codexMobile.codexArchiveSha256")
 val codexBinarySha256 = providers.gradleProperty("codexMobile.codexBinarySha256")
+val codexX86ArchiveSha256 = providers.gradleProperty("codexMobile.codexX86ArchiveSha256")
+val codexX86BinarySha256 = providers.gradleProperty("codexMobile.codexX86BinarySha256")
+val codexX86RuntimeDirectory = layout.buildDirectory.dir("generated/codex-runtime/debug")
 android {
     namespace = "io.github.ciurlaro.codexmobile.app"
     defaultConfig {
@@ -61,6 +64,9 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
+            ndk {
+                abiFilters += "x86_64"
+            }
         }
         release {
             isMinifyEnabled = true
@@ -80,6 +86,10 @@ android {
             useLegacyPackaging = true
         }
     }
+
+    sourceSets.getByName("debug").jniLibs.directories.add(
+        codexX86RuntimeDirectory.get().asFile.absolutePath,
+    )
 
     bundle {
         abi { enableSplit = false }
@@ -107,6 +117,28 @@ val prepareCodexRuntime = tasks.register<Exec>("prepareCodexRuntime") {
 
 tasks.named("preBuild").configure {
     dependsOn(prepareCodexRuntime)
+}
+
+val codexX86Runtime = codexX86RuntimeDirectory.map {
+    it.file("x86_64/libcodex_app_server.so")
+}
+val prepareCodexX86Runtime = tasks.register<Exec>("prepareCodexX86Runtime") {
+    inputs.property("codexVersion", codexVersion)
+    inputs.property("archiveSha256", codexX86ArchiveSha256)
+    inputs.property("binarySha256", codexX86BinarySha256)
+    outputs.file(codexX86Runtime)
+    commandLine(
+        rootProject.file("scripts/prepare-codex-runtime.sh"),
+        codexVersion.get(),
+        codexX86ArchiveSha256.get(),
+        codexX86BinarySha256.get(),
+        codexX86Runtime.get().asFile.absolutePath,
+        "x86_64-unknown-linux-musl",
+    )
+}
+
+tasks.matching { it.name == "preDebugBuild" }.configureEach {
+    dependsOn(prepareCodexX86Runtime)
 }
 
 val verifyReleaseSigning = tasks.register<VerifyReleaseSigningTask>("verifyReleaseSigning") {

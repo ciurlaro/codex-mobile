@@ -16,7 +16,6 @@ internal class AppContainer(context: Context) {
 
     fun newAgentClient(): AgentClient = CodexAgentClient(
         runtimeFactory = platform::createCodexRuntime,
-        requestTimeoutMillis = 120_000,
         clientVersion = clientVersion,
         pluginCacheDirectory = Path(appContext.cacheDir.absolutePath, "plugin-catalogs"),
         threadProviderStateDirectory = Path(appContext.noBackupFilesDir.absolutePath, "thread-providers"),

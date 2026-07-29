@@ -19,7 +19,7 @@ adb install -r "$app_test"
 adb shell mkdir -p /sdcard/Download/codex-mobile-ci
 adb shell appops set io.github.ciurlaro.codexmobile.debug MANAGE_EXTERNAL_STORAGE allow
 run_instrumentation \
-  -e class 'io.github.ciurlaro.codexmobile.app.RuntimeBootstrapDeviceTest,io.github.ciurlaro.codexmobile.app.CodexRuntimeDeviceTest#processStartStopRestartAndUnexpectedExit,io.github.ciurlaro.codexmobile.app.CodexRuntimeDeviceTest#authenticationUsesPersistedAccountOrStartsDeviceFlow,io.github.ciurlaro.codexmobile.app.ForegroundLifecycleDeviceTest#bindingRecreationAndMultipleActivitiesKeepOneOwner' \
+  -e class 'io.github.ciurlaro.codexmobile.app.RuntimeBootstrapDeviceTest,io.github.ciurlaro.codexmobile.app.CodexRuntimeDeviceTest#runtimePackagingPreparationAndChecksum,io.github.ciurlaro.codexmobile.app.CodexRuntimeDeviceTest#processStartStopRestartAndUnexpectedExit,io.github.ciurlaro.codexmobile.app.CodexRuntimeDeviceTest#authenticationUsesPersistedAccountOrStartsDeviceFlow,io.github.ciurlaro.codexmobile.app.ForegroundLifecycleDeviceTest#bindingRecreationAndMultipleActivitiesKeepOneOwner' \
   io.github.ciurlaro.codexmobile.debug.test/androidx.test.runner.AndroidJUnitRunner
 run_instrumentation \
   -e providerE2e true \

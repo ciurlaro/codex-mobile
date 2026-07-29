@@ -1,6 +1,7 @@
 package io.github.ciurlaro.codexmobile.app.runtime.bootstrap
 
 import android.content.Context
+import android.os.Build
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import io.github.ciurlaro.codexmobile.appserver.runtime.CodexAppServerRuntime
 import io.github.ciurlaro.codexmobile.appserver.runtime.CodexRuntimeConfiguration
@@ -16,6 +17,7 @@ internal class AndroidRuntimeBootstrap(
     private val appContext = context.applicationContext
 
     fun create(): CodexRuntime {
+        val activeAbi = Build.SUPPORTED_ABIS.firstOrNull().orEmpty()
         val executable = runtimeOverride
             ?: File(appContext.applicationInfo.nativeLibraryDir, RUNTIME_FILE)
         val certificates = File(SYSTEM_CERTIFICATE_DIRECTORY)
@@ -27,12 +29,12 @@ internal class AndroidRuntimeBootstrap(
         return CodexAppServerRuntime(
             CodexRuntimeConfiguration(
                 executable = Path(executable.absolutePath),
-                verifyPackagedExecutable = runtimeOverride == null,
+                verifyPackagedExecutable = runtimeOverride == null && activeAbi == "arm64-v8a",
                 applicationDirectory = Path(File(appContext.filesDir, "home").absolutePath),
                 privateDirectory = Path(appContext.noBackupFilesDir.absolutePath),
                 temporaryDirectory = Path(appContext.cacheDir.absolutePath),
                 nativeLibraryDirectory = Path(appContext.applicationInfo.nativeLibraryDir),
-                activeAbi = "arm64-v8a",
+                activeAbi = activeAbi,
                 certificateSources = certificates,
                 sqliteDriver = AndroidSQLiteDriver(),
                 inheritedEnvironment = listOf("PATH", "LANG", "LC_ALL", "TERM")
