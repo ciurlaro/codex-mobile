@@ -180,9 +180,12 @@ class CodexRuntimeEventTest {
         }
         val client = CodexAgentClient({ process }, requestTimeoutMillis = 1_000)
         try {
-            val received = mutableListOf<AgentEvent>()
-            val collector = async { withTimeout(2_000) { client.events.take(6).toList(received) } }
+            suspend fun nextEvent(): AgentEvent = withTimeout(5_000) { client.events.first() }
+
             client.authenticate()
+            val required = assertIs<AgentEvent.AuthenticationRequired>(nextEvent())
+            assertEquals("https://auth.openai.com/oauth/authorize?state=test", required.signInUrl)
+
             process.notify(
                 "account/login/completed",
                 buildJsonObject {
@@ -191,20 +194,18 @@ class CodexRuntimeEventTest {
                     put("error", JsonNull)
                 },
             )
-            val session = client.openSession()
-            client.sendTurn(session, AgentTurnRequest("hello"))
-            collector.await()
+            assertIs<AgentEvent.Authenticated>(nextEvent())
 
-            val required = assertIs<AgentEvent.AuthenticationRequired>(received[0])
-            assertEquals("https://auth.openai.com/oauth/authorize?state=test", required.signInUrl)
-            assertIs<AgentEvent.Authenticated>(received[1])
-            assertEquals(AgentEvent.SessionOpened(SessionId("thread-1"), model = "test"), received[2])
+            val session = client.openSession()
+            assertEquals(AgentEvent.SessionOpened(SessionId("thread-1"), model = "test"), nextEvent())
+
+            client.sendTurn(session, AgentTurnRequest("hello"))
             assertEquals(
                 AgentEvent.TextDelta(SessionId("thread-1"), "Hello", "item-1", isCommentary = true),
-                received[3],
+                nextEvent(),
             )
-            assertEquals(AgentEvent.TurnCompleted(SessionId("thread-1")), received[4])
-            assertIs<AgentEvent.Failure>(received[5])
+            assertEquals(AgentEvent.TurnCompleted(SessionId("thread-1")), nextEvent())
+            assertIs<AgentEvent.Failure>(nextEvent())
         } finally {
             client.close()
         }
