@@ -151,6 +151,7 @@ jobs:
           target: google_apis
           profile: pixel_6
           emulator-build: 15261927 # 36.5.11
+          emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           script: bash device-tests/scripts/run-android-device-tests.sh device-tests
       - name: Record complete workflow timing
