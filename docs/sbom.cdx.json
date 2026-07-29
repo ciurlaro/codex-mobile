@@ -62,7 +62,7 @@
       "version": "0.2.0-preview.3"
     },
     {
-      "bom-ref": "pkg:generic/codex-mobile-provider-documents@f99b13b76c5dc99bf47280bb9071f9869a264732",
+      "bom-ref": "pkg:generic/codex-mobile-provider-documents@6a8c75525bc014fb8b1e12f6b3be4362287d7d81",
       "description": "Bundled Documents provider from ciurlaro/codex-mobile-plugins.",
       "licenses": [
         {
@@ -72,12 +72,12 @@
         }
       ],
       "name": "codex-mobile-provider-documents",
-      "purl": "pkg:generic/codex-mobile-provider-documents@f99b13b76c5dc99bf47280bb9071f9869a264732",
+      "purl": "pkg:generic/codex-mobile-provider-documents@6a8c75525bc014fb8b1e12f6b3be4362287d7d81",
       "type": "library",
-      "version": "f99b13b76c5dc99bf47280bb9071f9869a264732"
+      "version": "6a8c75525bc014fb8b1e12f6b3be4362287d7d81"
     },
     {
-      "bom-ref": "pkg:generic/codex-mobile-provider-telegram@f99b13b76c5dc99bf47280bb9071f9869a264732",
+      "bom-ref": "pkg:generic/codex-mobile-provider-telegram@6a8c75525bc014fb8b1e12f6b3be4362287d7d81",
       "description": "Bundled Telegram provider from ciurlaro/codex-mobile-plugins.",
       "licenses": [
         {
@@ -87,9 +87,9 @@
         }
       ],
       "name": "codex-mobile-provider-telegram",
-      "purl": "pkg:generic/codex-mobile-provider-telegram@f99b13b76c5dc99bf47280bb9071f9869a264732",
+      "purl": "pkg:generic/codex-mobile-provider-telegram@6a8c75525bc014fb8b1e12f6b3be4362287d7d81",
       "type": "library",
-      "version": "f99b13b76c5dc99bf47280bb9071f9869a264732"
+      "version": "6a8c75525bc014fb8b1e12f6b3be4362287d7d81"
     },
     {
       "bom-ref": "pkg:generic/openai/codex-app-server@0.145.0?arch=arm64",
@@ -1685,8 +1685,8 @@
       "dependsOn": [
         "pkg:generic/codex-agent-runtime@0.2.0-preview.3",
         "pkg:generic/codex-mobile-android-app@0.2.0-preview.3",
-        "pkg:generic/codex-mobile-provider-documents@f99b13b76c5dc99bf47280bb9071f9869a264732",
-        "pkg:generic/codex-mobile-provider-telegram@f99b13b76c5dc99bf47280bb9071f9869a264732",
+        "pkg:generic/codex-mobile-provider-documents@6a8c75525bc014fb8b1e12f6b3be4362287d7d81",
+        "pkg:generic/codex-mobile-provider-telegram@6a8c75525bc014fb8b1e12f6b3be4362287d7d81",
         "pkg:generic/extension-host@0.2.0-preview.3",
         "pkg:generic/extension-provider-api@0.2.0-preview.3",
         "pkg:generic/openai/codex-app-server@0.145.0?arch=arm64",
@@ -1896,11 +1896,11 @@
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-provider-documents@f99b13b76c5dc99bf47280bb9071f9869a264732"
+      "ref": "pkg:generic/codex-mobile-provider-documents@6a8c75525bc014fb8b1e12f6b3be4362287d7d81"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-provider-telegram@f99b13b76c5dc99bf47280bb9071f9869a264732"
+      "ref": "pkg:generic/codex-mobile-provider-telegram@6a8c75525bc014fb8b1e12f6b3be4362287d7d81"
     },
     {
       "dependsOn": [],
