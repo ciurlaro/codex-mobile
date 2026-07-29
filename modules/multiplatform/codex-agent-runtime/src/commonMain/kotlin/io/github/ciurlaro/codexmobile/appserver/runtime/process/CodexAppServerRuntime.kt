@@ -143,7 +143,6 @@ class CodexAppServerRuntime(
         Path(Path(configuration.privateDirectory, "codex"), LOGS_DATABASE_FILE)
 
     private fun sanitizeExistingRuntimeLogs(databaseFile: Path): Boolean {
-        if (!databaseFile.isRegularFile()) return false
         val database = configuration.sqliteDriver.open(databaseFile.toString())
         try {
             installRuntimeLogPrivacyGuard(database)

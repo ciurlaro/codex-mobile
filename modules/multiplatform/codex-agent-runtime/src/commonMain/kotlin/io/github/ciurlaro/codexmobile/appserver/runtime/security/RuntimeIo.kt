@@ -50,6 +50,17 @@ internal fun installRuntimeLogPrivacyGuard(database: SQLiteConnection) {
     database.execSQL("PRAGMA secure_delete=ON")
     database.execSQL("BEGIN IMMEDIATE")
     try {
+        database.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS logs (
+                ts INTEGER NOT NULL,
+                ts_nanos INTEGER NOT NULL,
+                level TEXT NOT NULL,
+                target TEXT NOT NULL,
+                feedback_log_body TEXT NOT NULL
+            )
+            """.trimIndent(),
+        )
         database.execSQL("DELETE FROM logs")
         database.execSQL(
             """
