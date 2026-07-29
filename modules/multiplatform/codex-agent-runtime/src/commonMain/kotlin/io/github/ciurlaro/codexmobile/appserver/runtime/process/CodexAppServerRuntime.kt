@@ -39,6 +39,7 @@ class CodexAppServerRuntime(
     private val sendMutex = Mutex()
     private val started = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
+    private val logPrivacyGuardInstalled = AtomicBoolean(false)
     private val process = AtomicReference<Process?>(null)
     private val proxy = AtomicReference<LoopbackConnectProxy?>(null)
 
@@ -54,7 +55,7 @@ class CodexAppServerRuntime(
             val codexHome = Path(configuration.privateDirectory, "codex")
             val certificateBundle = prepareRuntimeCertificateBundle(configuration.certificateSources, codexHome)
             val logsDatabase = Path(codexHome, LOGS_DATABASE_FILE)
-            sanitizeExistingRuntimeLogs(logsDatabase)
+            if (sanitizeExistingRuntimeLogs(logsDatabase)) logPrivacyGuardInstalled.store(true)
             val startedProxy = LoopbackConnectProxy.start(configuration.proxyPassword)
             proxy.store(startedProxy)
             val stdoutFile = Path(configuration.privateDirectory, RUNTIME_STDOUT_FILE)
@@ -80,7 +81,7 @@ class CodexAppServerRuntime(
                 .createProcessAsync()
             process.store(startedProcess)
             val outputJob = attachOutput(startedProcess, stdoutFile)
-            awaitRuntimeLogPrivacyGuard(logsDatabase, startedProcess)
+            awaitRuntimeLogPrivacyGuard(logsDatabase, startedProcess, allowMissingDatabase = true)
             watch(startedProcess, outputJob)
         } catch (error: Exception) {
             eventChannel.trySend(CodexRuntimeEvent.StartFailure(error.visibleMessage()))
@@ -96,6 +97,9 @@ class CodexAppServerRuntime(
         try {
             input.writeAsync((line.value + '\n').encodeToByteArray())
             input.flushAsync()
+            if (!logPrivacyGuardInstalled.load() && process.load() === current) {
+                awaitRuntimeLogPrivacyGuard(logsDatabase(), current, allowMissingDatabase = false)
+            }
         } catch (error: Exception) {
             eventChannel.trySend(CodexRuntimeEvent.IoFailure(error.visibleMessage()))
             throw error
@@ -135,8 +139,11 @@ class CodexAppServerRuntime(
         ).forEach { SystemFileSystem.createDirectories(it) }
     }
 
-    private fun sanitizeExistingRuntimeLogs(databaseFile: Path) {
-        if (!databaseFile.isRegularFile()) return
+    private fun logsDatabase(): Path =
+        Path(Path(configuration.privateDirectory, "codex"), LOGS_DATABASE_FILE)
+
+    private fun sanitizeExistingRuntimeLogs(databaseFile: Path): Boolean {
+        if (!databaseFile.isRegularFile()) return false
         val database = configuration.sqliteDriver.open(databaseFile.toString())
         try {
             installRuntimeLogPrivacyGuard(database)
@@ -145,9 +152,14 @@ class CodexAppServerRuntime(
         } finally {
             database.close()
         }
+        return true
     }
 
-    private suspend fun awaitRuntimeLogPrivacyGuard(databaseFile: Path, current: Process) {
+    private suspend fun awaitRuntimeLogPrivacyGuard(
+        databaseFile: Path,
+        current: Process,
+        allowMissingDatabase: Boolean,
+    ) {
         val startedAt = TimeSource.Monotonic.markNow()
         var lastFailure: Throwable? = null
         while (current.isAlive && startedAt.elapsedNow() < LOG_DATABASE_TIMEOUT) {
@@ -159,11 +171,13 @@ class CodexAppServerRuntime(
                     } finally {
                         database.close()
                     }
+                    logPrivacyGuardInstalled.store(true)
                     return
                 } catch (error: Throwable) {
                     lastFailure = error
                 }
             }
+            if (allowMissingDatabase && startedAt.elapsedNow() >= LOG_DATABASE_STARTUP_GRACE) return
             delay(LOG_DATABASE_RETRY)
         }
         throw IllegalStateException("Unable to prepare the private Codex log store", lastFailure)
@@ -204,6 +218,7 @@ class CodexAppServerRuntime(
     private companion object {
         const val LOGS_DATABASE_FILE = "logs_2.sqlite"
         const val RUNTIME_STDOUT_FILE = "codex-app-server.stdout"
+        val LOG_DATABASE_STARTUP_GRACE = 1.seconds
         val LOG_DATABASE_TIMEOUT = 60.seconds
         val LOG_DATABASE_RETRY = 25.milliseconds
     }
