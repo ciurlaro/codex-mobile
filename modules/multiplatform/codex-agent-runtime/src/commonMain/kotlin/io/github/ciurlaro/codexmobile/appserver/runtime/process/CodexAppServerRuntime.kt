@@ -2,7 +2,6 @@
 
 package io.github.ciurlaro.codexmobile.appserver.runtime
 
-import androidx.sqlite.execSQL
 import io.github.ciurlaro.codexmobile.appserver.AppServerProtocolIdentity
 import io.github.ciurlaro.codexmobile.appserver.runtime.CodexJsonLine
 import io.github.ciurlaro.codexmobile.appserver.runtime.CodexRuntime
@@ -17,7 +16,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
@@ -27,9 +25,6 @@ import kotlinx.io.files.Path
 import kotlinx.io.files.SystemFileSystem
 import kotlin.concurrent.atomics.AtomicBoolean
 import kotlin.concurrent.atomics.AtomicReference
-import kotlin.time.Duration.Companion.milliseconds
-import kotlin.time.Duration.Companion.seconds
-import kotlin.time.TimeSource
 
 class CodexAppServerRuntime(
     private val configuration: CodexRuntimeConfiguration,
@@ -54,8 +49,6 @@ class CodexAppServerRuntime(
             check(configuration.executable.isRegularFile()) { "Bundled Codex runtime is missing" }
             val codexHome = Path(configuration.privateDirectory, "codex")
             val certificateBundle = prepareRuntimeCertificateBundle(configuration.certificateSources, codexHome)
-            val logsDatabase = Path(codexHome, LOGS_DATABASE_FILE)
-            if (sanitizeExistingRuntimeLogs(logsDatabase)) logPrivacyGuardInstalled.store(true)
             val startedProxy = LoopbackConnectProxy.start(configuration.proxyPassword)
             proxy.store(startedProxy)
             val stdoutFile = Path(configuration.privateDirectory, RUNTIME_STDOUT_FILE)
@@ -81,7 +74,6 @@ class CodexAppServerRuntime(
                 .createProcessAsync()
             process.store(startedProcess)
             val outputJob = attachOutput(startedProcess, stdoutFile)
-            awaitRuntimeLogPrivacyGuard(logsDatabase, startedProcess, allowMissingDatabase = true)
             watch(startedProcess, outputJob)
         } catch (error: Exception) {
             eventChannel.trySend(CodexRuntimeEvent.StartFailure(error.visibleMessage()))
@@ -97,9 +89,6 @@ class CodexAppServerRuntime(
         try {
             input.writeAsync((line.value + '\n').encodeToByteArray())
             input.flushAsync()
-            if (!logPrivacyGuardInstalled.load() && process.load() === current) {
-                awaitRuntimeLogPrivacyGuard(logsDatabase(), current, allowMissingDatabase = false)
-            }
         } catch (error: Exception) {
             eventChannel.trySend(CodexRuntimeEvent.IoFailure(error.visibleMessage()))
             throw error
@@ -109,6 +98,7 @@ class CodexAppServerRuntime(
     private fun attachOutput(current: Process, stdoutFile: Path): Job = scope.launch {
         try {
             consumeProcessOutput(stdoutFile, current::isAlive) { line ->
+                installRuntimeLogPrivacyGuard()
                 eventChannel.trySend(CodexRuntimeEvent.Received(CodexJsonLine(line)))
             }
         } catch (error: Exception) {
@@ -142,44 +132,15 @@ class CodexAppServerRuntime(
     private fun logsDatabase(): Path =
         Path(Path(configuration.privateDirectory, "codex"), LOGS_DATABASE_FILE)
 
-    private fun sanitizeExistingRuntimeLogs(databaseFile: Path): Boolean {
-        val database = configuration.sqliteDriver.open(databaseFile.toString())
+    private fun installRuntimeLogPrivacyGuard() {
+        if (logPrivacyGuardInstalled.load()) return
+        val database = configuration.sqliteDriver.open(logsDatabase().toString())
         try {
             installRuntimeLogPrivacyGuard(database)
-            database.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
-            database.execSQL("VACUUM")
         } finally {
             database.close()
         }
-        return true
-    }
-
-    private suspend fun awaitRuntimeLogPrivacyGuard(
-        databaseFile: Path,
-        current: Process,
-        allowMissingDatabase: Boolean,
-    ) {
-        val startedAt = TimeSource.Monotonic.markNow()
-        var lastFailure: Throwable? = null
-        while (current.isAlive && startedAt.elapsedNow() < LOG_DATABASE_TIMEOUT) {
-            if (databaseFile.isRegularFile()) {
-                try {
-                    val database = configuration.sqliteDriver.open(databaseFile.toString())
-                    try {
-                        installRuntimeLogPrivacyGuard(database)
-                    } finally {
-                        database.close()
-                    }
-                    logPrivacyGuardInstalled.store(true)
-                    return
-                } catch (error: Throwable) {
-                    lastFailure = error
-                }
-            }
-            if (allowMissingDatabase && startedAt.elapsedNow() >= LOG_DATABASE_STARTUP_GRACE) return
-            delay(LOG_DATABASE_RETRY)
-        }
-        throw IllegalStateException("Unable to prepare the private Codex log store", lastFailure)
+        logPrivacyGuardInstalled.store(true)
     }
 
     private fun verifyPackagedRuntime() {
@@ -217,8 +178,5 @@ class CodexAppServerRuntime(
     private companion object {
         const val LOGS_DATABASE_FILE = "logs_2.sqlite"
         const val RUNTIME_STDOUT_FILE = "codex-app-server.stdout"
-        val LOG_DATABASE_STARTUP_GRACE = 1.seconds
-        val LOG_DATABASE_TIMEOUT = 60.seconds
-        val LOG_DATABASE_RETRY = 25.milliseconds
     }
 }
