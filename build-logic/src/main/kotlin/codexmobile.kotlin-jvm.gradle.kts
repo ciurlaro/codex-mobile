@@ -9,3 +9,7 @@ kotlin {
 dependencyLocking {
     lockAllConfigurations()
 }
+
+tasks.withType<Test>().configureEach {
+    useJUnitPlatform()
+}

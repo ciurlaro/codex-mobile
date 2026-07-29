@@ -6,7 +6,7 @@ evidence=$(mktemp -d "${TMPDIR:-/tmp}/codex-mobile-repro.XXXXXX")
 trap 'rm -rf "$evidence"' EXIT
 
 build() {
-    "$root/gradlew" --no-build-cache clean :app:android:assembleRelease
+    "$root/gradlew" --no-build-cache clean :app:assembleRelease
 }
 
 baseline=${1:-}
@@ -15,10 +15,10 @@ if [[ -n "$baseline" ]]; then
     cp "$baseline" "$evidence/first.apk"
 else
     build
-    cp "$root/app/android/build/outputs/apk/release/android-release.apk" "$evidence/first.apk"
+    cp "$root/modules/android/app/build/outputs/apk/release/app-release.apk" "$evidence/first.apk"
 fi
 build
-cp "$root/app/android/build/outputs/apk/release/android-release.apk" "$evidence/second.apk"
+cp "$root/modules/android/app/build/outputs/apk/release/app-release.apk" "$evidence/second.apk"
 
 cmp "$evidence/first.apk" "$evidence/second.apk"
 shasum -a 256 "$evidence/first.apk"

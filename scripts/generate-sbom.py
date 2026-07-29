@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "docs" / "sbom.cdx.json"
 PROPERTIES = ROOT / "gradle.properties"
-APP_LOCK = ROOT / "app" / "android" / "gradle.lockfile"
+APP_LOCK = ROOT / "modules" / "android" / "app" / "gradle.lockfile"
 
 
 def prop(name: str, pattern: str) -> str:
@@ -53,9 +53,10 @@ def generate() -> str:
             "licenses": [{"license": {"id": "GPL-3.0-or-later"}}],
         }
         for name, description in [
-            ("codex-mobile-core", "Provider-neutral application contracts."),
-            ("codex-mobile-agent-codex", "Pinned App Server protocol, plugin lifecycle, and dynamic-tool authority."),
-            ("codex-mobile-platform-android", "Android runtime, bundled provider host, workspace authority, and mutation journal."),
+            ("codex-agent-runtime", "Portable agent, protocol, local process, proxy, persistence, and security runtime."),
+            ("extension-provider-api", "Stable multiplatform provider contract."),
+            ("extension-host", "Android extension lifecycle, secrets, recovery, and tool dispatch."),
+            ("codex-mobile-android-app", "Android bootstrap, workspace authority, lifecycle, and UI."),
         ]
     ]
     internal += [

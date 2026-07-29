@@ -5,10 +5,7 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$root"
 
 failed=0
-source_roots=(
-  agent app app-server-client build-logic core platform provider-api runtime-host
-  build.gradle.kts settings.gradle.kts
-)
+source_roots=(modules tools build-logic build.gradle.kts settings.gradle.kts)
 while IFS= read -r -d '' source; do
   lines=$(wc -l < "$source" | tr -d ' ')
   if (( lines > 300 )); then
@@ -16,12 +13,11 @@ while IFS= read -r -d '' source; do
     failed=1
   fi
 done < <(
-  find "${source_roots[@]}" \
-    -path '*/build' -prune -o \
+  find "${source_roots[@]}" -path '*/build' -prune -o \
     -type f \( -name '*.kt' -o -name '*.kts' -o -name '*.gradle' \) -print0
 )
 
-generated=app-server-client/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/generated
+generated=modules/multiplatform/codex-agent-runtime/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/generated
 while IFS= read -r -d '' source; do
   lines=$(wc -l < "$source" | tr -d ' ')
   if (( lines < 100 || lines > 300 )); then

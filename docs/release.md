@@ -26,7 +26,7 @@ scripts/verify-release.sh
 scripts/verify-reproducible-release.sh
 ```
 
-GitHub pull-request CI runs these commands with an ephemeral key. Official releases reuse the verified artifacts and re-sign them in the manually approved `release` environment; no Gradle or repository script runs while the production key is available. Fork and pull-request jobs receive no production secret.
+GitHub push CI runs the release build with an ephemeral key after pull-request CI has passed the debug gates. Official releases reuse the verified artifacts and re-sign them in the manually approved `release` environment; no Gradle or repository script runs while the production key is available. Fork and pull-request jobs receive no production secret.
 
 `scripts/release-local.sh` is an explicit fallback when GitHub Actions is unavailable. It obtains the password from Keychain and runs the same release checks; `--reproducible` adds two clean byte-for-byte comparison builds.
 
@@ -55,5 +55,5 @@ The command verifies the signed release, performs a full in-place update with `a
 
 The release record covers startup, session readiness, first token, long streams, memory, CPU, file descriptors, threads, process activity, APK size/hash, supported Android versions, and marketplace/provider lifecycle drills. Before promotion, verify source addition, cache-first catalog refresh, restart-free activation/removal, next-chat tool visibility, ordinary shell work, all approval modes, mutation recovery without resubmission, official plugins, foreground behavior, and app-data erasure.
 
-Provider publishing is separate. Each add-on manifest pins a matching host version, API range, schema digest, MCP names, split name, ABI set, artifact URL, and SHA-256. Its release checks prove signer compatibility, post-restart activation/removal, functional behavior, declared JNI/models, licences, size, network/download behavior, and absence of helper executables.
-The coordinated provider release publishes a deterministic `release-manifest.json` that binds the exact host APK, App Server client/protocol/runtime, provider API and implementations, plugin content, feature APKs, MCP image, compatibility ranges, and both SBOMs by revision and SHA-256.
+Provider publishing is separate. Each add-on manifest pins a matching host version, API range, schema digest, implementation, and MCP names. Its release checks prove the bundled provider behavior, declared JNI/models, licences, size, network policy, and absence of helper executables.
+The coordinated provider release publishes the Documents and Telegram AARs plus a deterministic `release-manifest.json` that binds the exact provider source revision, provider API coordinate, implementations, plugin content, AARs, MCP image, compatibility ranges, and provider SBOM by SHA-256.

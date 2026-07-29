@@ -12,13 +12,13 @@ Disabling a plugin immediately revokes its tools while retaining private state. 
 
 | Module | Responsibility |
 |---|---|
-| `:app:android` | Compose UI, ViewModels, composition root, and foreground lifecycle |
-| `:core` | Provider-neutral application contracts |
-| `app-server-client` | Published KMP App Server protocol identity and transport contract |
-| `:agent:codex` | Codex product adaptation, plugin lifecycle, dynamic-tool authority, and authentication |
-| `:platform:android` | App Server runtime, storage checks, bundled provider lifecycle, and mutation journal |
-| `provider-api` | Published KMP provider contract with host-supplied workspace and mutation capabilities |
+| `:codex-agent-runtime` | Portable agent contracts, Codex adaptation, generated protocol, transport, process host, proxy, persistence, and security policy |
+| `extension-provider-api` | Published KMP provider contract; its existing Kotlin package and ABI remain unchanged |
+| `:extension-host` | Android marketplace snapshots, skills, providers, secrets, mutation recovery, and tool dispatch |
+| `:app` | Android bootstrap, workspace selection, Compose UI, ViewModels, and application lifecycle |
 | `codex-mobile-plugins` composite | Pinned Documents and Telegram implementation artifacts bundled into the app |
+
+Build conventions live in `build-logic`; deterministic schema generation lives in `tools/protocol-generator`.
 
 Local builds use a sibling `codex-mobile-plugins` checkout by default, or an explicit
 `-PcodexMobile.providerBuild=/absolute/codex-mobile-plugins`; CI checks out the pinned revision from `gradle.properties`.
@@ -27,10 +27,14 @@ Local builds use a sibling `codex-mobile-plugins` checkout by default, or an exp
 
 ```sh
 bash scripts/verify-structure.sh
-./gradlew test assembleDebug assembleDebugAndroidTest lint
+./gradlew test \
+  :codex-agent-runtime:testAndroidHostTest \
+  :codex-agent-runtime:verifyProtocolSource \
+  :extension-provider-api:testAndroidHostTest \
+  assembleDebug assembleDebugAndroidTest lint
 ```
 
-The checked-in wrapper pins Gradle 9.4.1. See [architecture](docs/architecture.md), [security](docs/security.md), [privacy](docs/privacy.md), and [release operations](docs/release.md).
+The checked-in wrapper pins Gradle 9.4.1. See [architecture](docs/architecture.md), [build performance](docs/build-performance.md), [security](docs/security.md), [privacy](docs/privacy.md), and [release operations](docs/release.md).
 
 ## Licence
 

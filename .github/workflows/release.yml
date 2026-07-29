@@ -49,7 +49,7 @@ jobs:
       - name: Verify candidate provenance
         run: |
           test "$(cat candidate/source-revision.txt)" = "$GITHUB_SHA"
-          test -s candidate/app/android/build/outputs/apk/release/android-release.apk
+          test -s candidate/modules/android/app/build/outputs/apk/release/app-release.apk
 
   sign:
     needs: candidate
@@ -74,7 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           tools="$ANDROID_HOME/build-tools/36.0.0"
-          input=candidate/app/android/build/outputs/apk/release/android-release.apk
+          input=candidate/modules/android/app/build/outputs/apk/release/app-release.apk
           output=Codex-Mobile-${{ needs.candidate.outputs.version }}.apk
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
           "$tools/zipalign" -f -p 4 "$input" "$RUNNER_TEMP/aligned.apk"
@@ -102,7 +102,7 @@ jobs:
             candidate/LICENSE
             candidate/LICENSES/MLKIT-EXCEPTION.txt
             candidate/THIRD_PARTY_NOTICES.md
-            candidate/app/android/build/outputs/mapping/release/mapping.txt
+            candidate/modules/android/app/build/outputs/mapping/release/mapping.txt
 
   publish:
     needs: [candidate, sign]
@@ -121,5 +121,5 @@ jobs:
         run: |
           args=(release create "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --generate-notes --title "Codex Mobile ${{ needs.candidate.outputs.version }}")
           if [[ "${{ needs.candidate.outputs.version }}" == *-* ]]; then args+=(--prerelease); fi
-          args+=(release/Codex-Mobile-*.apk release/Codex-Mobile-*.apk.sha256 release/candidate/docs/sbom.cdx.json release/candidate/LICENSE release/candidate/LICENSES/MLKIT-EXCEPTION.txt release/candidate/THIRD_PARTY_NOTICES.md release/candidate/app/android/build/outputs/mapping/release/mapping.txt)
+          args+=(release/Codex-Mobile-*.apk release/Codex-Mobile-*.apk.sha256 release/candidate/docs/sbom.cdx.json release/candidate/LICENSE release/candidate/LICENSES/MLKIT-EXCEPTION.txt release/candidate/THIRD_PARTY_NOTICES.md release/candidate/modules/android/app/build/outputs/mapping/release/mapping.txt)
           gh "${args[@]}"

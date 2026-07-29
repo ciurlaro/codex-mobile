@@ -52,7 +52,7 @@ abstract class VerifyProtocolSourceTask : DefaultTask() {
             "Pinned complete App Server protocol schema digest changed"
         }
         val provenanceFile = provenance.get().asFile
-        verifyGeneratedOutputs(provenanceFile, provenanceFile.parentFile.parentFile)
+        verifyGeneratedOutputs(provenanceFile, provenanceFile.parentFile.parentFile.parentFile)
     }
 
     @Suppress("UNCHECKED_CAST")

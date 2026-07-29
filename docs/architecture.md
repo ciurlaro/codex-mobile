@@ -4,21 +4,19 @@
 
 ```mermaid
 flowchart TB
-    App[":app:android\nUI and composition"] --> Agent[":agent:codex\nCodex adaptation and authority"]
-    App --> Platform[":platform:android\nAndroid runtime and provider host"]
-    Agent --> Client["app-server-client\nPinned KMP protocol and transport"]
-    Platform --> Client
-    Agent --> Core[":core\nApplication contracts"]
-    Platform --> Core
+    App[":app\nUI, workspace, lifecycle, Android bootstrap"] --> Runtime[":codex-agent-runtime\nPortable agent and local App Server runtime"]
+    App --> Host[":extension-host\nAndroid extension lifecycle and dispatch"]
+    Host --> Runtime
+    Host --> API["extension-provider-api\nStable provider ABI"]
     Source["GitHub Codex marketplace"] --> Plugin["standard plugin and skills"]
     ProviderSource["pinned provider source"] --> Bundled["bundled Android providers"]
-    Plugin --> Agent
-    Bundled --> Platform
+    Plugin --> Runtime
+    Bundled --> Host
 ```
 
-The published `app-server-client` KMP artifact owns the exact `0.145.0` protocol identity and the `CodexRuntime` transport contract. Its checked-in authoritative stable-v2 schema is bound to the exact upstream tag, revision, source paths, and SHA-256 digests; normal builds verify that input and do not fetch or regenerate it. `AppServerConnection` owns JSON-RPC IDs, initialization, correlation, framing, timeouts, and restart state through the generated typed protocol. Product calls pass generated request and response types directly; there is no raw JSON-RPC request adapter in the mobile code. One serialized owner processes transport input without waiting for application event consumption. Its bounded event delivery is lossless: ordered delivery succeeds, or overflow stops the connection and closes the event stream with an explicit failure. Its runtime dependency carries JSON lines and typed start, I/O, EOF, and exit failures.
+The published `codex-agent-runtime` KMP artifact owns the exact `0.145.0` protocol identity, `AgentClient` and `CodexAgentClient`, generated protocol, JSON-RPC transport, and local runtime. Its checked-in authoritative stable-v2 schema is bound to the exact upstream tag, revision, source paths, and SHA-256 digests; normal builds verify that input and do not fetch or regenerate it. `AppServerConnection` owns JSON-RPC IDs, initialization, correlation, framing, timeouts, and restart state through the generated typed protocol. Product calls pass generated request and response types directly; there is no raw JSON-RPC request adapter in the mobile code.
 
-The `runtime-host` KMP artifact owns the immutable runtime distribution identity: real `aarch64-unknown-linux-musl` target, App Server version/revision/schema, archive checksum, binary checksum, and execution-environment compatibility. `runtime-host:android` is the packaging/hosting adapter. It verifies that exact identity and executable checksum before launch, then `AndroidCodexRuntime` alone owns the packaged filename, `ProcessBuilder`, environment, streams, proxy, log guard, exit watcher, and shutdown. Neither host module depends on product, plugin, provider, or UI types. App Server is the only packaged standalone payload launched by Android; ordinary shell execution remains owned by App Server.
+The common runtime verifies the immutable distribution identity and executable checksum, constructs an allowlisted environment, concatenates platform-supplied certificates, starts App Server through `kmp-process`, protects outbound CONNECT traffic with an authenticated Ktor loopback proxy, installs the AndroidX SQLite KMP log-privacy guard, frames messages, and owns cancellation and cleanup. The only Android runtime adapter is the immutable bootstrap under `android/app/.../runtime/bootstrap`; it supplies packaged/application paths, native-library and ABI information, certificate paths, secure proxy entropy, and `AndroidSQLiteDriver`. App Server is the only packaged standalone payload launched by Android.
 
 ## Plugin source and Android provider
 
@@ -44,6 +42,6 @@ With App Server `0.145.0`, Never dispatches typed mutations directly; Ask me, St
 
 ## Portability
 
-Standard plugin manifests, skills, schemas, DTOs, validation, and routing can be shared with another Codex host. Platform execution cannot: each target supplies its own provider behind the same semantic contract. Regular Codex installations use the plugin's declared MCP provider; Android uses reviewed bundled code and disables that MCP entry. Adding another native Android provider therefore requires a host release.
+All production code in `codex-agent-runtime` is `commonMain`. A supported platform must supply the complete bootstrap configuration and launch App Server locally; there is no remote or partial-runtime fallback. Only the Android target is configured today. Another target is added only with a distributed local runtime and the same process, framing, proxy, certificate, SQLite, lifecycle, and agent conformance tests.
 
 A full monolithic APK update removes legacy optional splits. On first launch, legacy lifecycle records for bundled providers are migrated without clearing authentication, secrets, or pending activation/removal state.

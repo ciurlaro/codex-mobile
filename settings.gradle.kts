@@ -17,8 +17,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "codex-mobile"
 
-includeBuild("app-server-client")
-includeBuild("provider-api")
+includeBuild("modules/multiplatform/extension-provider-api")
 
 val providerBuild = providers.gradleProperty("codexMobile.providerBuild").orNull
     ?: sequenceOf(file("codex-mobile-plugins"), file("../codex-mobile-plugins"))
@@ -27,10 +26,12 @@ val providerBuild = providers.gradleProperty("codexMobile.providerBuild").orNull
 includeBuild(providerBuild) { name = "codex-mobile-plugins" }
 
 include(
-    ":app:android",
-    ":core",
-    ":agent:codex",
-    ":platform:android",
-    ":runtime-host",
-    ":runtime-host:android",
+    ":app",
+    ":codex-agent-runtime",
+    ":extension-host",
+    ":tools:protocol-generator",
 )
+
+project(":app").projectDir = file("modules/android/app")
+project(":codex-agent-runtime").projectDir = file("modules/multiplatform/codex-agent-runtime")
+project(":extension-host").projectDir = file("modules/android/extension-host")

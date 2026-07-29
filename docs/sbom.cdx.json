@@ -2,8 +2,8 @@
   "bomFormat": "CycloneDX",
   "components": [
     {
-      "bom-ref": "pkg:generic/codex-mobile-core@0.2.0-preview.3",
-      "description": "Provider-neutral application contracts.",
+      "bom-ref": "pkg:generic/codex-agent-runtime@0.2.0-preview.3",
+      "description": "Portable agent, protocol, local process, proxy, persistence, and security runtime.",
       "licenses": [
         {
           "license": {
@@ -11,14 +11,14 @@
           }
         }
       ],
-      "name": "codex-mobile-core",
-      "purl": "pkg:generic/codex-mobile-core@0.2.0-preview.3",
+      "name": "codex-agent-runtime",
+      "purl": "pkg:generic/codex-agent-runtime@0.2.0-preview.3",
       "type": "library",
       "version": "0.2.0-preview.3"
     },
     {
-      "bom-ref": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.3",
-      "description": "Pinned App Server protocol, plugin lifecycle, and dynamic-tool authority.",
+      "bom-ref": "pkg:generic/extension-provider-api@0.2.0-preview.3",
+      "description": "Stable multiplatform provider contract.",
       "licenses": [
         {
           "license": {
@@ -26,14 +26,14 @@
           }
         }
       ],
-      "name": "codex-mobile-agent-codex",
-      "purl": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.3",
+      "name": "extension-provider-api",
+      "purl": "pkg:generic/extension-provider-api@0.2.0-preview.3",
       "type": "library",
       "version": "0.2.0-preview.3"
     },
     {
-      "bom-ref": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.3",
-      "description": "Android runtime, bundled provider host, workspace authority, and mutation journal.",
+      "bom-ref": "pkg:generic/extension-host@0.2.0-preview.3",
+      "description": "Android extension lifecycle, secrets, recovery, and tool dispatch.",
       "licenses": [
         {
           "license": {
@@ -41,13 +41,28 @@
           }
         }
       ],
-      "name": "codex-mobile-platform-android",
-      "purl": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.3",
+      "name": "extension-host",
+      "purl": "pkg:generic/extension-host@0.2.0-preview.3",
       "type": "library",
       "version": "0.2.0-preview.3"
     },
     {
-      "bom-ref": "pkg:generic/codex-mobile-provider-documents@a40fefe7c3a60da14e65fef05106a07e1734afdf",
+      "bom-ref": "pkg:generic/codex-mobile-android-app@0.2.0-preview.3",
+      "description": "Android bootstrap, workspace authority, lifecycle, and UI.",
+      "licenses": [
+        {
+          "license": {
+            "id": "GPL-3.0-or-later"
+          }
+        }
+      ],
+      "name": "codex-mobile-android-app",
+      "purl": "pkg:generic/codex-mobile-android-app@0.2.0-preview.3",
+      "type": "library",
+      "version": "0.2.0-preview.3"
+    },
+    {
+      "bom-ref": "pkg:generic/codex-mobile-provider-documents@1ea533d1a093582ef6d872a92bd36021b4f8c7b4",
       "description": "Bundled Documents provider from ciurlaro/codex-mobile-plugins.",
       "licenses": [
         {
@@ -57,12 +72,12 @@
         }
       ],
       "name": "codex-mobile-provider-documents",
-      "purl": "pkg:generic/codex-mobile-provider-documents@a40fefe7c3a60da14e65fef05106a07e1734afdf",
+      "purl": "pkg:generic/codex-mobile-provider-documents@1ea533d1a093582ef6d872a92bd36021b4f8c7b4",
       "type": "library",
-      "version": "a40fefe7c3a60da14e65fef05106a07e1734afdf"
+      "version": "1ea533d1a093582ef6d872a92bd36021b4f8c7b4"
     },
     {
-      "bom-ref": "pkg:generic/codex-mobile-provider-telegram@a40fefe7c3a60da14e65fef05106a07e1734afdf",
+      "bom-ref": "pkg:generic/codex-mobile-provider-telegram@1ea533d1a093582ef6d872a92bd36021b4f8c7b4",
       "description": "Bundled Telegram provider from ciurlaro/codex-mobile-plugins.",
       "licenses": [
         {
@@ -72,9 +87,9 @@
         }
       ],
       "name": "codex-mobile-provider-telegram",
-      "purl": "pkg:generic/codex-mobile-provider-telegram@a40fefe7c3a60da14e65fef05106a07e1734afdf",
+      "purl": "pkg:generic/codex-mobile-provider-telegram@1ea533d1a093582ef6d872a92bd36021b4f8c7b4",
       "type": "library",
-      "version": "a40fefe7c3a60da14e65fef05106a07e1734afdf"
+      "version": "1ea533d1a093582ef6d872a92bd36021b4f8c7b4"
     },
     {
       "bom-ref": "pkg:generic/openai/codex-app-server@0.145.0?arch=arm64",
@@ -929,6 +944,38 @@
       "version": "1.4.0"
     },
     {
+      "bom-ref": "pkg:maven/androidx.sqlite/sqlite@2.7.0",
+      "group": "androidx.sqlite",
+      "name": "sqlite",
+      "purl": "pkg:maven/androidx.sqlite/sqlite@2.7.0",
+      "type": "library",
+      "version": "2.7.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.sqlite/sqlite-android@2.7.0",
+      "group": "androidx.sqlite",
+      "name": "sqlite-android",
+      "purl": "pkg:maven/androidx.sqlite/sqlite-android@2.7.0",
+      "type": "library",
+      "version": "2.7.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.sqlite/sqlite-framework@2.7.0",
+      "group": "androidx.sqlite",
+      "name": "sqlite-framework",
+      "purl": "pkg:maven/androidx.sqlite/sqlite-framework@2.7.0",
+      "type": "library",
+      "version": "2.7.0"
+    },
+    {
+      "bom-ref": "pkg:maven/androidx.sqlite/sqlite-framework-android@2.7.0",
+      "group": "androidx.sqlite",
+      "name": "sqlite-framework-android",
+      "purl": "pkg:maven/androidx.sqlite/sqlite-framework-android@2.7.0",
+      "type": "library",
+      "version": "2.7.0"
+    },
+    {
       "bom-ref": "pkg:maven/androidx.startup/startup-runtime@1.1.1",
       "group": "androidx.startup",
       "name": "startup-runtime",
@@ -1201,6 +1248,54 @@
       "version": "0.1.13"
     },
     {
+      "bom-ref": "pkg:maven/io.ktor/ktor-io@3.5.1",
+      "group": "io.ktor",
+      "name": "ktor-io",
+      "purl": "pkg:maven/io.ktor/ktor-io@3.5.1",
+      "type": "library",
+      "version": "3.5.1"
+    },
+    {
+      "bom-ref": "pkg:maven/io.ktor/ktor-io-jvm@3.5.1",
+      "group": "io.ktor",
+      "name": "ktor-io-jvm",
+      "purl": "pkg:maven/io.ktor/ktor-io-jvm@3.5.1",
+      "type": "library",
+      "version": "3.5.1"
+    },
+    {
+      "bom-ref": "pkg:maven/io.ktor/ktor-network@3.5.1",
+      "group": "io.ktor",
+      "name": "ktor-network",
+      "purl": "pkg:maven/io.ktor/ktor-network@3.5.1",
+      "type": "library",
+      "version": "3.5.1"
+    },
+    {
+      "bom-ref": "pkg:maven/io.ktor/ktor-network-jvm@3.5.1",
+      "group": "io.ktor",
+      "name": "ktor-network-jvm",
+      "purl": "pkg:maven/io.ktor/ktor-network-jvm@3.5.1",
+      "type": "library",
+      "version": "3.5.1"
+    },
+    {
+      "bom-ref": "pkg:maven/io.ktor/ktor-utils@3.5.1",
+      "group": "io.ktor",
+      "name": "ktor-utils",
+      "purl": "pkg:maven/io.ktor/ktor-utils@3.5.1",
+      "type": "library",
+      "version": "3.5.1"
+    },
+    {
+      "bom-ref": "pkg:maven/io.ktor/ktor-utils-jvm@3.5.1",
+      "group": "io.ktor",
+      "name": "ktor-utils-jvm",
+      "purl": "pkg:maven/io.ktor/ktor-utils-jvm@3.5.1",
+      "type": "library",
+      "version": "3.5.1"
+    },
+    {
       "bom-ref": "pkg:maven/io.legere/pdfiumandroid-api@2.0.0",
       "group": "io.legere",
       "name": "pdfiumandroid-api",
@@ -1215,6 +1310,102 @@
       "purl": "pkg:maven/io.legere/pdfiumandroid-core@2.0.0",
       "type": "library",
       "version": "2.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.encoding/core@2.6.0",
+      "group": "io.matthewnelson.encoding",
+      "name": "core",
+      "purl": "pkg:maven/io.matthewnelson.encoding/core@2.6.0",
+      "type": "library",
+      "version": "2.6.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.encoding/core-jvm@2.6.0",
+      "group": "io.matthewnelson.encoding",
+      "name": "core-jvm",
+      "purl": "pkg:maven/io.matthewnelson.encoding/core-jvm@2.6.0",
+      "type": "library",
+      "version": "2.6.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.encoding/utf8@2.6.0",
+      "group": "io.matthewnelson.encoding",
+      "name": "utf8",
+      "purl": "pkg:maven/io.matthewnelson.encoding/utf8@2.6.0",
+      "type": "library",
+      "version": "2.6.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.encoding/utf8-jvm@2.6.0",
+      "group": "io.matthewnelson.encoding",
+      "name": "utf8-jvm",
+      "purl": "pkg:maven/io.matthewnelson.encoding/utf8-jvm@2.6.0",
+      "type": "library",
+      "version": "2.6.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.immutable/collections@0.3.0",
+      "group": "io.matthewnelson.immutable",
+      "name": "collections",
+      "purl": "pkg:maven/io.matthewnelson.immutable/collections@0.3.0",
+      "type": "library",
+      "version": "0.3.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.immutable/collections-jvm@0.3.0",
+      "group": "io.matthewnelson.immutable",
+      "name": "collections-jvm",
+      "purl": "pkg:maven/io.matthewnelson.immutable/collections-jvm@0.3.0",
+      "type": "library",
+      "version": "0.3.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.kmp-file/async@0.6.0",
+      "group": "io.matthewnelson.kmp-file",
+      "name": "async",
+      "purl": "pkg:maven/io.matthewnelson.kmp-file/async@0.6.0",
+      "type": "library",
+      "version": "0.6.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.kmp-file/async-jvm@0.6.0",
+      "group": "io.matthewnelson.kmp-file",
+      "name": "async-jvm",
+      "purl": "pkg:maven/io.matthewnelson.kmp-file/async-jvm@0.6.0",
+      "type": "library",
+      "version": "0.6.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.kmp-file/file@0.6.0",
+      "group": "io.matthewnelson.kmp-file",
+      "name": "file",
+      "purl": "pkg:maven/io.matthewnelson.kmp-file/file@0.6.0",
+      "type": "library",
+      "version": "0.6.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.kmp-file/file-jvm@0.6.0",
+      "group": "io.matthewnelson.kmp-file",
+      "name": "file-jvm",
+      "purl": "pkg:maven/io.matthewnelson.kmp-file/file-jvm@0.6.0",
+      "type": "library",
+      "version": "0.6.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.kmp-process/process@0.5.0",
+      "group": "io.matthewnelson.kmp-process",
+      "name": "process",
+      "purl": "pkg:maven/io.matthewnelson.kmp-process/process@0.5.0",
+      "type": "library",
+      "version": "0.5.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.matthewnelson.kmp-process/process-jvm@0.5.0",
+      "group": "io.matthewnelson.kmp-process",
+      "name": "process-jvm",
+      "purl": "pkg:maven/io.matthewnelson.kmp-process/process-jvm@0.5.0",
+      "type": "library",
+      "version": "0.5.0"
     },
     {
       "bom-ref": "pkg:maven/javax.inject/javax.inject@1",
@@ -1273,76 +1464,108 @@
       "version": "0.4.0"
     },
     {
-      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.10.2",
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.11.0",
       "group": "org.jetbrains.kotlinx",
       "name": "kotlinx-coroutines-android",
-      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.10.2",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.11.0",
       "type": "library",
-      "version": "1.10.2"
+      "version": "1.11.0"
     },
     {
-      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.10.2",
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.11.0",
       "group": "org.jetbrains.kotlinx",
       "name": "kotlinx-coroutines-bom",
-      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.10.2",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.11.0",
       "type": "library",
-      "version": "1.10.2"
+      "version": "1.11.0"
     },
     {
-      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.10.2",
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.11.0",
       "group": "org.jetbrains.kotlinx",
       "name": "kotlinx-coroutines-core",
-      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.10.2",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.11.0",
       "type": "library",
-      "version": "1.10.2"
+      "version": "1.11.0"
     },
     {
-      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.10.2",
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.11.0",
       "group": "org.jetbrains.kotlinx",
       "name": "kotlinx-coroutines-core-jvm",
-      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.10.2",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.11.0",
       "type": "library",
-      "version": "1.10.2"
+      "version": "1.11.0"
     },
     {
-      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.9.0",
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-bytestring@0.9.0",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-io-bytestring",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-bytestring@0.9.0",
+      "type": "library",
+      "version": "0.9.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-bytestring-jvm@0.9.0",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-io-bytestring-jvm",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-bytestring-jvm@0.9.0",
+      "type": "library",
+      "version": "0.9.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-core@0.9.0",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-io-core",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-core@0.9.0",
+      "type": "library",
+      "version": "0.9.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-core-jvm@0.9.0",
+      "group": "org.jetbrains.kotlinx",
+      "name": "kotlinx-io-core-jvm",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-core-jvm@0.9.0",
+      "type": "library",
+      "version": "0.9.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.11.0",
       "group": "org.jetbrains.kotlinx",
       "name": "kotlinx-serialization-bom",
-      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.9.0",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.11.0",
       "type": "library",
-      "version": "1.9.0"
+      "version": "1.11.0"
     },
     {
-      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.9.0",
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.11.0",
       "group": "org.jetbrains.kotlinx",
       "name": "kotlinx-serialization-core",
-      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.9.0",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.11.0",
       "type": "library",
-      "version": "1.9.0"
+      "version": "1.11.0"
     },
     {
-      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.9.0",
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.11.0",
       "group": "org.jetbrains.kotlinx",
       "name": "kotlinx-serialization-core-jvm",
-      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.9.0",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.11.0",
       "type": "library",
-      "version": "1.9.0"
+      "version": "1.11.0"
     },
     {
-      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.9.0",
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.11.0",
       "group": "org.jetbrains.kotlinx",
       "name": "kotlinx-serialization-json",
-      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.9.0",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.11.0",
       "type": "library",
-      "version": "1.9.0"
+      "version": "1.11.0"
     },
     {
-      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.9.0",
+      "bom-ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.11.0",
       "group": "org.jetbrains.kotlinx",
       "name": "kotlinx-serialization-json-jvm",
-      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.9.0",
+      "purl": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.11.0",
       "type": "library",
-      "version": "1.9.0"
+      "version": "1.11.0"
     },
     {
       "bom-ref": "pkg:maven/org.jspecify/jspecify@1.0.0",
@@ -1351,16 +1574,121 @@
       "purl": "pkg:maven/org.jspecify/jspecify@1.0.0",
       "type": "library",
       "version": "1.0.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto/error@0.4.0",
+      "group": "org.kotlincrypto",
+      "name": "error",
+      "purl": "pkg:maven/org.kotlincrypto/error@0.4.0",
+      "type": "library",
+      "version": "0.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto/error-jvm@0.4.0",
+      "group": "org.kotlincrypto",
+      "name": "error-jvm",
+      "purl": "pkg:maven/org.kotlincrypto/error-jvm@0.4.0",
+      "type": "library",
+      "version": "0.4.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto.bitops/bits@0.3.0",
+      "group": "org.kotlincrypto.bitops",
+      "name": "bits",
+      "purl": "pkg:maven/org.kotlincrypto.bitops/bits@0.3.0",
+      "type": "library",
+      "version": "0.3.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto.bitops/bits-jvm@0.3.0",
+      "group": "org.kotlincrypto.bitops",
+      "name": "bits-jvm",
+      "purl": "pkg:maven/org.kotlincrypto.bitops/bits-jvm@0.3.0",
+      "type": "library",
+      "version": "0.3.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto.bitops/endian@0.3.0",
+      "group": "org.kotlincrypto.bitops",
+      "name": "endian",
+      "purl": "pkg:maven/org.kotlincrypto.bitops/endian@0.3.0",
+      "type": "library",
+      "version": "0.3.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto.bitops/endian-jvm@0.3.0",
+      "group": "org.kotlincrypto.bitops",
+      "name": "endian-jvm",
+      "purl": "pkg:maven/org.kotlincrypto.bitops/endian-jvm@0.3.0",
+      "type": "library",
+      "version": "0.3.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto.core/core@0.8.0",
+      "group": "org.kotlincrypto.core",
+      "name": "core",
+      "purl": "pkg:maven/org.kotlincrypto.core/core@0.8.0",
+      "type": "library",
+      "version": "0.8.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto.core/core-jvm@0.8.0",
+      "group": "org.kotlincrypto.core",
+      "name": "core-jvm",
+      "purl": "pkg:maven/org.kotlincrypto.core/core-jvm@0.8.0",
+      "type": "library",
+      "version": "0.8.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto.core/digest@0.8.0",
+      "group": "org.kotlincrypto.core",
+      "name": "digest",
+      "purl": "pkg:maven/org.kotlincrypto.core/digest@0.8.0",
+      "type": "library",
+      "version": "0.8.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto.core/digest-jvm@0.8.0",
+      "group": "org.kotlincrypto.core",
+      "name": "digest-jvm",
+      "purl": "pkg:maven/org.kotlincrypto.core/digest-jvm@0.8.0",
+      "type": "library",
+      "version": "0.8.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto.hash/sha2@0.8.0",
+      "group": "org.kotlincrypto.hash",
+      "name": "sha2",
+      "purl": "pkg:maven/org.kotlincrypto.hash/sha2@0.8.0",
+      "type": "library",
+      "version": "0.8.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.kotlincrypto.hash/sha2-jvm@0.8.0",
+      "group": "org.kotlincrypto.hash",
+      "name": "sha2-jvm",
+      "purl": "pkg:maven/org.kotlincrypto.hash/sha2-jvm@0.8.0",
+      "type": "library",
+      "version": "0.8.0"
+    },
+    {
+      "bom-ref": "pkg:maven/org.slf4j/slf4j-api@2.0.18",
+      "group": "org.slf4j",
+      "name": "slf4j-api",
+      "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.18",
+      "type": "library",
+      "version": "2.0.18"
     }
   ],
   "dependencies": [
     {
       "dependsOn": [
-        "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.3",
-        "pkg:generic/codex-mobile-core@0.2.0-preview.3",
-        "pkg:generic/codex-mobile-platform-android@0.2.0-preview.3",
-        "pkg:generic/codex-mobile-provider-documents@a40fefe7c3a60da14e65fef05106a07e1734afdf",
-        "pkg:generic/codex-mobile-provider-telegram@a40fefe7c3a60da14e65fef05106a07e1734afdf",
+        "pkg:generic/codex-agent-runtime@0.2.0-preview.3",
+        "pkg:generic/codex-mobile-android-app@0.2.0-preview.3",
+        "pkg:generic/codex-mobile-provider-documents@1ea533d1a093582ef6d872a92bd36021b4f8c7b4",
+        "pkg:generic/codex-mobile-provider-telegram@1ea533d1a093582ef6d872a92bd36021b4f8c7b4",
+        "pkg:generic/extension-host@0.2.0-preview.3",
+        "pkg:generic/extension-provider-api@0.2.0-preview.3",
         "pkg:generic/openai/codex-app-server@0.145.0?arch=arm64",
         "pkg:generic/openssl@3.5.7",
         "pkg:generic/tdlib@1.8.66",
@@ -1463,6 +1791,10 @@
         "pkg:maven/androidx.savedstate/savedstate-compose@1.4.0",
         "pkg:maven/androidx.savedstate/savedstate-ktx@1.4.0",
         "pkg:maven/androidx.savedstate/savedstate@1.4.0",
+        "pkg:maven/androidx.sqlite/sqlite-android@2.7.0",
+        "pkg:maven/androidx.sqlite/sqlite-framework-android@2.7.0",
+        "pkg:maven/androidx.sqlite/sqlite-framework@2.7.0",
+        "pkg:maven/androidx.sqlite/sqlite@2.7.0",
         "pkg:maven/androidx.startup/startup-runtime@1.1.1",
         "pkg:maven/androidx.tracing/tracing@1.2.0",
         "pkg:maven/androidx.transition/transition@1.6.0",
@@ -1497,47 +1829,86 @@
         "pkg:maven/com.mikepenz/multiplatform-markdown-renderer-m3@0.41.0",
         "pkg:maven/com.mikepenz/multiplatform-markdown-renderer@0.41.0",
         "pkg:maven/io.github.erweixin/ratex-android@0.1.13",
+        "pkg:maven/io.ktor/ktor-io-jvm@3.5.1",
+        "pkg:maven/io.ktor/ktor-io@3.5.1",
+        "pkg:maven/io.ktor/ktor-network-jvm@3.5.1",
+        "pkg:maven/io.ktor/ktor-network@3.5.1",
+        "pkg:maven/io.ktor/ktor-utils-jvm@3.5.1",
+        "pkg:maven/io.ktor/ktor-utils@3.5.1",
         "pkg:maven/io.legere/pdfiumandroid-api@2.0.0",
         "pkg:maven/io.legere/pdfiumandroid-core@2.0.0",
+        "pkg:maven/io.matthewnelson.encoding/core-jvm@2.6.0",
+        "pkg:maven/io.matthewnelson.encoding/core@2.6.0",
+        "pkg:maven/io.matthewnelson.encoding/utf8-jvm@2.6.0",
+        "pkg:maven/io.matthewnelson.encoding/utf8@2.6.0",
+        "pkg:maven/io.matthewnelson.immutable/collections-jvm@0.3.0",
+        "pkg:maven/io.matthewnelson.immutable/collections@0.3.0",
+        "pkg:maven/io.matthewnelson.kmp-file/async-jvm@0.6.0",
+        "pkg:maven/io.matthewnelson.kmp-file/async@0.6.0",
+        "pkg:maven/io.matthewnelson.kmp-file/file-jvm@0.6.0",
+        "pkg:maven/io.matthewnelson.kmp-file/file@0.6.0",
+        "pkg:maven/io.matthewnelson.kmp-process/process-jvm@0.5.0",
+        "pkg:maven/io.matthewnelson.kmp-process/process@0.5.0",
         "pkg:maven/javax.inject/javax.inject@1",
         "pkg:maven/org.jetbrains.kotlin/kotlin-stdlib@2.3.21",
         "pkg:maven/org.jetbrains.kotlinx/kotlinx-collections-immutable-jvm@0.4.0",
         "pkg:maven/org.jetbrains.kotlinx/kotlinx-collections-immutable@0.4.0",
-        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.10.2",
-        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.10.2",
-        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.10.2",
-        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.10.2",
-        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.9.0",
-        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.9.0",
-        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.9.0",
-        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.9.0",
-        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.9.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.11.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.11.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.11.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.11.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-bytestring-jvm@0.9.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-bytestring@0.9.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-core-jvm@0.9.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-core@0.9.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.11.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.11.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.11.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.11.0",
+        "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.11.0",
         "pkg:maven/org.jetbrains/annotations@23.0.0",
         "pkg:maven/org.jetbrains/markdown-jvm@0.7.3",
         "pkg:maven/org.jetbrains/markdown@0.7.3",
-        "pkg:maven/org.jspecify/jspecify@1.0.0"
+        "pkg:maven/org.jspecify/jspecify@1.0.0",
+        "pkg:maven/org.kotlincrypto.bitops/bits-jvm@0.3.0",
+        "pkg:maven/org.kotlincrypto.bitops/bits@0.3.0",
+        "pkg:maven/org.kotlincrypto.bitops/endian-jvm@0.3.0",
+        "pkg:maven/org.kotlincrypto.bitops/endian@0.3.0",
+        "pkg:maven/org.kotlincrypto.core/core-jvm@0.8.0",
+        "pkg:maven/org.kotlincrypto.core/core@0.8.0",
+        "pkg:maven/org.kotlincrypto.core/digest-jvm@0.8.0",
+        "pkg:maven/org.kotlincrypto.core/digest@0.8.0",
+        "pkg:maven/org.kotlincrypto.hash/sha2-jvm@0.8.0",
+        "pkg:maven/org.kotlincrypto.hash/sha2@0.8.0",
+        "pkg:maven/org.kotlincrypto/error-jvm@0.4.0",
+        "pkg:maven/org.kotlincrypto/error@0.4.0",
+        "pkg:maven/org.slf4j/slf4j-api@2.0.18"
       ],
       "ref": "pkg:generic/codex-mobile@0.2.0-preview.3?platform=android"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-agent-codex@0.2.0-preview.3"
+      "ref": "pkg:generic/codex-agent-runtime@0.2.0-preview.3"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-core@0.2.0-preview.3"
+      "ref": "pkg:generic/codex-mobile-android-app@0.2.0-preview.3"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-platform-android@0.2.0-preview.3"
+      "ref": "pkg:generic/codex-mobile-provider-documents@1ea533d1a093582ef6d872a92bd36021b4f8c7b4"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-provider-documents@a40fefe7c3a60da14e65fef05106a07e1734afdf"
+      "ref": "pkg:generic/codex-mobile-provider-telegram@1ea533d1a093582ef6d872a92bd36021b4f8c7b4"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:generic/codex-mobile-provider-telegram@a40fefe7c3a60da14e65fef05106a07e1734afdf"
+      "ref": "pkg:generic/extension-host@0.2.0-preview.3"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:generic/extension-provider-api@0.2.0-preview.3"
     },
     {
       "dependsOn": [],
@@ -1949,6 +2320,22 @@
     },
     {
       "dependsOn": [],
+      "ref": "pkg:maven/androidx.sqlite/sqlite-android@2.7.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.sqlite/sqlite-framework-android@2.7.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.sqlite/sqlite-framework@2.7.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/androidx.sqlite/sqlite@2.7.0"
+    },
+    {
+      "dependsOn": [],
       "ref": "pkg:maven/androidx.startup/startup-runtime@1.1.1"
     },
     {
@@ -2085,11 +2472,83 @@
     },
     {
       "dependsOn": [],
+      "ref": "pkg:maven/io.ktor/ktor-io-jvm@3.5.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.ktor/ktor-io@3.5.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.ktor/ktor-network-jvm@3.5.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.ktor/ktor-network@3.5.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.ktor/ktor-utils-jvm@3.5.1"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.ktor/ktor-utils@3.5.1"
+    },
+    {
+      "dependsOn": [],
       "ref": "pkg:maven/io.legere/pdfiumandroid-api@2.0.0"
     },
     {
       "dependsOn": [],
       "ref": "pkg:maven/io.legere/pdfiumandroid-core@2.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.encoding/core-jvm@2.6.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.encoding/core@2.6.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.encoding/utf8-jvm@2.6.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.encoding/utf8@2.6.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.immutable/collections-jvm@0.3.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.immutable/collections@0.3.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.kmp-file/async-jvm@0.6.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.kmp-file/async@0.6.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.kmp-file/file-jvm@0.6.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.kmp-file/file@0.6.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.kmp-process/process-jvm@0.5.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.matthewnelson.kmp-process/process@0.5.0"
     },
     {
       "dependsOn": [],
@@ -2109,39 +2568,55 @@
     },
     {
       "dependsOn": [],
-      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.10.2"
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-android@1.11.0"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.10.2"
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-bom@1.11.0"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.10.2"
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm@1.11.0"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.10.2"
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-coroutines-core@1.11.0"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.9.0"
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-bytestring-jvm@0.9.0"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.9.0"
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-bytestring@0.9.0"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.9.0"
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-core-jvm@0.9.0"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.9.0"
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-io-core@0.9.0"
     },
     {
       "dependsOn": [],
-      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.9.0"
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-bom@1.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core-jvm@1.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-core@1.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json-jvm@1.11.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.jetbrains.kotlinx/kotlinx-serialization-json@1.11.0"
     },
     {
       "dependsOn": [],
@@ -2158,6 +2633,58 @@
     {
       "dependsOn": [],
       "ref": "pkg:maven/org.jspecify/jspecify@1.0.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto.bitops/bits-jvm@0.3.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto.bitops/bits@0.3.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto.bitops/endian-jvm@0.3.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto.bitops/endian@0.3.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto.core/core-jvm@0.8.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto.core/core@0.8.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto.core/digest-jvm@0.8.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto.core/digest@0.8.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto.hash/sha2-jvm@0.8.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto.hash/sha2@0.8.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto/error-jvm@0.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.kotlincrypto/error@0.4.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/org.slf4j/slf4j-api@2.0.18"
     }
   ],
   "metadata": {

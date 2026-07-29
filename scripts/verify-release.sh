@@ -6,13 +6,13 @@ property() { awk -F= -v key="$1" '$1 == key { sub(/^[^=]*=/, ""); print; exit }'
 version_code=$(property codexMobile.versionCode)
 version_name=$(property codexMobile.versionName)
 codex_sha=$(property codexMobile.codexBinarySha256)
-apk=${1:-"$root/app/android/build/outputs/apk/release/android-release.apk"}
-aab=${2:-"$root/app/android/build/outputs/bundle/release/android-release.aab"}
+apk=${1:-"$root/modules/android/app/build/outputs/apk/release/app-release.apk"}
+aab=${2:-"$root/modules/android/app/build/outputs/bundle/release/app-release.aab"}
 tools=${ANDROID_HOME:?ANDROID_HOME must point to the Android SDK}/build-tools/36.0.0
 
 test -f "$apk" && test -f "$aab"
 test -x "$tools/apksigner" && test -x "$tools/aapt2" && test -x "$tools/dexdump"
-test -s "$root/app/android/build/outputs/mapping/release/mapping.txt"
+test -s "$root/modules/android/app/build/outputs/mapping/release/mapping.txt"
 "$tools/apksigner" verify --verbose "$apk" | grep -q 'Verified using v2 scheme.*true'
 manifest=$("$tools/aapt2" dump xmltree "$apk" --file AndroidManifest.xml)
 grep -q "versionCode.*=$version_code" <<<"$manifest"
@@ -46,8 +46,12 @@ test "$(grep '/manifest/AndroidManifest.xml$' <<<"$bundle")" = 'base/manifest/An
 actual=$(unzip -p "$apk" lib/arm64-v8a/libcodex_app_server.so | shasum -a 256 | cut -d' ' -f1)
 test "$actual" = "$codex_sha"
 "$root/scripts/generate-sbom.py" --check
-for lock in gradle.lockfile settings-gradle.lockfile core/gradle.lockfile agent/codex/gradle.lockfile \
-  platform/android/gradle.lockfile app/android/gradle.lockfile; do test -s "$root/$lock"; done
+for lock in gradle.lockfile settings-gradle.lockfile \
+  modules/multiplatform/codex-agent-runtime/gradle.lockfile \
+  modules/multiplatform/extension-provider-api/gradle.lockfile \
+  modules/android/extension-host/gradle.lockfile modules/android/app/gradle.lockfile; do
+  test -s "$root/$lock"
+done
 test -s "$root/gradle/verification-metadata.xml"
 
 echo 'release verified'

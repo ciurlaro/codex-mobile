@@ -72,9 +72,9 @@ trap cleanup EXIT
 
 "$root/gradlew" -p "$root" --no-daemon \
     "-PcodexMobile.providerBuild=$provider_root" \
-    :app:android:assembleDebug
+    :app:assembleDebug
 
-source="$root/app/android/build/outputs/apk/debug/android-debug.apk"
+source="$root/modules/android/app/build/outputs/apk/debug/app-debug.apk"
 signed="$staging/codex-mobile.apk"
 expected=$(<"$root/release-signing-certificate.sha256")
 

@@ -2,13 +2,13 @@
 
 | Decision | Why | Revisit when |
 |---|---|---|
-| Publish the pinned App Server identity and `CodexRuntime` transport contract as KMP | Reusable protocol code must not import processes, streams, product types, or Android | A proven consumer needs a separately released runtime-host artifact |
+| Consolidate the agent and local host as `codex-agent-runtime` KMP | One common owner keeps protocol, process, proxy, persistence, and lifecycle behavior consistent across platforms | A proven platform requires a separately released subset |
 | Pin App Server `0.145.0` and use dynamic tools | It preserves the Codex harness while typed providers enforce local authority | The pinned protocol gains a better native extension API |
 | Use the standard Codex Git marketplace | One catalog, lifecycle, skill UX, and enablement truth work across hosts | App Server replaces this surface |
 | Restrict Android code to the canonical provider Git origin | Ordinary Codex plugins stay portable while executable same-UID add-ons remain owner-reviewed and officially signed | A stronger platform-native trust mechanism replaces repository provenance |
 | Bundle reviewed Android providers from a pinned source revision | OEMs may kill the host for split updates despite `setDontKillApp`; activation must not update the running package | Android guarantees restart-free first-party feature delivery |
 | Persist only provider activation lifecycle | Interrupted App Server installation/removal must recover without becoming enablement state | App Server makes provider activation transactional |
-| Keep schemas and semantic DTOs portable | Shared contracts help other targets without converting the host to multiplatform or inventing abstractions | A second host needs additional proven common logic |
+| Keep all runtime production code in `commonMain` | Each supported platform must launch the same local App Server with equivalent security and lifecycle behavior | Never; add only complete platform bootstraps |
 | Use direct in-process Kotlin entry points | They need no transport, provider process, Binder API, or generic backend framework | Isolation is required by measured security evidence |
 | Show cached catalog data during one bounded refresh | `plugin/list` returns one response; cache-first UI improves latency without fake streaming or retry storms | App Server provides an incremental catalog protocol |
 | Prohibit provider helper processes | A single typed authority path keeps execution, retry, environment, and packaging auditable | Never; standalone work belongs to App Server |

@@ -4,7 +4,7 @@ set -euo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 android_home=${ANDROID_HOME:-"$HOME/Library/Android/sdk"}
 adb="$android_home/platform-tools/adb"
-apk="$root/app/android/build/outputs/apk/release/android-release.apk"
+apk="$root/modules/android/app/build/outputs/apk/release/app-release.apk"
 package=io.github.ciurlaro.codexmobile
 
 die() {

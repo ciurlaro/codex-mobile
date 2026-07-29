@@ -71,4 +71,4 @@ if $reproducible; then
     scripts/verify-reproducible-release.sh
 fi
 
-echo "release APK: $root/app/android/build/outputs/apk/release/android-release.apk"
+echo "release APK: $root/modules/android/app/build/outputs/apk/release/app-release.apk"

@@ -15,13 +15,41 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      started_at: ${{ steps.timing.outputs.started_at }}
     steps:
+      - id: timing
+        name: Start workflow timing
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - id: provider
+        name: Read the pinned provider revision
+        run: |
+          revision=$(sed -n 's/^codexMobile.providerRevision=//p' gradle.properties)
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: ciurlaro/codex-mobile-plugins
-          ref: a40fefe7c3a60da14e65fef05106a07e1734afdf
+          ref: ${{ steps.provider.outputs.revision }}
           path: codex-mobile-plugins
+      - id: protocol
+        name: Read the pinned upstream protocol revision
+        run: |
+          revision=$(jq -r .upstreamRevision modules/multiplatform/codex-agent-runtime/protocol/schema/provenance.json)
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: openai/codex
+          ref: ${{ steps.protocol.outputs.revision }}
+          path: codex-upstream
+          sparse-checkout: |
+            codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
+            codex-rs/app-server-protocol/src/protocol/common.rs
+            codex-rs/app-server-protocol/src/protocol/v2/thread.rs
+            codex-rs/app-server-protocol/src/protocol/v2/turn.rs
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: temurin
@@ -33,11 +61,42 @@ jobs:
           sudo apt-get install --yes gperf libarchive-tools ninja-build patchelf ripgrep zip
           sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865"
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+      - name: Regenerate the pinned protocol and reject drift
+        run: |
+          ./gradlew updateProtocol \
+            -PcodexProtocolSchema="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json" \
+            -PcodexProtocolCommon="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/src/protocol/common.rs" \
+            -PcodexProtocolThread="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/src/protocol/v2/thread.rs" \
+            -PcodexProtocolTurn="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/src/protocol/v2/turn.rs"
+          git diff --exit-code -- \
+            modules/multiplatform/codex-agent-runtime/protocol/schema \
+            modules/multiplatform/codex-agent-runtime/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/generated
+          test -z "$(git status --short --untracked-files=all -- \
+            modules/multiplatform/codex-agent-runtime/protocol/schema \
+            modules/multiplatform/codex-agent-runtime/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/generated)"
       - name: Verify structure, tests, debug builds, and lint
         run: |
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
           bash scripts/verify-structure.sh
-          ./gradlew test assembleDebug assembleDebugAndroidTest lint --stacktrace
+          ./gradlew test \
+            :codex-agent-runtime:testAndroidHostTest \
+            :codex-agent-runtime:verifyProtocolSource \
+            :extension-provider-api:testAndroidHostTest \
+            :codex-mobile-plugins:documents-android:assembleDebugAndroidTest \
+            :codex-mobile-plugins:telegram-android:assembleDebugAndroidTest \
+            assembleDebug assembleDebugAndroidTest lint --stacktrace
+      - name: Upload device-test APKs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-device-tests
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            modules/android/app/build/outputs/apk/debug/app-debug.apk
+            modules/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            modules/android/extension-host/build/outputs/apk/androidTest/debug/extension-host-debug-androidTest.apk
+            codex-mobile-plugins/android/documents/build/outputs/apk/androidTest/debug/documents-android-debug-androidTest.apk
+            codex-mobile-plugins/android/telegram/build/outputs/apk/androidTest/debug/telegram-android-debug-androidTest.apk
       - name: Create ephemeral release key
         if: github.event_name == 'push'
         run: >-
@@ -54,7 +113,7 @@ jobs:
         run: |
           ./gradlew assembleRelease bundleRelease --stacktrace
           scripts/verify-release.sh
-          scripts/verify-reproducible-release.sh app/android/build/outputs/apk/release/android-release.apk
+          scripts/verify-reproducible-release.sh modules/android/app/build/outputs/apk/release/app-release.apk
           printf '%s\n' "$GITHUB_SHA" > source-revision.txt
       - name: Upload verified host candidate
         if: github.event_name == 'push'
@@ -64,11 +123,84 @@ jobs:
           retention-days: 14
           if-no-files-found: error
           path: |
-            app/android/build/outputs/apk/release/android-release.apk
-            app/android/build/outputs/mapping/release/mapping.txt
+            modules/android/app/build/outputs/apk/release/app-release.apk
+            modules/android/app/build/outputs/mapping/release/mapping.txt
             docs/sbom.cdx.json
             LICENSE
             LICENSES/MLKIT-EXCEPTION.txt
             THIRD_PARTY_NOTICES.md
             release-signing-certificate.sha256
             source-revision.txt
+
+  device:
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: android-device-tests
+          path: device-tests
+      - name: Run the real runtime and extension lifecycle
+        uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+        with:
+          api-level: 35
+          arch: arm64-v8a
+          target: google_apis
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            set -euo pipefail
+            app=$(find device-tests -type f -name app-debug.apk -print -quit)
+            app_test=$(find device-tests -type f -name app-debug-androidTest.apk -print -quit)
+            extension_test=$(find device-tests -type f -name extension-host-debug-androidTest.apk -print -quit)
+            documents_test=$(find device-tests -type f -name documents-android-debug-androidTest.apk -print -quit)
+            telegram_test=$(find device-tests -type f -name telegram-android-debug-androidTest.apk -print -quit)
+            test -f "$app" && test -f "$app_test" && test -f "$extension_test"
+            test -f "$documents_test" && test -f "$telegram_test"
+            run_instrumentation() {
+              output=$(adb shell am instrument -w -r "$@")
+              printf '%s\n' "$output"
+              grep -q '^OK (' <<< "$output"
+            }
+            adb install -r "$app"
+            adb install -r "$app_test"
+            adb shell mkdir -p /sdcard/Download/codex-mobile-ci
+            adb shell appops set io.github.ciurlaro.codexmobile.debug MANAGE_EXTERNAL_STORAGE allow
+            run_instrumentation \
+              -e class 'io.github.ciurlaro.codexmobile.app.RuntimeBootstrapDeviceTest,io.github.ciurlaro.codexmobile.app.CodexRuntimeDeviceTest#processStartStopRestartAndUnexpectedExit,io.github.ciurlaro.codexmobile.app.CodexRuntimeDeviceTest#authenticationUsesPersistedAccountOrStartsDeviceFlow,io.github.ciurlaro.codexmobile.app.ForegroundLifecycleDeviceTest#bindingRecreationAndMultipleActivitiesKeepOneOwner' \
+              io.github.ciurlaro.codexmobile.debug.test/androidx.test.runner.AndroidJUnitRunner
+            run_instrumentation \
+              -e providerE2e true \
+              -e workspacePath /sdcard/Download/codex-mobile-ci \
+              -e class 'io.github.ciurlaro.codexmobile.app.ProviderInstallDeviceTest#bundledProvidersActivateThroughAppServerAndExecuteOnDevice' \
+              io.github.ciurlaro.codexmobile.debug.test/androidx.test.runner.AndroidJUnitRunner
+            run_instrumentation \
+              -e providerUninstallE2e true \
+              -e workspacePath /sdcard/Download/codex-mobile-ci \
+              -e class 'io.github.ciurlaro.codexmobile.app.ProviderInstallDeviceTest#bundledProviderUninstallKeepsTheAppProcessAlive' \
+              io.github.ciurlaro.codexmobile.debug.test/androidx.test.runner.AndroidJUnitRunner
+            run_instrumentation \
+              -e providerRemovalVerifyE2e true \
+              -e workspacePath /sdcard/Download/codex-mobile-ci \
+              -e class 'io.github.ciurlaro.codexmobile.app.ProviderInstallDeviceTest#signedProviderRemovalIsReconciledAfterRestart' \
+              io.github.ciurlaro.codexmobile.debug.test/androidx.test.runner.AndroidJUnitRunner
+            adb install -r "$extension_test"
+            run_instrumentation \
+              -e class 'io.github.ciurlaro.codexmobile.extension.host.AndroidProviderRegistryDeviceTest,io.github.ciurlaro.codexmobile.extension.host.AndroidProviderSecretStoreDeviceTest,io.github.ciurlaro.codexmobile.extension.host.BuiltInMutationJournalDeviceTest' \
+              io.github.ciurlaro.codexmobile.extension.host.test/androidx.test.runner.AndroidJUnitRunner
+            adb install -r "$documents_test"
+            run_instrumentation \
+              -e class 'io.github.ciurlaro.codexmobile.platform.android.DocumentsDeviceTest' \
+              io.github.ciurlaro.codexmobile.providers.documents.test/androidx.test.runner.AndroidJUnitRunner
+            adb install -r "$telegram_test"
+            run_instrumentation \
+              -e class 'io.github.ciurlaro.codexmobile.platform.android.TelegramCredentialsDeviceTest,io.github.ciurlaro.codexmobile.platform.android.TelegramSessionStorageDeviceTest' \
+              io.github.ciurlaro.codexmobile.providers.telegram.test/androidx.test.runner.AndroidJUnitRunner
+      - name: Record complete workflow timing
+        if: always()
+        env:
+          STARTED_AT: ${{ needs.build.outputs.started_at }}
+        run: |
+          elapsed=$(($(date +%s) - STARTED_AT))
+          printf 'Post-refactor build and device workflow: %ss\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"
