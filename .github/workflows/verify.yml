@@ -95,6 +95,8 @@ jobs:
             modules/android/app/build/outputs/apk/debug/app-debug.apk
             modules/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             modules/android/extension-host/build/outputs/apk/androidTest/debug/extension-host-debug-androidTest.apk
+            scripts/run-android-device-tests.sh
+            codex-mobile-plugins/scripts/run-android-device-tests.sh
             codex-mobile-plugins/android/documents/build/outputs/apk/androidTest/debug/documents-android-debug-androidTest.apk
             codex-mobile-plugins/android/telegram/build/outputs/apk/androidTest/debug/telegram-android-debug-androidTest.apk
       - name: Create ephemeral release key
@@ -145,59 +147,12 @@ jobs:
         uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
         with:
           api-level: 35
-          arch: arm64-v8a
+          arch: x86_64
           target: google_apis
           profile: pixel_6
           emulator-build: 15261927 # 36.5.11
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: |
-            set -euo pipefail
-            app=$(find device-tests -type f -name app-debug.apk -print -quit)
-            app_test=$(find device-tests -type f -name app-debug-androidTest.apk -print -quit)
-            extension_test=$(find device-tests -type f -name extension-host-debug-androidTest.apk -print -quit)
-            documents_test=$(find device-tests -type f -name documents-android-debug-androidTest.apk -print -quit)
-            telegram_test=$(find device-tests -type f -name telegram-android-debug-androidTest.apk -print -quit)
-            test -f "$app" && test -f "$app_test" && test -f "$extension_test"
-            test -f "$documents_test" && test -f "$telegram_test"
-            run_instrumentation() {
-              output=$(adb shell am instrument -w -r "$@")
-              printf '%s\n' "$output"
-              grep -q '^OK (' <<< "$output"
-            }
-            adb install -r "$app"
-            adb install -r "$app_test"
-            adb shell mkdir -p /sdcard/Download/codex-mobile-ci
-            adb shell appops set io.github.ciurlaro.codexmobile.debug MANAGE_EXTERNAL_STORAGE allow
-            run_instrumentation \
-              -e class 'io.github.ciurlaro.codexmobile.app.RuntimeBootstrapDeviceTest,io.github.ciurlaro.codexmobile.app.CodexRuntimeDeviceTest#processStartStopRestartAndUnexpectedExit,io.github.ciurlaro.codexmobile.app.CodexRuntimeDeviceTest#authenticationUsesPersistedAccountOrStartsDeviceFlow,io.github.ciurlaro.codexmobile.app.ForegroundLifecycleDeviceTest#bindingRecreationAndMultipleActivitiesKeepOneOwner' \
-              io.github.ciurlaro.codexmobile.debug.test/androidx.test.runner.AndroidJUnitRunner
-            run_instrumentation \
-              -e providerE2e true \
-              -e workspacePath /sdcard/Download/codex-mobile-ci \
-              -e class 'io.github.ciurlaro.codexmobile.app.ProviderInstallDeviceTest#bundledProvidersActivateThroughAppServerAndExecuteOnDevice' \
-              io.github.ciurlaro.codexmobile.debug.test/androidx.test.runner.AndroidJUnitRunner
-            run_instrumentation \
-              -e providerUninstallE2e true \
-              -e workspacePath /sdcard/Download/codex-mobile-ci \
-              -e class 'io.github.ciurlaro.codexmobile.app.ProviderInstallDeviceTest#bundledProviderUninstallKeepsTheAppProcessAlive' \
-              io.github.ciurlaro.codexmobile.debug.test/androidx.test.runner.AndroidJUnitRunner
-            run_instrumentation \
-              -e providerRemovalVerifyE2e true \
-              -e workspacePath /sdcard/Download/codex-mobile-ci \
-              -e class 'io.github.ciurlaro.codexmobile.app.ProviderInstallDeviceTest#signedProviderRemovalIsReconciledAfterRestart' \
-              io.github.ciurlaro.codexmobile.debug.test/androidx.test.runner.AndroidJUnitRunner
-            adb install -r "$extension_test"
-            run_instrumentation \
-              -e class 'io.github.ciurlaro.codexmobile.extension.host.AndroidProviderRegistryDeviceTest,io.github.ciurlaro.codexmobile.extension.host.AndroidProviderSecretStoreDeviceTest,io.github.ciurlaro.codexmobile.extension.host.BuiltInMutationJournalDeviceTest' \
-              io.github.ciurlaro.codexmobile.extension.host.test/androidx.test.runner.AndroidJUnitRunner
-            adb install -r "$documents_test"
-            run_instrumentation \
-              -e class 'io.github.ciurlaro.codexmobile.platform.android.DocumentsDeviceTest' \
-              io.github.ciurlaro.codexmobile.providers.documents.test/androidx.test.runner.AndroidJUnitRunner
-            adb install -r "$telegram_test"
-            run_instrumentation \
-              -e class 'io.github.ciurlaro.codexmobile.platform.android.TelegramCredentialsDeviceTest,io.github.ciurlaro.codexmobile.platform.android.TelegramSessionStorageDeviceTest' \
-              io.github.ciurlaro.codexmobile.providers.telegram.test/androidx.test.runner.AndroidJUnitRunner
+          script: bash device-tests/scripts/run-android-device-tests.sh device-tests
       - name: Record complete workflow timing
         if: always()
         env:

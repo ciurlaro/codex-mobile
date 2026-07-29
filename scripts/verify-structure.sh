@@ -83,11 +83,16 @@ required=(
   "$extensions/src/main/kotlin/io/github/ciurlaro/codexmobile/extension/host/tools/ProviderToolDispatcher.kt"
   "$extensions/src/main/kotlin/io/github/ciurlaro/codexmobile/extension/host/recovery/BuiltInMutationJournal.kt"
   docs/requirements.md docs/architecture.md docs/objects.md docs/decisions.md docs/security.md
-  docs/privacy.md docs/release.md docs/sbom.cdx.json scripts/generate-sbom.py scripts/verify-release.sh
+  docs/privacy.md docs/release.md docs/sbom.cdx.json scripts/generate-sbom.py
+  scripts/run-android-device-tests.sh scripts/verify-release.sh
 )
 for path in "${required[@]}"; do
   test -f "$path" || { echo "missing required file: $path" >&2; exit 1; }
 done
+test -x scripts/run-android-device-tests.sh || {
+  echo "device-test runner must be executable" >&2
+  exit 1
+}
 if find "$runtime/protocol" -mindepth 1 -maxdepth 1 -type f -print | grep -q .; then
   echo "protocol artifacts must live under protocol/schema" >&2
   exit 1
