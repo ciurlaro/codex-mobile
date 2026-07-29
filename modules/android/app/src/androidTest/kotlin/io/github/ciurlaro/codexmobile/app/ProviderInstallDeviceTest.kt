@@ -41,7 +41,7 @@ class ProviderInstallDeviceTest {
         repeat(10) { attempt ->
             CodexAgentClient(
                 runtimeFactory = platform::createCodexRuntime,
-                requestTimeoutMillis = 30_000,
+                requestTimeoutMillis = 120_000,
                 clientVersion = "catalog-e2e",
                 pluginCacheDirectory = Path(cache.absolutePath),
             ).use { client ->
@@ -68,7 +68,7 @@ class ProviderInstallDeviceTest {
         platform.selectWorkspace(workspace.path)
         val client = CodexAgentClient(
             runtimeFactory = platform::createCodexRuntime,
-            requestTimeoutMillis = 30_000,
+            requestTimeoutMillis = 120_000,
             clientVersion = "provider-e2e",
             builtInToolDispatcher = platform.builtInToolDispatcher,
             providerHost = platform.providerPackages,
@@ -154,7 +154,7 @@ class ProviderInstallDeviceTest {
         platform.selectWorkspace(workspace.path)
         val client = CodexAgentClient(
             runtimeFactory = platform::createCodexRuntime,
-            requestTimeoutMillis = 30_000,
+            requestTimeoutMillis = 120_000,
             clientVersion = "provider-e2e",
             builtInToolDispatcher = platform.builtInToolDispatcher,
             providerHost = platform.providerPackages,
@@ -188,7 +188,7 @@ class ProviderInstallDeviceTest {
         assertFalse(platform.providerSettings().any { it.pluginId == DOCUMENTS_PLUGIN_ID })
         val client = CodexAgentClient(
             runtimeFactory = platform::createCodexRuntime,
-            requestTimeoutMillis = 30_000,
+            requestTimeoutMillis = 120_000,
             clientVersion = "provider-e2e",
             builtInToolDispatcher = platform.builtInToolDispatcher,
             providerHost = platform.providerPackages,

@@ -204,7 +204,7 @@ class CodexAppServerRuntime(
     private companion object {
         const val LOGS_DATABASE_FILE = "logs_2.sqlite"
         const val RUNTIME_STDOUT_FILE = "codex-app-server.stdout"
-        val LOG_DATABASE_TIMEOUT = 20.seconds
+        val LOG_DATABASE_TIMEOUT = 120.seconds
         val LOG_DATABASE_RETRY = 25.milliseconds
     }
 }

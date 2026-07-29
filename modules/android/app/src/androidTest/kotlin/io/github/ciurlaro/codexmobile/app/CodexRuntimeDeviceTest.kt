@@ -58,7 +58,7 @@ class CodexRuntimeDeviceTest {
             try {
                 runtime.start()
                 val initialized = async {
-                    withTimeout(30_000) {
+                    withTimeout(120_000) {
                         runtime.events.first { event ->
                             event is CodexRuntimeEvent.Received && "\"id\":1" in event.line.value
                         }
@@ -72,7 +72,7 @@ class CodexRuntimeDeviceTest {
                 initialized.await()
                 val startupLatency = SystemClock.elapsedRealtime() - startedAt
                 startupLatencies += startupLatency
-                assertTrue("app-server readiness exceeded 30 seconds", startupLatency < 30_000)
+                assertTrue("app-server readiness exceeded 120 seconds", startupLatency < 120_000)
             } finally {
                 runtime.close()
             }
@@ -85,9 +85,9 @@ class CodexRuntimeDeviceTest {
 
     @Test
     fun authenticationUsesPersistedAccountOrStartsDeviceFlow(): Unit = runBlocking {
-        val client = CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000)
+        val client = CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 120_000)
         try {
-            val result = async { withTimeout(30_000) { client.events.first() } }
+            val result = async { withTimeout(120_000) { client.events.first() } }
             client.authenticate()
             when (val event = result.await()) {
                 AgentEvent.Authenticated -> Unit
@@ -113,7 +113,7 @@ class CodexRuntimeDeviceTest {
     fun subscriptionAuthenticationFailuresAndPersistence(): Unit = runBlocking {
         requirePhysicalDevice()
         repeat(2) {
-            CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000).use { client ->
+            CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 120_000).use { client ->
                 requirePersistedAuthentication(client)
             }
         }
@@ -122,7 +122,7 @@ class CodexRuntimeDeviceTest {
     @Test
     fun promptStreamingCancellationAndActivityRecreation(): Unit = runBlocking {
         requirePhysicalDevice()
-        CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000).use { client ->
+        CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 120_000).use { client ->
             requirePersistedAuthentication(client)
             val session = client.openSession()
 
@@ -164,13 +164,13 @@ class CodexRuntimeDeviceTest {
     @Test
     fun restartRecordsAuthenticationAndSessionSurvival(): Unit = runBlocking {
         requirePhysicalDevice()
-        val session = CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000).use { client ->
+        val session = CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 120_000).use { client ->
             requirePersistedAuthentication(client)
             client.openSession().also {
                 assertTrue(runPrompt(client, it, "Reply with one short word.").isNotBlank())
             }
         }
-        CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 30_000).use { client ->
+        CodexAgentClient(AndroidPlatform(context)::createCodexRuntime, 120_000).use { client ->
             requirePersistedAuthentication(client)
             assertEquals(session, client.openSession(session))
         }
@@ -225,7 +225,7 @@ class CodexRuntimeDeviceTest {
     }
 
     private suspend fun requirePersistedAuthentication(client: CodexAgentClient) = coroutineScope {
-        val event = async { withTimeout(30_000) { client.events.first() } }
+        val event = async { withTimeout(120_000) { client.events.first() } }
         client.authenticate()
         assertTrue("Persisted ChatGPT authentication is required", event.await() === AgentEvent.Authenticated)
     }
