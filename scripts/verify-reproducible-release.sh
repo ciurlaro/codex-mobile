@@ -6,7 +6,7 @@ evidence=$(mktemp -d "${TMPDIR:-/tmp}/codex-mobile-repro.XXXXXX")
 trap 'rm -rf "$evidence"' EXIT
 
 build() {
-    "$root/gradlew" --no-build-cache clean :app:assembleRelease
+    "$root/gradlew" -p "$root" --no-build-cache clean :app:assembleRelease
 }
 
 baseline=${1:-}
