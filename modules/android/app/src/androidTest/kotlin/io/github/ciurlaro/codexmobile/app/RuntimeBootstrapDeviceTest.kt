@@ -89,6 +89,15 @@ class RuntimeBootstrapDeviceTest {
         } finally {
             database.close()
         }
+        val sentinel = "existing sensitive log".toByteArray()
+        listOf(File(databasePath), File("$databasePath-wal"), File("$databasePath-shm"))
+            .filter(File::exists)
+            .forEach { file ->
+                assertFalse(
+                    "${file.name} retained sensitive runtime-log bytes",
+                    file.readBytes().contains(sentinel),
+                )
+            }
     }
 
     private suspend fun startAndInitializeRuntime() = coroutineScope {
@@ -141,5 +150,13 @@ class RuntimeBootstrapDeviceTest {
     private fun androidx.sqlite.SQLiteConnection.longQuery(sql: String): Long = prepare(sql).use { statement ->
         assertTrue(statement.step())
         statement.getLong(0)
+    }
+
+    private fun ByteArray.contains(needle: ByteArray): Boolean {
+        if (needle.isEmpty() || needle.size > size) return false
+        for (start in 0..size - needle.size) {
+            if (needle.indices.all { offset -> this[start + offset] == needle[offset] }) return true
+        }
+        return false
     }
 }

@@ -6,23 +6,20 @@ import kotlinx.io.files.SystemFileSystem
 import kotlinx.io.write
 
 internal fun buildMinimalRuntimeEnvironment(
-    inherited: Map<String, String>,
+    platform: Map<String, String>,
     applicationDirectory: Path,
     temporaryDirectory: Path,
-    nativeLibraryDirectory: Path,
     codexHome: Path,
     certificateBundle: Path,
     proxyUrl: String,
 ): Map<String, String> = buildMap {
-    put(
-        "PATH",
-        listOf(inherited["PATH"].orEmpty(), "/system/bin:/system/xbin")
-            .filter(String::isNotBlank)
-            .joinToString(":"),
-    )
-    put("LD_LIBRARY_PATH", nativeLibraryDirectory.toString())
-    listOf("LANG", "LC_ALL", "TERM").forEach { name ->
-        inherited[name]?.takeIf(String::isNotBlank)?.let { put(name, it) }
+    platform.forEach { (name, value) ->
+        require(ENVIRONMENT_NAME.matches(name)) { "Invalid platform environment key: $name" }
+        require('\u0000' !in value) { "Invalid platform environment value: $name" }
+        require(name !in COMMON_ENVIRONMENT_KEYS) {
+            "Platform environment cannot override common runtime key: $name"
+        }
+        if (value.isNotBlank()) put(name, value)
     }
     put("CODEX_HOME", codexHome.toString())
     put("CODEX_SQLITE_HOME", codexHome.toString())
@@ -33,6 +30,29 @@ internal fun buildMinimalRuntimeEnvironment(
     put("https_proxy", proxyUrl)
     put("NO_COLOR", "1")
 }
+
+private val ENVIRONMENT_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
+
+private val COMMON_ENVIRONMENT_KEYS = setOf(
+    "CODEX_HOME",
+    "CODEX_SQLITE_HOME",
+    "HOME",
+    "TMPDIR",
+    "SSL_CERT_FILE",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+    "ALL_PROXY",
+    "all_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "SSL_CERT_DIR",
+    "CURL_CA_BUNDLE",
+    "REQUESTS_CA_BUNDLE",
+    "NODE_EXTRA_CA_CERTS",
+    "NO_COLOR",
+)
 
 internal fun prepareRuntimeCertificateBundle(certificateSources: List<Path>, codexHome: Path): Path {
     val certificates = certificateSources

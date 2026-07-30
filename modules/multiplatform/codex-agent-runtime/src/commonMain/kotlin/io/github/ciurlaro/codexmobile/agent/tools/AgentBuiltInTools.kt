@@ -93,7 +93,7 @@ internal fun CodexAgentClient.handleBuiltInToolCallAction(id: JsonElement, param
         val runtimeSettings = sessionRuntimeSettings[sessionId]
             ?: error("Tool call session settings are unavailable")
         val workspace = runtimeSettings.workspace
-            ?: error("A selected Android workspace is required")
+            ?: error("A selected workspace is required")
         val arguments = params.arguments as? JsonObject
             ?: error("Tool arguments must be an object")
         val call = BuiltInToolCall(

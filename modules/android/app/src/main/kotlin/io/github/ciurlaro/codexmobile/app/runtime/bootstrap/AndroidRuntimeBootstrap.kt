@@ -6,6 +6,9 @@ import androidx.sqlite.driver.AndroidSQLiteDriver
 import io.github.ciurlaro.codexmobile.appserver.runtime.CodexAppServerRuntime
 import io.github.ciurlaro.codexmobile.appserver.runtime.CodexRuntimeConfiguration
 import io.github.ciurlaro.codexmobile.appserver.runtime.CodexRuntime
+import io.github.ciurlaro.codexmobile.appserver.runtime.RuntimeArchitecture
+import io.github.ciurlaro.codexmobile.appserver.runtime.RuntimeEnvironment
+import io.github.ciurlaro.codexmobile.appserver.runtime.RuntimeKernel
 import java.io.File
 import java.security.SecureRandom
 import kotlinx.io.files.Path
@@ -26,20 +29,35 @@ internal class AndroidRuntimeBootstrap(
             .filter(File::isFile)
             .sortedBy(File::getName)
             .map { Path(it.absolutePath) }
+        val platformEnvironment = buildMap {
+            val path = listOfNotNull(
+                System.getenv("PATH")?.takeIf(String::isNotBlank),
+                ANDROID_SYSTEM_PATH,
+            ).joinToString(":")
+            put("PATH", path)
+            put("LD_LIBRARY_PATH", appContext.applicationInfo.nativeLibraryDir)
+            listOf("LANG", "LC_ALL", "TERM").forEach { name ->
+                System.getenv(name)?.takeIf(String::isNotBlank)?.let { put(name, it) }
+            }
+        }
         return CodexAppServerRuntime(
             CodexRuntimeConfiguration(
                 executable = Path(executable.absolutePath),
-                verifyPackagedExecutable = runtimeOverride == null && activeAbi == "arm64-v8a",
+                packagedRuntimeEnvironment = if (runtimeOverride == null) {
+                    RuntimeEnvironment(
+                        kernel = RuntimeKernel.LINUX,
+                        architecture = RuntimeArchitecture.AARCH64,
+                        supportsStaticElf = activeAbi == "arm64-v8a",
+                    )
+                } else {
+                    null
+                },
                 applicationDirectory = Path(File(appContext.filesDir, "home").absolutePath),
                 privateDirectory = Path(appContext.noBackupFilesDir.absolutePath),
                 temporaryDirectory = Path(appContext.cacheDir.absolutePath),
-                nativeLibraryDirectory = Path(appContext.applicationInfo.nativeLibraryDir),
-                activeAbi = activeAbi,
                 certificateSources = certificates,
                 sqliteDriver = AndroidSQLiteDriver(),
-                inheritedEnvironment = listOf("PATH", "LANG", "LC_ALL", "TERM")
-                    .mapNotNull { name -> System.getenv(name)?.let { name to it } }
-                    .toMap(),
+                platformEnvironment = platformEnvironment,
                 proxyPassword = secureToken(),
             ),
         )
@@ -52,5 +70,6 @@ internal class AndroidRuntimeBootstrap(
     private companion object {
         const val RUNTIME_FILE = "libcodex_app_server.so"
         const val SYSTEM_CERTIFICATE_DIRECTORY = "/system/etc/security/cacerts"
+        const val ANDROID_SYSTEM_PATH = "/system/bin:/system/xbin"
     }
 }

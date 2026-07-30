@@ -67,7 +67,7 @@ public class AppServerConnection(
                 response.await()
             }
         } finally {
-            commands.trySend(ConnectionCommand.CancelStart(response))
+            runCatching { commands.send(ConnectionCommand.CancelStart(response)) }
         }
     }
 
@@ -85,7 +85,7 @@ public class AppServerConnection(
                 response.await()
             }
         } finally {
-            commands.trySend(ConnectionCommand.CancelRequest(response))
+            runCatching { commands.send(ConnectionCommand.CancelRequest(response)) }
         }
         return decode(method.responseSerializer, encodedResponse, method.descriptor.responseType)
     }

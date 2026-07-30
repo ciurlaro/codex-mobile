@@ -7,31 +7,48 @@ import kotlinx.io.readByteArray
 import kotlinx.io.write
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 
 class RuntimeConfigurationSecurityTest {
     @Test
-    fun environmentInheritsOnlyAllowedValues() {
+    fun environmentMergesPlatformFactsWithoutChangingCommonSecurityValues() {
         val environment = buildMinimalRuntimeEnvironment(
-            inherited = mapOf(
+            platform = mapOf(
                 "PATH" to "/trusted/bin",
                 "LANG" to "en_US.UTF-8",
-                "SECRET" to "must-not-leak",
-                "HTTP_PROXY" to "http://untrusted.example",
+                "LD_LIBRARY_PATH" to "/platform/lib",
             ),
             applicationDirectory = Path("/private/home"),
             temporaryDirectory = Path("/private/tmp"),
-            nativeLibraryDirectory = Path("/private/lib"),
             codexHome = Path("/private/codex"),
             certificateBundle = Path("/private/codex/system-ca.pem"),
             proxyUrl = "http://codex:token@127.0.0.1:1234",
         )
 
-        assertEquals("/trusted/bin:/system/bin:/system/xbin", environment["PATH"])
+        assertEquals("/trusted/bin", environment["PATH"])
+        assertEquals("/platform/lib", environment["LD_LIBRARY_PATH"])
         assertEquals("en_US.UTF-8", environment["LANG"])
         assertEquals("http://codex:token@127.0.0.1:1234", environment["HTTPS_PROXY"])
-        assertFalse("SECRET" in environment)
         assertFalse("HTTP_PROXY" in environment)
+    }
+
+    @Test
+    fun environmentRejectsInvalidAndCommonOwnedPlatformValues() {
+        fun build(platform: Map<String, String>) = buildMinimalRuntimeEnvironment(
+            platform = platform,
+            applicationDirectory = Path("/private/home"),
+            temporaryDirectory = Path("/private/tmp"),
+            codexHome = Path("/private/codex"),
+            certificateBundle = Path("/private/codex/system-ca.pem"),
+            proxyUrl = "http://codex:token@127.0.0.1:1234",
+        )
+
+        listOf("HOME", "HTTPS_PROXY", "http_proxy", "SSL_CERT_DIR").forEach { name ->
+            assertFailsWith<IllegalArgumentException> { build(mapOf(name to "unsafe")) }
+        }
+        assertFailsWith<IllegalArgumentException> { build(mapOf("BAD=KEY" to "value")) }
+        assertFailsWith<IllegalArgumentException> { build(mapOf("PATH" to "bad\u0000value")) }
     }
 
     @Test

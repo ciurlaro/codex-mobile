@@ -8,17 +8,19 @@ import io.github.ciurlaro.codexmobile.appserver.runtime.CodexRuntime
 import io.github.ciurlaro.codexmobile.appserver.runtime.CodexRuntimeEvent
 import io.matthewnelson.kmp.file.File
 import io.matthewnelson.kmp.process.Process
+import io.matthewnelson.kmp.process.ProcessException
 import io.matthewnelson.kmp.process.Stdio
 import io.matthewnelson.kmp.process.changeDir
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.io.files.Path
@@ -35,6 +37,8 @@ class CodexAppServerRuntime(
     private val started = AtomicBoolean(false)
     private val closed = AtomicBoolean(false)
     private val logPrivacyGuardInstalled = AtomicBoolean(false)
+    private val outputFailed = AtomicBoolean(false)
+    private val outputEnded = CompletableDeferred<Unit>()
     private val process = AtomicReference<Process?>(null)
     private val proxy = AtomicReference<LoopbackConnectProxy?>(null)
 
@@ -45,38 +49,51 @@ class CodexAppServerRuntime(
         check(started.compareAndSet(false, true)) { "Codex runtime was already started" }
         try {
             prepareDirectories()
-            if (configuration.verifyPackagedExecutable) verifyPackagedRuntime()
+            configuration.packagedRuntimeEnvironment?.let(::verifyPackagedRuntime)
             check(configuration.executable.isRegularFile()) { "Bundled Codex runtime is missing" }
             val codexHome = Path(configuration.privateDirectory, "codex")
             val certificateBundle = prepareRuntimeCertificateBundle(configuration.certificateSources, codexHome)
             val startedProxy = LoopbackConnectProxy.start(configuration.proxyPassword)
             proxy.store(startedProxy)
-            val stdoutFile = Path(configuration.privateDirectory, RUNTIME_STDOUT_FILE)
-            if (SystemFileSystem.exists(stdoutFile)) SystemFileSystem.delete(stdoutFile)
+            deleteLegacyStdoutSpool()
             val startedProcess = Process.Builder(configuration.executable.toString())
                 .changeDir(File(configuration.applicationDirectory.toString()))
                 .environment {
                     clear()
                     putAll(
                         buildMinimalRuntimeEnvironment(
-                            inherited = configuration.inheritedEnvironment,
+                            platform = configuration.platformEnvironment,
                             applicationDirectory = configuration.applicationDirectory,
                             temporaryDirectory = configuration.temporaryDirectory,
-                            nativeLibraryDirectory = configuration.nativeLibraryDirectory,
                             codexHome = codexHome,
                             certificateBundle = certificateBundle,
                             proxyUrl = startedProxy.url,
                         ),
                     )
                 }
-                .stdout(Stdio.File.of(File(stdoutFile.toString())))
+                .stdout(Stdio.Pipe)
                 .stderr(Stdio.Null)
+                .onError(
+                    ProcessException.Handler { error ->
+                        if (error.context == ProcessException.CTX_FEED_STDOUT) {
+                            failOutput(error)
+                        } else {
+                            throw error
+                        }
+                    },
+                )
                 .createProcessAsync()
             process.store(startedProcess)
-            val outputJob = attachOutput(startedProcess, stdoutFile)
-            watch(startedProcess, outputJob)
+            startedProcess.stdoutFeed(
+                RuntimeProcessOutputFeed(
+                    onLine = ::receiveOutput,
+                    onFailure = ::failOutput,
+                    onEnd = { outputEnded.complete(Unit) },
+                ),
+            )
+            watch(startedProcess)
         } catch (error: Exception) {
-            eventChannel.trySend(CodexRuntimeEvent.StartFailure(error.visibleMessage()))
+            eventChannel.send(CodexRuntimeEvent.StartFailure(error.visibleMessage()))
             closeResources()
             throw error
         }
@@ -90,34 +107,48 @@ class CodexAppServerRuntime(
             input.writeAsync((line.value + '\n').encodeToByteArray())
             input.flushAsync()
         } catch (error: Exception) {
-            eventChannel.trySend(CodexRuntimeEvent.IoFailure(error.visibleMessage()))
+            eventChannel.send(CodexRuntimeEvent.IoFailure(error.visibleMessage()))
             throw error
         }
     }
 
-    private fun attachOutput(current: Process, stdoutFile: Path): Job = scope.launch {
-        try {
-            consumeProcessOutput(stdoutFile, current::isAlive) { line ->
-                installRuntimeLogPrivacyGuard()
-                eventChannel.trySend(CodexRuntimeEvent.Received(CodexJsonLine(line)))
-            }
-        } catch (error: Exception) {
-            if (!closed.load()) {
-                eventChannel.trySend(CodexRuntimeEvent.IoFailure(error.visibleMessage()))
-                current.destroy()
+    private fun receiveOutput(line: String) {
+        installRuntimeLogPrivacyGuard()
+        runBlocking {
+            eventChannel.send(CodexRuntimeEvent.Received(CodexJsonLine(line)))
+        }
+    }
+
+    private fun failOutput(error: Throwable) {
+        if (closed.load() || !outputFailed.compareAndSet(false, true)) return
+        outputEnded.completeExceptionally(error)
+        process.load()?.destroy()
+        runCatching {
+            runBlocking {
+                eventChannel.send(CodexRuntimeEvent.IoFailure(error.visibleMessage()))
             }
         }
     }
 
-    private fun watch(current: Process, outputJob: Job) {
+    private fun watch(current: Process) {
         scope.launch {
-            val code = runCatching { current.waitForAsync() }.getOrNull() ?: return@launch
+            val code = runCatching { current.waitForAsync() }.getOrElse { error ->
+                failOutput(error)
+                return@launch
+            }
             if (!closed.load() && process.load() === current) {
-                outputJob.join()
+                runCatching { outputEnded.await() }
+                    .onFailure(::failOutput)
+                if (outputFailed.load()) return@launch
                 eventChannel.send(CodexRuntimeEvent.Exited(code))
                 eventChannel.send(CodexRuntimeEvent.EndOfFile)
             }
         }
+    }
+
+    private fun deleteLegacyStdoutSpool() {
+        val legacySpool = Path(configuration.privateDirectory, RUNTIME_STDOUT_FILE)
+        if (SystemFileSystem.exists(legacySpool)) SystemFileSystem.delete(legacySpool)
     }
 
     private fun prepareDirectories() {
@@ -143,17 +174,13 @@ class CodexAppServerRuntime(
         logPrivacyGuardInstalled.store(true)
     }
 
-    private fun verifyPackagedRuntime() {
+    private fun verifyPackagedRuntime(environment: RuntimeEnvironment) {
         val distribution = CodexMobileAppServerRuntime.DISTRIBUTION
         distribution.requireCompatible(
             AppServerProtocolIdentity.APP_SERVER_VERSION,
             AppServerProtocolIdentity.UPSTREAM_REVISION,
             AppServerProtocolIdentity.SCHEMA_SHA256,
-            RuntimeEnvironment(
-                RuntimeKernel.LINUX,
-                RuntimeArchitecture.AARCH64,
-                supportsStaticElf = configuration.activeAbi == "arm64-v8a",
-            ),
+            environment,
         )
         check(configuration.executable.sha256() == distribution.binarySha256) {
             "Bundled Codex runtime checksum is invalid"
@@ -162,9 +189,9 @@ class CodexAppServerRuntime(
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
-        closeResources()
-        scope.cancel()
         eventChannel.close()
+        scope.cancel()
+        closeResources()
     }
 
     private fun closeResources() {

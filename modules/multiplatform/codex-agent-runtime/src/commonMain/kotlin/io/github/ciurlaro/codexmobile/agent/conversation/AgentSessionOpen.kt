@@ -88,7 +88,7 @@ internal suspend fun CodexAgentClient.openSessionAction(previous: SessionId?, se
         refreshBuiltInPluginEnablement(settings.workingDirectory ?: "/")
     }
     val developerInstructions =
-        "Answer conversationally using Markdown. The shell starts in the user's selected Android " +
+        "Answer conversationally using Markdown. The shell starts in the user's selected " +
             "workspace and may use ordinary shell commands to inspect and modify files. Use enabled " +
             "plugin tools through their advertised typed contracts. Use the " +
             "built-in web search tool only when the user input contains the structured " +
