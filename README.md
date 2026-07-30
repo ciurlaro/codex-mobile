@@ -31,10 +31,10 @@ bash scripts/verify-structure.sh
   :codex-agent-runtime:testAndroidHostTest \
   :codex-agent-runtime:verifyProtocolSource \
   :extension-provider-api:testAndroidHostTest \
-  assembleDebug assembleDebugAndroidTest lint
+  assembleDebug :app:assembleDebugAndroidTest lint
 ```
 
-The checked-in wrapper pins Gradle 9.4.1. See [architecture](docs/architecture.md), [build performance](docs/build-performance.md), [security](docs/security.md), [privacy](docs/privacy.md), and [release operations](docs/release.md).
+The hosted emulator runs only the runtime packaging/checksum smoke. Complete host, extension-host, Documents, and Telegram device coverage uses `scripts/run-android-device-tests.sh` locally. The checked-in wrapper pins Gradle 9.4.1. See [architecture](docs/architecture.md), [build performance](docs/build-performance.md), [security](docs/security.md), [privacy](docs/privacy.md), and [release operations](docs/release.md).
 
 ## Licence
 

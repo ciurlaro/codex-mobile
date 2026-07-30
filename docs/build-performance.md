@@ -25,7 +25,7 @@ The first successful post-refactor PR workflow took 43 minutes 50 seconds end to
 
 ## Device verification
 
-GitHub Actions keeps a small Android instrumentation smoke because the hosted emulator is the least stable part of the verification graph. The full real-runtime, provider lifecycle, Documents, and Telegram Android device coverage is run locally before pushing CI retries.
+GitHub Actions keeps one Android **runtime packaging smoke** because the hosted emulator is the least stable part of the verification graph. It installs only the host app and host test APK, then verifies the packaged runtime location, preparation, and checksum. It is not evidence for authentication, chat, SQLite cleanup, extension lifecycle, Documents, Telegram, or complete device behavior. Those suites run locally before the coordinated branches are pushed; remote workflows are not manually rerun or used to fill local coverage gaps.
 
 The 2026-07-30 local API 37 emulator pass completed the host runtime group, provider lifecycle tests, extension-host bundle, and provider Documents/Telegram scripts successfully. The exact full-device entry points remain:
 

@@ -21,48 +21,81 @@ app_kotlin="$app/src/main/kotlin/io/github/ciurlaro/codexmobile/app"
 extensions_kotlin="$extensions/src/main/kotlin/io/github/ciurlaro/codexmobile/extension/host"
 generator=tools/protocol-generator
 
-reject_unexpected_kotlin() {
-  local label=$1 root=$2
-  shift 2
-  while IFS= read -r source; do
-    local accepted=1
-    for prefix in "$@"; do
-      if [[ "$source" == "$prefix/"* ]]; then
-        accepted=0
-        break
-      fi
-    done
-    if (( accepted != 0 )); then
-      echo "$label Kotlin source uses an unsupported source root or package: $source" >&2
-      exit 1
-    fi
-  done < <(find "$root" -type f -name '*.kt' -print)
+classify_kotlin_path() {
+  case "$1" in
+    build.gradle.kts|settings.gradle.kts|build-logic/build.gradle.kts|\
+    build-logic/settings.gradle.kts|build-logic/src/main/kotlin/*.kt|\
+    build-logic/src/main/kotlin/*.gradle.kts|build-logic/src/test/kotlin/*.kt|\
+    "$runtime"/build.gradle.kts|"$runtime"/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/*.kt|\
+    "$runtime"/src/commonTest/kotlin/io/github/ciurlaro/codexmobile/*.kt|\
+    "$provider"/build.gradle.kts|"$provider"/settings.gradle.kts|\
+    "$provider"/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/provider/api/*.kt|\
+    "$provider"/src/commonTest/kotlin/io/github/ciurlaro/codexmobile/provider/api/*.kt|\
+    "$app"/build.gradle.kts|"$app"/src/main/kotlin/io/github/ciurlaro/codexmobile/app/*.kt|\
+    "$app"/src/test/kotlin/io/github/ciurlaro/codexmobile/app/*.kt|\
+    "$app"/src/androidTest/kotlin/io/github/ciurlaro/codexmobile/app/*.kt|\
+    "$extensions"/build.gradle.kts|\
+    "$extensions"/src/main/kotlin/io/github/ciurlaro/codexmobile/extension/host/*.kt|\
+    "$extensions"/src/test/kotlin/io/github/ciurlaro/codexmobile/extension/host/*.kt|\
+    "$extensions"/src/androidTest/kotlin/io/github/ciurlaro/codexmobile/extension/host/*.kt|\
+    "$generator"/build.gradle.kts|\
+    "$generator"/src/main/kotlin/io/github/ciurlaro/codexmobile/appserver/generator/*.kt|\
+    "$generator"/src/test/kotlin/io/github/ciurlaro/codexmobile/appserver/generator/*.kt) return 0 ;;
+    *) return 1 ;;
+  esac
 }
 
-reject_unexpected_kotlin runtime "$runtime/src" \
-  "$runtime/src/commonMain/kotlin/io/github/ciurlaro/codexmobile" \
-  "$runtime/src/commonTest/kotlin/io/github/ciurlaro/codexmobile"
-reject_unexpected_kotlin provider "$provider/src" \
-  "$provider/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/provider/api" \
-  "$provider/src/commonTest/kotlin/io/github/ciurlaro/codexmobile/provider/api"
-reject_unexpected_kotlin app "$app/src" \
-  "$app/src/main/kotlin/io/github/ciurlaro/codexmobile/app" \
-  "$app/src/test/kotlin/io/github/ciurlaro/codexmobile/app" \
-  "$app/src/androidTest/kotlin/io/github/ciurlaro/codexmobile/app"
-reject_unexpected_kotlin extension-host "$extensions/src" \
-  "$extensions/src/main/kotlin/io/github/ciurlaro/codexmobile/extension/host" \
-  "$extensions/src/test/kotlin/io/github/ciurlaro/codexmobile/extension/host" \
-  "$extensions/src/androidTest/kotlin/io/github/ciurlaro/codexmobile/extension/host"
-reject_unexpected_kotlin protocol-generator "$generator/src" \
-  "$generator/src/main/kotlin/io/github/ciurlaro/codexmobile/appserver/generator" \
-  "$generator/src/test/kotlin/io/github/ciurlaro/codexmobile/appserver/generator"
-reject_unexpected_kotlin build-logic build-logic/src \
-  build-logic/src/main/kotlin build-logic/src/test/kotlin
+is_direct_kotlin_in() {
+  local relative=$1
+  shift
+  local directory=${relative%/*}
+  local file=${relative##*/}
+  [[ "$file" == *.kt ]] || return 1
+  for accepted in "$@"; do
+    [[ "$directory" == "$accepted" ]] && return 0
+  done
+  return 1
+}
+
+is_direct_kotlin_in "agent/tools/AgentTool.kt" "agent/tools"
+if is_direct_kotlin_in "agent/tools/nested/Leak.kt" "agent/tools"; then
+  echo "responsibility classifier accepted a nested package" >&2
+  exit 1
+fi
+
+for source in \
+  "$runtime/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/agent/AgentClient.kt" \
+  "$app/src/main/kotlin/io/github/ciurlaro/codexmobile/app/runtime/bootstrap/AndroidRuntimeBootstrap.kt" \
+  "build-logic/src/test/kotlin/PrepareCodexRuntimeTaskTest.kt"; do
+  classify_kotlin_path "$source" || {
+    echo "source classifier rejected valid fixture: $source" >&2
+    exit 1
+  }
+done
+for source in \
+  "$runtime/src/androidMain/kotlin/io/github/ciurlaro/codexmobile/Runtime.kt" \
+  "$app/src/debug/kotlin/io/github/ciurlaro/codexmobile/app/DebugOnly.kt" \
+  "modules/legacy/src/main/kotlin/Legacy.kt"; do
+  if classify_kotlin_path "$source"; then
+    echo "source classifier accepted invalid fixture: $source" >&2
+    exit 1
+  fi
+done
+while IFS= read -r source; do
+  test -f "$source" || continue
+  classify_kotlin_path "$source" || {
+    echo "Kotlin source uses an unsupported root or package: $source" >&2
+    exit 1
+  }
+done < <(git ls-files --cached --others --exclude-standard '*.kt' '*.kts')
 
 required=(
   README.md LICENSE LICENSES/MLKIT-EXCEPTION.txt THIRD_PARTY_NOTICES.md CONTRIBUTING.md SECURITY.md
   release-signing-certificate.sha256 settings.gradle.kts gradle.properties gradle.lockfile
   gradle/verification-metadata.xml build-logic/src/main/kotlin/codexmobile.android-kmp-library.gradle.kts
+  build-logic/src/main/kotlin/PrepareCodexRuntimeTask.kt
+  build-logic/src/main/kotlin/codexmobile.codex-runtime.gradle.kts
+  build-logic/src/test/kotlin/PrepareCodexRuntimeTaskTest.kt
   "$runtime/build.gradle.kts" "$runtime/gradle.lockfile" "$runtime/protocol/schema/provenance.json"
   "$runtime/protocol/schema/codex_app_server_protocol.v2.schemas.json"
   "$runtime/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/AppServerProtocolIdentity.kt"
@@ -98,63 +131,73 @@ if find "$runtime/protocol" -mindepth 1 -maxdepth 1 -type f -print | grep -q .; 
   exit 1
 fi
 
-expected_modules=$(printf '%s\n' \
+expected_descriptors=$(printf '%s\n' \
+  build-logic/build.gradle.kts \
+  build.gradle.kts \
   modules/android/app/build.gradle.kts \
   modules/android/extension-host/build.gradle.kts \
   modules/multiplatform/codex-agent-runtime/build.gradle.kts \
-  modules/multiplatform/extension-provider-api/build.gradle.kts)
-actual_modules=$(find modules -mindepth 3 -maxdepth 3 -name build.gradle.kts -print | sort)
-test "$actual_modules" = "$expected_modules" || {
-  echo "production module set does not match the four-module architecture" >&2
+  modules/multiplatform/extension-provider-api/build.gradle.kts \
+  tools/protocol-generator/build.gradle.kts)
+actual_descriptors=$(git ls-files --cached --others --exclude-standard '*build.gradle.kts' | sort)
+test "$actual_descriptors" = "$expected_descriptors" || {
+  echo "Gradle descriptor set does not match the intentional root, build logic, tools, and four production modules" >&2
   exit 1
 }
 
 while IFS= read -r source; do
+  test -f "$source" || continue
   relative=${source#"$runtime_kotlin/"}
-  case "$relative" in
-    agent/AgentClient.kt|agent/CodexAgentClient.kt|agent/authentication/*.kt|agent/conversation/*.kt|\
-    agent/extensions/*.kt|agent/hooks/*.kt|agent/models/*.kt|agent/notifications/*.kt|agent/tools/*.kt|\
-    appserver/client/*.kt|appserver/protocol/*.kt|appserver/protocol/generated/*.kt|\
-    appserver/protocol/serialization/*.kt|appserver/runtime/binary/*.kt|\
-    appserver/runtime/configuration/*.kt|appserver/runtime/networking/*.kt|\
-    appserver/runtime/process/*.kt|appserver/runtime/security/*.kt) ;;
-    *) echo "runtime source is outside its responsibility folder: $source" >&2; exit 1 ;;
-  esac
-done < <(find "$runtime_kotlin" -type f -name '*.kt' -print)
+  if [[ "$relative" != "agent/AgentClient.kt" && "$relative" != "agent/CodexAgentClient.kt" ]] &&
+    ! is_direct_kotlin_in "$relative" \
+      agent/authentication agent/conversation agent/extensions agent/hooks agent/models \
+      agent/notifications agent/tools appserver/client appserver/protocol \
+      appserver/protocol/generated appserver/protocol/serialization appserver/runtime/binary \
+      appserver/runtime/configuration appserver/runtime/networking appserver/runtime/process \
+      appserver/runtime/security; then
+    echo "runtime source is outside its responsibility folder: $source" >&2
+    exit 1
+  fi
+done < <(git ls-files --cached --others --exclude-standard "$runtime_kotlin/*.kt")
 
 while IFS= read -r source; do
+  test -f "$source" || continue
   relative=${source#"$provider_kotlin/"}
-  case "$relative" in lifecycle/*.kt|models/*.kt|settings/*.kt|tools/*.kt) ;;
-    *) echo "provider API source is outside its responsibility folder: $source" >&2; exit 1 ;;
-  esac
-done < <(find "$provider_kotlin" -type f -name '*.kt' -print)
+  is_direct_kotlin_in "$relative" lifecycle models settings tools || {
+    echo "provider API source is outside its responsibility folder: $source" >&2
+    exit 1
+  }
+done < <(git ls-files --cached --others --exclude-standard "$provider_kotlin/*.kt")
 
 while IFS= read -r source; do
+  test -f "$source" || continue
   relative=${source#"$extensions_kotlin/"}
-  case "$relative" in
-    catalog/*.kt|marketplace/*.kt|plugins/*.kt|providers/lifecycle/*.kt|providers/registry/*.kt|\
-    providers/settings/*.kt|recovery/*.kt|secrets/*.kt|skills/*.kt|storage/*.kt|tools/*.kt) ;;
-    *) echo "extension host source is outside its responsibility folder: $source" >&2; exit 1 ;;
-  esac
-done < <(find "$extensions_kotlin" -type f -name '*.kt' -print)
+  is_direct_kotlin_in "$relative" \
+    catalog marketplace plugins providers/lifecycle providers/registry providers/settings \
+    recovery secrets skills storage tools || {
+    echo "extension host source is outside its responsibility folder: $source" >&2
+    exit 1
+  }
+done < <(git ls-files --cached --others --exclude-standard "$extensions_kotlin/*.kt")
 
 while IFS= read -r source; do
+  test -f "$source" || continue
   relative=${source#"$app_kotlin/"}
-  case "$relative" in
-    composition/*.kt|lifecycle/*.kt|persistence/*.kt|presentation/coordinator/authentication/*.kt|\
-    presentation/coordinator/chat/*.kt|presentation/coordinator/extensions/*.kt|\
-    presentation/coordinator/hooks/*.kt|presentation/coordinator/session/*.kt|presentation/event/*.kt|\
-    presentation/formatting/*.kt|presentation/input/*.kt|presentation/invocation/*.kt|\
-    presentation/mapper/*.kt|presentation/model/*.kt|presentation/reducer/*.kt|presentation/selector/*.kt|\
-    presentation/state/*.kt|presentation/validation/*.kt|presentation/viewmodel/AppViewModel*.kt|\
-    runtime/bootstrap/*.kt|security/display/*.kt|security/navigation/*.kt|session/agent/*.kt|\
-    session/background/*.kt|ui/authentication/*.kt|ui/chat/*.kt|ui/extensions/*.kt|ui/icons/*.kt|\
-    ui/session/*.kt|ui/settings/*.kt|ui/shell/*.kt|ui/theme/*.kt|workspace/*.kt) ;;
-    *) echo "app source is outside its responsibility folder: $source" >&2; exit 1 ;;
-  esac
-done < <(find "$app_kotlin" -type f -name '*.kt' -print)
+  is_direct_kotlin_in "$relative" \
+    composition lifecycle persistence presentation/coordinator/authentication \
+    presentation/coordinator/chat presentation/coordinator/extensions \
+    presentation/coordinator/hooks presentation/coordinator/session presentation/event \
+    presentation/formatting presentation/input presentation/invocation presentation/mapper \
+    presentation/model presentation/reducer presentation/selector presentation/state \
+    presentation/validation presentation/viewmodel runtime/bootstrap security/display \
+    security/navigation session/agent session/background ui/authentication ui/chat \
+    ui/extensions ui/icons ui/session ui/settings ui/shell ui/theme workspace || {
+    echo "app source is outside its responsibility folder: $source" >&2
+    exit 1
+  }
+done < <(git ls-files --cached --others --exclude-standard "$app_kotlin/*.kt")
 
-test "$(find "$app_kotlin/runtime/bootstrap" -type f -name '*.kt' -print)" = \
+test "$(git ls-files --cached --others --exclude-standard "$app_kotlin/runtime/bootstrap/*.kt")" = \
   "$app_kotlin/runtime/bootstrap/AndroidRuntimeBootstrap.kt"
 test ! -d "$runtime/src/androidMain"
 test ! -d "$runtime/src/androidDeviceTest"
@@ -195,8 +238,13 @@ common="$runtime/src/commonMain"
 reject_matches -n '^[[:space:]]*import[[:space:]]+(android|java)\.' "$common"
 reject_matches -n '^[[:space:]]*import[[:space:]]+androidx\.(?!sqlite)' "$common" --pcre2
 reject_matches -n 'ProcessBuilder|Runtime\.getRuntime\(\)\.exec' modules --glob '!**/build/**'
+reject_matches -n 'tasks\.(register|create)<Exec>|(^|[[:space:]])(allprojects|subprojects)[[:space:]]*\{' \
+  --glob '*.kts' --glob '!**/build/**'
 test "$(rg -l 'Process\.Builder\(' "$common" --glob '*.kt')" = \
   "$runtime/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/runtime/process/CodexAppServerRuntime.kt"
+reject_matches -n \
+  '/system/(bin|xbin)|LD_LIBRARY_PATH|arm64-v8a|SUPPORTED_ABIS|nativeLibraryDir|activeAbi|nativeLibraryDirectory|inheritedEnvironment|verifyPackagedExecutable' \
+  "$common" --glob '*.kt'
 reject_matches -n 'class ProviderToolDispatcher' "$common"
 grep -q 'class ProviderToolDispatcher' \
   "$extensions/src/main/kotlin/io/github/ciurlaro/codexmobile/extension/host/tools/ProviderToolDispatcher.kt"

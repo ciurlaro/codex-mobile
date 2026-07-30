@@ -82,24 +82,17 @@ jobs:
             :codex-agent-runtime:testAndroidHostTest \
             :codex-agent-runtime:verifyProtocolSource \
             :extension-provider-api:testAndroidHostTest \
-            :codex-mobile-plugins:documents-android:assembleDebugAndroidTest \
-            :codex-mobile-plugins:telegram-android:assembleDebugAndroidTest \
-            assembleDebug assembleDebugAndroidTest lint --stacktrace
-      - name: Upload device-test APKs
+            assembleDebug :app:assembleDebugAndroidTest lint --stacktrace
+      - name: Upload runtime packaging smoke APKs
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: android-device-tests
+          name: android-runtime-packaging-smoke
           retention-days: 7
           if-no-files-found: error
           path: |
             modules/android/app/build/outputs/apk/debug/app-debug.apk
             modules/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-            modules/android/extension-host/build/outputs/apk/androidTest/debug/extension-host-debug-androidTest.apk
             scripts/run-android-device-smoke.sh
-            scripts/run-android-device-tests.sh
-            codex-mobile-plugins/scripts/run-android-device-tests.sh
-            codex-mobile-plugins/android/documents/build/outputs/apk/androidTest/debug/documents-android-debug-androidTest.apk
-            codex-mobile-plugins/android/telegram/build/outputs/apk/androidTest/debug/telegram-android-debug-androidTest.apk
       - name: Create ephemeral release key
         if: github.event_name == 'push'
         run: >-
@@ -135,16 +128,17 @@ jobs:
             release-signing-certificate.sha256
             source-revision.txt
 
-  device:
+  runtime-packaging-smoke:
+    name: Runtime packaging smoke
     needs: build
     runs-on: macos-15-intel
     timeout-minutes: 60
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: android-device-tests
+          name: android-runtime-packaging-smoke
           path: device-tests
-      - name: Run Android instrumentation smoke
+      - name: Run runtime packaging instrumentation smoke
         uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
         with:
           api-level: 35
@@ -161,4 +155,4 @@ jobs:
           STARTED_AT: ${{ needs.build.outputs.started_at }}
         run: |
           elapsed=$(($(date +%s) - STARTED_AT))
-          printf 'Post-refactor build and device workflow: %ss\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Post-refactor build and runtime packaging smoke: %ss\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"
