@@ -22,31 +22,37 @@ class RuntimeBootstrapDeviceTest {
 
     @Test
     fun missingNonExecutableAndCorruptOverridesFailClosed() {
-        val missing = File(context.cacheDir, "missing-codex-runtime").also(File::delete)
-        assertStartFails(missing)
-
-        val nonExecutable = File.createTempFile("codex-runtime-", ".bin", context.cacheDir)
+        clearRuntimeState()
         try {
-            nonExecutable.writeText("not executable")
-            assertTrue(nonExecutable.setExecutable(false, false))
-            assertFalse(nonExecutable.canExecute())
-            assertStartFails(nonExecutable)
-        } finally {
-            nonExecutable.delete()
-        }
+            val missing = File(context.cacheDir, "missing-codex-runtime").also(File::delete)
+            assertStartFails(missing)
 
-        val corrupt = File.createTempFile("codex-runtime-", ".bin", context.cacheDir)
-        try {
-            corrupt.writeText("not an ELF executable")
-            assertTrue(corrupt.setExecutable(true, true))
-            assertStartFails(corrupt)
+            val nonExecutable = File.createTempFile("codex-runtime-", ".bin", context.cacheDir)
+            try {
+                nonExecutable.writeText("not executable")
+                assertTrue(nonExecutable.setExecutable(false, false))
+                assertFalse(nonExecutable.canExecute())
+                assertStartFails(nonExecutable)
+            } finally {
+                nonExecutable.delete()
+            }
+
+            val corrupt = File.createTempFile("codex-runtime-", ".bin", context.cacheDir)
+            try {
+                corrupt.writeText("not an ELF executable")
+                assertTrue(corrupt.setExecutable(true, true))
+                assertStartFails(corrupt)
+            } finally {
+                corrupt.delete()
+            }
         } finally {
-            corrupt.delete()
+            clearRuntimeState()
         }
     }
 
     @Test
     fun successfulRuntimeInstallsCertificatePrivacyAndCleanupPolicies(): Unit = runBlocking {
+        clearRuntimeState()
         startAndInitializeRuntime()
         val codexHome = File(context.noBackupFilesDir, "codex")
         assertTrue(File(codexHome, "system-ca.pem").length() > 0)
@@ -124,6 +130,12 @@ class RuntimeBootstrapDeviceTest {
             Thread.sleep(20)
         }
         assertFalse("${file.name} was not deleted", file.exists())
+    }
+
+    private fun clearRuntimeState() {
+        File(context.noBackupFilesDir, "codex").deleteRecursively()
+        File(context.noBackupFilesDir, "codex-app-server.stdout").delete()
+        File(context.filesDir, "home").deleteRecursively()
     }
 
     private fun androidx.sqlite.SQLiteConnection.longQuery(sql: String): Long = prepare(sql).use { statement ->
