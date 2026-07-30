@@ -22,3 +22,14 @@ After the runtime-output and device-test fixes on 2026-07-29, the post-clean com
 The last successful pre-refactor push workflow took 25 minutes 8 seconds end to end. Its verification step took 19 minutes 58 seconds and its signed release/reproducibility step took 3 minutes 49 seconds ([run 30354365274](https://github.com/ciurlaro/codex-mobile/actions/runs/30354365274)).
 
 A post-refactor remote duration cannot exist until these changes are pushed. The updated workflows cancel superseded runs, restore Gradle state, compile the KMP conformance suites explicitly, and reuse the single verified release candidate in the publishing workflow. Add the first successful post-refactor run to this report after publication; local timings are not presented as a substitute for the Linux runner result.
+
+## Device verification
+
+GitHub Actions keeps a small Android instrumentation smoke because the hosted emulator is the least stable part of the verification graph. The full real-runtime, provider lifecycle, Documents, and Telegram Android device coverage is run locally before pushing CI retries.
+
+The 2026-07-30 local API 37 emulator pass completed the host runtime group, provider lifecycle tests, extension-host bundle, and provider Documents/Telegram scripts successfully. The exact full-device entry points remain:
+
+```sh
+bash scripts/run-android-device-tests.sh <host-device-artifact-dir>
+bash ../codex-mobile-plugins/scripts/run-android-device-tests.sh ../codex-mobile-plugins
+```

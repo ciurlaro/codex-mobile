@@ -95,6 +95,7 @@ jobs:
             modules/android/app/build/outputs/apk/debug/app-debug.apk
             modules/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             modules/android/extension-host/build/outputs/apk/androidTest/debug/extension-host-debug-androidTest.apk
+            scripts/run-android-device-smoke.sh
             scripts/run-android-device-tests.sh
             codex-mobile-plugins/scripts/run-android-device-tests.sh
             codex-mobile-plugins/android/documents/build/outputs/apk/androidTest/debug/documents-android-debug-androidTest.apk
@@ -143,7 +144,7 @@ jobs:
         with:
           name: android-device-tests
           path: device-tests
-      - name: Run the real runtime and extension lifecycle
+      - name: Run Android instrumentation smoke
         uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
         with:
           api-level: 35
@@ -153,7 +154,7 @@ jobs:
           emulator-build: 15261927 # 36.5.11
           emulator-boot-timeout: 900
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash device-tests/scripts/run-android-device-tests.sh device-tests
+          script: bash device-tests/scripts/run-android-device-smoke.sh device-tests
       - name: Record complete workflow timing
         if: always()
         env:
