@@ -21,7 +21,7 @@ After the runtime-output and device-test fixes on 2026-07-29, the post-clean com
 
 The last successful pre-refactor push workflow took 25 minutes 8 seconds end to end. Its verification step took 19 minutes 58 seconds and its signed release/reproducibility step took 3 minutes 49 seconds ([run 30354365274](https://github.com/ciurlaro/codex-mobile/actions/runs/30354365274)).
 
-A post-refactor remote duration cannot exist until these changes are pushed. The updated workflows cancel superseded runs, restore Gradle state, compile the KMP conformance suites explicitly, and reuse the single verified release candidate in the publishing workflow. Add the first successful post-refactor run to this report after publication; local timings are not presented as a substitute for the Linux runner result.
+The first successful post-refactor PR workflow took 43 minutes 50 seconds end to end. Its build job took 26 minutes 41 seconds and its reduced Android device smoke took 17 minutes 2 seconds ([run 30518413515](https://github.com/ciurlaro/codex-mobile/actions/runs/30518413515)). Pull-request workflows do not build the signed release candidate, so final main-branch release timing remains deferred.
 
 ## Device verification
 
