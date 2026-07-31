@@ -22,8 +22,6 @@ jobs:
         name: Start workflow timing
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Verify source structure
-        run: scripts/verify-structure.sh
       - id: protocol
         name: Read the pinned upstream protocol revision
         run: |
@@ -61,13 +59,13 @@ jobs:
           test -z "$(git status --short --untracked-files=all -- \
             modules/multiplatform/codex-shared/protocol/schema \
             modules/multiplatform/codex-shared/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/generated)"
-      - name: Verify structure, tests, debug builds, and lint
+      - name: Verify repository, tests, debug builds, and lint
         run: |
           ./gradlew \
             :build-logic:test \
+            verifyRepository \
             :tooling:protocol-generator:test \
             :multiplatform:codex-shared:allTests \
-            :multiplatform:codex-shared:verifyProtocolSource \
             :android:app:testDebugUnitTest \
             :android:app:assembleDebug \
             :android:app:assembleDebugAndroidTest \

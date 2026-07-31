@@ -55,12 +55,11 @@ export CODEX_MOBILE_RELEASE_KEY_PASSWORD=$key_password
 trap 'unset store_password key_password CODEX_MOBILE_RELEASE_STORE_PASSWORD CODEX_MOBILE_RELEASE_KEY_PASSWORD' EXIT
 
 cd "$root"
-scripts/verify-structure.sh
 ./gradlew --no-daemon \
     :build-logic:test \
+    verifyRepository \
     :tooling:protocol-generator:test \
     :multiplatform:codex-shared:allTests \
-    :multiplatform:codex-shared:verifyProtocolSource \
     :android:app:testDebugUnitTest \
     :android:app:assembleDebug \
     :android:app:assembleDebugAndroidTest \

@@ -16,12 +16,11 @@ Android toolchain selected by the build are required.
 
 ```sh
 export ANDROID_HOME=/absolute/path/to/android-sdk
-bash scripts/verify-structure.sh
 ./gradlew \
   :build-logic:test \
+  verifyRepository \
   :tooling:protocol-generator:test \
   :multiplatform:codex-shared:allTests \
-  :multiplatform:codex-shared:verifyProtocolSource \
   :android:app:testDebugUnitTest \
   :android:app:assembleDebug \
   :android:app:assembleDebugAndroidTest \

@@ -26,8 +26,7 @@ unavoidable mechanisms; portable behavior and policy remain shared.
 ## Verification
 
 ```sh
-bash scripts/verify-structure.sh
-./gradlew check testDebugUnitTest assembleDebug assembleDebugAndroidTest lint
+./gradlew verifyRepository check testDebugUnitTest assembleDebug assembleDebugAndroidTest lint
 ```
 
 The checked-in wrapper pins Gradle 9.4.1. See

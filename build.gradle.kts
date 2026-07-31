@@ -1,3 +1,7 @@
+plugins {
+    id("codexmobile.repository-verification")
+}
+
 tasks.register("visualCheck") {
     group = "verification"
     description = "Compare the nine app-owned visual scenarios with reviewed baselines."
