@@ -91,16 +91,16 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("debug")
         testApkDirectory.set(test.artifacts.get(SingleArtifact.APK))
         outputDirectory.set(CodexMobileAutomation.Artifacts.smoke(layout))
     }
+    val configuredSmokeArtifacts = CodexMobileAutomation.Artifacts.configuredSmoke(
+        rootProject.layout,
+        providers.gradleProperty(CodexMobileAutomation.Properties.SMOKE_ARTIFACTS),
+    )
     tasks.register<AndroidDeviceSmokeTask>(CodexMobileAutomation.Tasks.ANDROID_SMOKE) {
-        if (!providers.gradleProperty(CodexMobileAutomation.Properties.SMOKE_ARTIFACTS).isPresent) {
+        if (!configuredSmokeArtifacts.isPresent) {
             dependsOn(stageSmoke)
         }
         adbExecutable.set(adb)
-        artifactsDirectory.set(
-            providers.gradleProperty(CodexMobileAutomation.Properties.SMOKE_ARTIFACTS)
-                .map { layout.projectDirectory.dir(it) }
-                .orElse(stageSmoke.flatMap { it.outputDirectory }),
-        )
+        artifactsDirectory.set(configuredSmokeArtifacts.orElse(stageSmoke.flatMap { it.outputDirectory }))
         mode.set(providers.gradleProperty(CodexMobileAutomation.Properties.SMOKE_MODE).orElse("full"))
     }
 }

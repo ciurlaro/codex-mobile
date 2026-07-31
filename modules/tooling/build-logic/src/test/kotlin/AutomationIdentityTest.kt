@@ -1,7 +1,10 @@
+import java.io.File
+import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import org.gradle.testfixtures.ProjectBuilder
 
 class AutomationIdentityTest {
     @Test
@@ -39,5 +42,22 @@ class AutomationIdentityTest {
         assertTrue(CodexMobileAutomation.App.bundleReleaseNativePaths.all { it.startsWith("base/lib/${CodexMobileAutomation.App.ABI}/") })
         assertEquals("codex-mobile-debug.apk", CodexMobileAutomation.Artifacts.DEBUG_APK)
         assertEquals("codex-mobile-debug-androidTest.apk", CodexMobileAutomation.Artifacts.DEBUG_TEST_APK)
+    }
+
+    @Test
+    fun `configured smoke artifacts are repository relative`() {
+        val directory = createTempDirectory("smoke-artifacts").toFile()
+        try {
+            val root = ProjectBuilder.builder().withProjectDir(directory).build()
+            val appDirectory = directory.resolve("modules/android/app").also(File::mkdirs)
+            val app = ProjectBuilder.builder().withParent(root).withProjectDir(appDirectory).build()
+            val artifacts = CodexMobileAutomation.Artifacts.configuredSmoke(
+                root.layout,
+                app.providers.provider { CodexMobileAutomation.Artifacts.SMOKE_DIRECTORY },
+            )
+            assertEquals(directory.resolve("smoke-artifacts").canonicalFile, artifacts.get().asFile.canonicalFile)
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 }

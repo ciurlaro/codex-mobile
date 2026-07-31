@@ -39,6 +39,9 @@ internal object CodexMobileAutomation {
         fun smoke(layout: ProjectLayout): Provider<Directory> =
             layout.buildDirectory.dir(SMOKE_DIRECTORY)
 
+        fun configuredSmoke(layout: ProjectLayout, path: Provider<String>): Provider<Directory> =
+            path.map(layout.projectDirectory::dir)
+
         fun reproducibility(layout: ProjectLayout): Directory =
             layout.projectDirectory.dir(".gradle/reproducibility")
 
