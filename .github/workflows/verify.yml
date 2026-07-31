@@ -12,6 +12,9 @@ concurrency:
   group: codex-mobile-verify-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  SMOKE_ARTIFACT_DIR: smoke-artifacts
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -69,6 +72,7 @@ jobs:
             :android:app:testDebugUnitTest \
             :android:app:assembleDebug \
             :android:app:assembleDebugAndroidTest \
+            :android:app:stageSmokeArtifacts \
             :android:app:lint \
             --stacktrace
       - name: Upload runtime smoke APKs
@@ -77,12 +81,7 @@ jobs:
           name: android-runtime-smoke
           retention-days: 7
           if-no-files-found: error
-          path: |
-            build/modules/android/app/outputs/apk/debug/app-debug.apk
-            build/modules/android/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-            gradle.properties
-            scripts/run-android-device-smoke.sh
-            scripts/run-native-runtime-smoke.sh
+          path: build/modules/android/app/smoke-artifacts/
       - name: Create ephemeral release key
         if: github.event_name == 'push'
         run: >-
@@ -97,9 +96,9 @@ jobs:
           CODEX_MOBILE_RELEASE_KEY_ALIAS: ci-release
           CODEX_MOBILE_RELEASE_KEY_PASSWORD: android
         run: |
-          ./gradlew :android:app:assembleRelease :android:app:bundleRelease --stacktrace
-          scripts/verify-release.sh
-          scripts/verify-reproducible-release.sh build/modules/android/app/outputs/apk/release/app-release.apk
+          ./gradlew releaseLocal --stacktrace
+          ./gradlew --no-build-cache clean :android:app:captureReleaseBaseline --stacktrace
+          ./gradlew --no-build-cache clean :android:app:verifyReleaseReproducibility --stacktrace
           printf '%s\n' "$GITHUB_SHA" > source-revision.txt
       - name: Upload verified host candidate
         if: github.event_name == 'push'
@@ -123,10 +122,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: android-runtime-smoke
-          path: device-tests
+          path: ${{ env.SMOKE_ARTIFACT_DIR }}
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -142,7 +150,7 @@ jobs:
           emulator-build: 15261927 # 36.5.11
           emulator-boot-timeout: 300
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash device-tests/scripts/run-android-device-smoke.sh device-tests platform
+          script: ./gradlew :android:app:androidDeviceSmoke -PcodexMobile.smokeArtifacts=${{ env.SMOKE_ARTIFACT_DIR }} -PcodexMobile.androidSmokeMode=platform --stacktrace
 
   native-runtime-smoke:
     name: Native ARM App Server runtime smoke
@@ -150,11 +158,21 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+      - run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
+      - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: android-runtime-smoke
-          path: runtime-tests
-      - run: bash runtime-tests/scripts/run-native-runtime-smoke.sh runtime-tests
+          path: ${{ env.SMOKE_ARTIFACT_DIR }}
+      - run: ./gradlew nativeRuntimeSmoke -PcodexMobile.smokeArtifacts=${{ env.SMOKE_ARTIFACT_DIR }} --stacktrace
 
   timing:
     name: Complete verification timing

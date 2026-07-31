@@ -17,7 +17,7 @@ extensions.configure<ApplicationExtension> {
     defaultConfig {
         minSdk = 26
         targetSdk = 37
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        testInstrumentationRunner = CodexMobileAutomation.App.TEST_RUNNER
     }
 
     buildFeatures {

@@ -33,27 +33,35 @@ export CODEX_MOBILE_RELEASE_STORE_FILE=/absolute/path/to/keystore
 export CODEX_MOBILE_RELEASE_STORE_PASSWORD=...
 export CODEX_MOBILE_RELEASE_KEY_ALIAS=...
 export CODEX_MOBILE_RELEASE_KEY_PASSWORD=...
-./gradlew :android:app:assembleRelease :android:app:bundleRelease
-scripts/verify-release.sh
+./gradlew releaseLocal
 ```
 
 Pull-request CI uses an ephemeral key for release-shape checks. Official
 releases reuse verified artifacts and sign in a protected environment; no
 Gradle task runs while the production key is exposed.
 
-`assembleRelease` refuses missing signing configuration. Verification checks
+`releaseLocal` refuses missing signing configuration. Verification checks
 the signature, manifest security flags, pinned runtime identity, dependency
 locks and metadata, deterministic SBOM, native ABI payload, release mapping,
-and reproducibility.
+and release archives. The two explicit clean invocations below prove
+reproducibility.
 
 ## Install on a connected phone
 
 ```sh
-scripts/install-phone.sh
+./gradlew installPhone
 ```
 
 The command verifies and installs the signed release in place with
 `adb install -r`; it never uninstalls the app or clears user data.
+
+To prove release reproducibility, use two top-level invocations so Gradle never
+recursively invokes or cleans itself:
+
+```sh
+./gradlew --no-build-cache clean :android:app:captureReleaseBaseline
+./gradlew --no-build-cache clean :android:app:verifyReleaseReproducibility
+```
 
 ## Pinned provenance
 

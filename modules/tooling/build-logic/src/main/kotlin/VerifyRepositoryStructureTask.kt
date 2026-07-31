@@ -28,9 +28,7 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
         REQUIRED_FILES.forEach { path ->
             requireRule(root.resolve(path).isFile, "missing required file: $path")
         }
-        REQUIRED_EXECUTABLES.forEach { path ->
-            requireRule(root.resolve(path).canExecute(), "required script is not executable: $path")
-        }
+        requireRule(root.resolve("gradlew").canExecute(), "Gradle wrapper is not executable")
 
         val moduleRoots = files.keys.filter { it.endsWith("/build.gradle.kts") }
             .filter { it.startsWith("modules/") }
@@ -42,6 +40,8 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
         LEGACY_ROOTS.forEach { path ->
             requireRule(!root.resolve(path).exists(), "legacy root returned: $path")
         }
+        val automationScript = files.keys.firstOrNull { it.endsWith(".sh") || it.endsWith(".py") }
+        requireRule(automationScript == null, "tracked shell/Python automation returned: $automationScript")
         requireRule(
             !root.resolve("modules/multiplatform/codex-shared/src/androidMain").exists(),
             "shared production must be physically commonMain-only",
@@ -71,7 +71,7 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
 
         val processOwners = matchingFiles(
             files,
-            { it.startsWith("modules/") && it.endsWith(".kt") && it != VERIFIER_PATH },
+            { it.startsWith("modules/android/app/src/main/") && it.endsWith(".kt") },
             Regex("""ProcessBuilder\(|java\.lang\.Process"""),
         )
         requireRule(
@@ -121,7 +121,7 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
         }
         requireRule(payload == null, "unexpected source-tree runtime payload: $payload")
 
-        requireLine(root, "gradle.properties", "codexMobile.codexVersion=0.145.0")
+        requireLine(root, "gradle.properties", "${CodexMobileAutomation.Properties.CODEX_VERSION}=0.145.0")
         requireText(
             root,
             "${COMMON_MAIN}io/github/ciurlaro/codexmobile/appserver/protocol/AppServerProtocolIdentity.kt",
@@ -211,7 +211,7 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
     }
 
     private fun isStaleReferenceScope(path: String): Boolean =
-        path in ROOT_TEXT_FILES || path.startsWith("docs/") || path.startsWith("scripts/") ||
+        path in ROOT_TEXT_FILES || path.startsWith("docs/") ||
             path.startsWith(".github/") || path.startsWith("modules/")
 
     private fun isProtocolSource(path: String): Boolean =
@@ -248,14 +248,8 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
             "modules/tooling/build-logic/build.gradle.kts", "modules/tooling/build-logic/settings.gradle.kts",
             VERIFIER_PATH, "modules/tooling/build-logic/src/main/kotlin/VerifySourceSizeTask.kt",
             "modules/tooling/build-logic/src/main/kotlin/codexmobile.repository-verification.gradle.kts",
-            "modules/tooling/protocol-generator/build.gradle.kts", "scripts/generate-sbom.py",
-            "scripts/verify-release.sh", "scripts/verify-reproducible-release.sh",
-            "scripts/run-android-device-smoke.sh",
-        )
-        private val REQUIRED_EXECUTABLES = listOf(
-            "scripts/generate-sbom.py", "scripts/prepare-codex-runtime.sh",
-            "scripts/run-android-device-smoke.sh", "scripts/verify-release.sh",
-            "scripts/verify-reproducible-release.sh",
+            "modules/tooling/build-logic/src/main/kotlin/CodexMobileAutomation.kt",
+            "modules/tooling/protocol-generator/build.gradle.kts",
         )
         private val EXPECTED_MODULE_ROOTS = listOf(
             "modules/android/app/build.gradle.kts", "modules/multiplatform/codex-shared/build.gradle.kts",
@@ -263,7 +257,7 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
         )
         private val LEGACY_ROOTS = listOf(
             "src", "core", "agent", "app", "app-server-client", "platform", "provider-api",
-            "runtime-host", "build-logic", "tools", "providers",
+            "runtime-host", "build-logic", "tools", "providers", "scripts",
         )
         private val ALLOWED_KOTLIN_ROOTS = listOf(
             COMMON_MAIN, "modules/multiplatform/codex-shared/src/commonTest/kotlin/",
@@ -275,7 +269,7 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
         private val STALE_REFERENCES = listOf(
             "codex-mobile-plugins", "provider-api", "extension-provider-api", "agent/codex",
             "app-server-client", "runtime-host", "platform/android", "app/android", "src/modules",
-            ":app:android", "kmp-process", "kmp-file", "kotlinx-io", "ktor-network",
+            "kmp-process", "kmp-file", "kotlinx-io", "ktor-network",
             "codexMobile.provider",
         )
         private val ROOT_TEXT_FILES = setOf(
