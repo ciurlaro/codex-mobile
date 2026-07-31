@@ -1,4 +1,6 @@
 import java.io.File
+import java.security.MessageDigest
+import java.util.zip.GZIPOutputStream
 import kotlin.io.path.createTempDirectory
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -9,62 +11,118 @@ import org.gradle.testkit.runner.TaskOutcome
 
 class PrepareCodexRuntimeTaskTest {
     @Test
-    fun `task declares generated output and tracks input changes`() {
-        val project = createTempDirectory("codex-runtime-task").toFile()
+    fun `extracts validates and reuses an exact runtime archive`() {
+        val project = fixture()
         try {
-            project.resolve("settings.gradle.kts").writeText("rootProject.name = \"test\"\n")
-            project.resolve("scripts").mkdir()
-            project.resolve("scripts/prepare-codex-runtime.sh").apply {
-                writeText(
-                    """
-                    #!/usr/bin/env bash
-                    set -euo pipefail
-                    mkdir -p "${'$'}(dirname "${'$'}4")"
-                    printf '%s' "${'$'}1:${'$'}2:${'$'}3:${'$'}{5:-arm64}" > "${'$'}4"
-                    """.trimIndent(),
-                )
-                assertTrue(setExecutable(true))
-            }
-            project.resolve("build.gradle.kts").writeText(
-                """
-                plugins {
-                    id("codexmobile.codex-runtime")
-                }
-                """.trimIndent(),
-            )
+            val binary = "runtime-binary".toByteArray()
+            val archive = project.resolve("runtime.tar.gz")
+            writeTarGz(archive, mapOf(ASSET to binary))
+            writeBuild(project, archive.sha256(), binary.sha256())
 
             val first = run(project)
             assertEquals(TaskOutcome.SUCCESS, first.task(":prepareCodexRuntime")?.outcome)
-            val output = project.resolve(
-                "build/generated/codex-runtime/main/arm64-v8a/libcodex_app_server.so",
-            )
-            assertEquals("1.2.3:archive:binary:arm64", output.readText())
-            assertFalse(project.resolve("src/main/jniLibs").exists())
+            val output = project.resolve("build/generated/codex-runtime/main/arm64-v8a/libcodex_app_server.so")
+            assertTrue(output.canExecute())
+            assertTrue(output.readBytes().contentEquals(binary))
 
             val second = run(project)
             assertEquals(TaskOutcome.UP_TO_DATE, second.task(":prepareCodexRuntime")?.outcome)
             assertTrue(second.output.contains("Reusing configuration cache."))
-
-            val changed = run(project, version = "2.0.0")
-            assertEquals(TaskOutcome.SUCCESS, changed.task(":prepareCodexRuntime")?.outcome)
-            assertEquals("2.0.0:archive:binary:arm64", output.readText())
         } finally {
             project.deleteRecursively()
         }
     }
 
-    private fun run(
-        project: File,
-        version: String = "1.2.3",
-    ) = GradleRunner.create()
-        .withProjectDir(project)
-        .withPluginClasspath()
-        .withArguments(
-            "prepareCodexRuntime",
-            "-PcodexMobile.codexVersion=$version",
-            "-PcodexMobile.codexArchiveSha256=archive",
-            "-PcodexMobile.codexBinarySha256=binary",
-            "--configuration-cache",
+    @Test
+    fun `rejects archive and binary hash failures without temporary residue`() {
+        val project = fixture()
+        try {
+            val archive = project.resolve("runtime.tar.gz")
+            writeTarGz(archive, mapOf(ASSET to "runtime".toByteArray()))
+            writeBuild(project, "0".repeat(64), "1".repeat(64))
+            val failure = runAndFail(project)
+            assertTrue(failure.output.contains("archive SHA-256 mismatch"))
+            assertFalse(project.resolve("build/generated/codex-runtime/main/arm64-v8a/libcodex_app_server.so").exists())
+            assertTrue(project.resolve("build/tmp/prepareCodexRuntime").walkTopDown().none { it.name.endsWith(".tmp") })
+        } finally {
+            project.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun `rejects ambiguous archives`() {
+        val project = fixture()
+        try {
+            val binary = "runtime".toByteArray()
+            val archive = project.resolve("runtime.tar.gz")
+            writeTarGz(archive, mapOf(ASSET to binary, "unexpected" to byteArrayOf(1)))
+            writeBuild(project, archive.sha256(), binary.sha256())
+            assertTrue(runAndFail(project).output.contains("exactly the root executable"))
+        } finally {
+            project.deleteRecursively()
+        }
+    }
+
+    private fun fixture() = createTempDirectory("codex-runtime-task").toFile().apply {
+        resolve("settings.gradle.kts").writeText("rootProject.name = \"test\"\n")
+    }
+
+    private fun writeBuild(project: File, archiveHash: String, binaryHash: String) {
+        project.resolve("build.gradle.kts").writeText(
+            """
+            plugins {
+                id("codexmobile.codex-runtime")
+            }
+            """.trimIndent(),
         )
-        .build()
+        project.resolve("gradle.properties").writeText(
+            """
+            codexMobile.codexVersion=1.2.3
+            codexMobile.codexArchiveSha256=$archiveHash
+            codexMobile.codexBinarySha256=$binaryHash
+            codexMobile.codexArchiveFile=runtime.tar.gz
+            """.trimIndent(),
+        )
+    }
+
+    private fun run(project: File) = runner(project).build()
+    private fun runAndFail(project: File) = runner(project).buildAndFail()
+    private fun runner(project: File) = GradleRunner.create().withProjectDir(project).withPluginClasspath()
+        .withArguments("prepareCodexRuntime", "--configuration-cache", "--stacktrace")
+
+    private fun writeTarGz(target: File, entries: Map<String, ByteArray>) {
+        GZIPOutputStream(target.outputStream()).use { output ->
+            entries.forEach { (name, contents) ->
+                val header = ByteArray(512)
+                name.toByteArray().copyInto(header)
+                octal(header, 100, 8, 493)
+                octal(header, 108, 8, 0)
+                octal(header, 116, 8, 0)
+                octal(header, 124, 12, contents.size.toLong())
+                octal(header, 136, 12, 0)
+                repeat(8) { header[148 + it] = ' '.code.toByte() }
+                header[156] = '0'.code.toByte()
+                "ustar\u0000".toByteArray().copyInto(header, 257)
+                "00".toByteArray().copyInto(header, 263)
+                val checksum = header.sumOf { it.toInt() and 0xff }
+                "%06o\u0000 ".format(checksum).toByteArray().copyInto(header, 148)
+                output.write(header)
+                output.write(contents)
+                repeat((512 - contents.size % 512) % 512) { output.write(0) }
+            }
+            output.write(ByteArray(1024))
+        }
+    }
+
+    private fun octal(target: ByteArray, offset: Int, length: Int, value: Long) {
+        ("%0${length - 1}o\u0000".format(value)).toByteArray().copyInto(target, offset)
+    }
+
+    private fun File.sha256() = readBytes().sha256()
+    private fun ByteArray.sha256() = MessageDigest.getInstance("SHA-256").digest(this)
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+    companion object {
+        private const val ASSET = "codex-app-server-aarch64-unknown-linux-musl"
+    }
 }

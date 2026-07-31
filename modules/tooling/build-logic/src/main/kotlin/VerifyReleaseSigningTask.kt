@@ -22,7 +22,10 @@ abstract class VerifyReleaseSigningTask : DefaultTask() {
     @TaskAction
     fun verifySigningConfiguration() {
         check(configured.get()) {
-            "Release signing requires codexMobile.release.{storeFile,storePassword,keyAlias,keyPassword} " +
+            "Release signing requires ${CodexMobileAutomation.Properties.RELEASE_STORE_FILE}, " +
+                "${CodexMobileAutomation.Properties.RELEASE_STORE_PASSWORD}, " +
+                "${CodexMobileAutomation.Properties.RELEASE_KEY_ALIAS}, and " +
+                "${CodexMobileAutomation.Properties.RELEASE_KEY_PASSWORD} " +
                 "Gradle properties or the matching CODEX_MOBILE_RELEASE_* environment variables"
         }
         check(storeFile.isPresent) { "Release keystore does not exist" }
