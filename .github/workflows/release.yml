@@ -49,7 +49,7 @@ jobs:
       - name: Verify candidate provenance
         run: |
           test "$(cat candidate/source-revision.txt)" = "$GITHUB_SHA"
-          test -s candidate/app/android/build/outputs/apk/release/android-release.apk
+          test -s candidate/build/modules/android/app/outputs/apk/release/app-release.apk
 
   sign:
     needs: candidate
@@ -74,7 +74,7 @@ jobs:
         run: |
           set -euo pipefail
           tools="$ANDROID_HOME/build-tools/36.0.0"
-          input=candidate/app/android/build/outputs/apk/release/android-release.apk
+          input=candidate/build/modules/android/app/outputs/apk/release/app-release.apk
           output=Codex-Mobile-${{ needs.candidate.outputs.version }}.apk
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
           "$tools/zipalign" -f -p 4 "$input" "$RUNNER_TEMP/aligned.apk"
@@ -100,9 +100,8 @@ jobs:
             Codex-Mobile-*.apk.sha256
             candidate/docs/sbom.cdx.json
             candidate/LICENSE
-            candidate/LICENSES/MLKIT-EXCEPTION.txt
             candidate/THIRD_PARTY_NOTICES.md
-            candidate/app/android/build/outputs/mapping/release/mapping.txt
+            candidate/build/modules/android/app/outputs/mapping/release/mapping.txt
 
   publish:
     needs: [candidate, sign]
@@ -118,8 +117,10 @@ jobs:
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          RELEASE_VERSION: ${{ needs.candidate.outputs.version }}
         run: |
-          args=(release create "${{ inputs.tag }}" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --generate-notes --title "Codex Mobile ${{ needs.candidate.outputs.version }}")
-          if [[ "${{ needs.candidate.outputs.version }}" == *-* ]]; then args+=(--prerelease); fi
-          args+=(release/Codex-Mobile-*.apk release/Codex-Mobile-*.apk.sha256 release/candidate/docs/sbom.cdx.json release/candidate/LICENSE release/candidate/LICENSES/MLKIT-EXCEPTION.txt release/candidate/THIRD_PARTY_NOTICES.md release/candidate/app/android/build/outputs/mapping/release/mapping.txt)
+          args=(release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --generate-notes --title "Codex Mobile $RELEASE_VERSION")
+          if [[ "$RELEASE_VERSION" == *-* ]]; then args+=(--prerelease); fi
+          args+=(release/Codex-Mobile-*.apk release/Codex-Mobile-*.apk.sha256 release/candidate/docs/sbom.cdx.json release/candidate/LICENSE release/candidate/THIRD_PARTY_NOTICES.md release/candidate/build/modules/android/app/outputs/mapping/release/mapping.txt)
           gh "${args[@]}"

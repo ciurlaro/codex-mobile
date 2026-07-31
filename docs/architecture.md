@@ -1,49 +1,55 @@
 # Architecture
 
-## Runtime and module boundaries
+## Module and dependency boundaries
 
 ```mermaid
-flowchart TB
-    App[":app:android\nUI and composition"] --> Agent[":agent:codex\nCodex adaptation and authority"]
-    App --> Platform[":platform:android\nAndroid runtime and provider host"]
-    Agent --> Client["app-server-client\nPinned KMP protocol and transport"]
-    Platform --> Client
-    Agent --> Core[":core\nApplication contracts"]
-    Platform --> Core
-    Source["GitHub Codex marketplace"] --> Plugin["standard plugin and skills"]
-    ProviderSource["pinned provider source"] --> Bundled["bundled Android providers"]
-    Plugin --> Agent
-    Bundled --> Platform
+flowchart LR
+    Android[":android:app\nAndroid mechanisms"] --> Shared[":multiplatform:codex-shared\nPortable product and runtime policy"]
+    Generator[":tooling:protocol-generator"] --> Schema["Pinned protocol schema"]
+    BuildLogic["build-logic"] --> Android
+    BuildLogic --> Shared
+    Schema --> Shared
 ```
 
-The published `app-server-client` KMP artifact owns the exact `0.145.0` protocol identity and the `CodexRuntime` transport contract. Its checked-in authoritative stable-v2 schema is bound to the exact upstream tag, revision, source paths, and SHA-256 digests; normal builds verify that input and do not fetch or regenerate it. `AppServerConnection` owns JSON-RPC IDs, initialization, correlation, framing, timeouts, and restart state through the generated typed protocol. Product calls pass generated request and response types directly; there is no raw JSON-RPC request adapter in the mobile code. One serialized owner processes transport input without waiting for application event consumption. Its bounded event delivery is lossless: ordered delivery succeeds, or overflow stops the connection and closes the event stream with an explicit failure. Its runtime dependency carries JSON lines and typed start, I/O, EOF, and exit failures.
+All Gradle modules live under root-level `modules`. There are two production
+modules: one shared KMP module and one Android application. Tooling has no
+production dependency edge.
 
-The `runtime-host` KMP artifact owns the immutable runtime distribution identity: real `aarch64-unknown-linux-musl` target, App Server version/revision/schema, archive checksum, binary checksum, and execution-environment compatibility. `runtime-host:android` is the packaging/hosting adapter. It verifies that exact identity and executable checksum before launch, then `AndroidCodexRuntime` alone owns the packaged filename, `ProcessBuilder`, environment, streams, proxy, log guard, exit watcher, and shutdown. Neither host module depends on product, plugin, provider, or UI types. App Server is the only packaged standalone payload launched by Android; ordinary shell execution remains owned by App Server.
+`codex-shared` is physically `commonMain`-only. It owns the pinned generated
+protocol, JSON-RPC connection and framing, runtime configuration and security
+policy, agent behavior, session controller, application state and reducers,
+DataStore preference semantics, and Compose Multiplatform UI. Its logical
+Android target exists only so Android can consume the common artifact.
 
-## Plugin source and Android provider
+The Android app owns concrete framework mechanisms: Activity/Application,
+foreground service and notification, permissions and storage discovery,
+browser intents, app-private paths, ABI and certificate discovery,
+`AndroidSQLiteDriver`, Java `ProcessBuilder`, raw streams, Java sockets, and
+the RaTeX bitmap/view bridge. Android adapts these mechanisms to narrow common
+contracts; it does not duplicate product policy.
 
-The Extensions screen downloads a public GitHub marketplace as a bounded ZIP, validates its manifest and local paths, records its canonical GitHub origin, and atomically refreshes a stable app-private snapshot. It then registers that local path through App Server `marketplace/add`, avoiding an unavailable Android `git` executable while leaving App Server authoritative for discovery, installation, enablement, plugin-scoped skills, and new-chat visibility. A display-only cache shows the last complete `plugin/list` response immediately while one 20-second refresh runs. Failures keep both the previous marketplace snapshot and cached catalog and expose a manual retry; the response is not streamed because the pinned method is a single response.
+## Runtime
 
-A plugin may place `codex-mobile-addon.json` beside its standard manifest. Ordinary plugins may come from any registered marketplace; the official app accepts Android provider metadata only when the validated snapshot identifies `ciurlaro/codex-mobile-plugins` as its origin. The add-on retains package fields for older hosts, but this host never downloads or installs APK code. It finds the matching provider in a fixed bundled registry and requires its plugin ID, provider API, host version, implementation version, display name, schema digest, entry point, settings entry point, and MCP server names to match before recording activation. Providers absent from that registry require a newer host. Android disables exactly those MCP entries because local dynamic tools provide execution.
+The exact App Server release assets and archive/binary SHA-256 values are
+pinned. A typed configuration-cache-safe task downloads and verifies each
+supported ABI into centralized build output, which the Android source set
+packages as generated `jniLibs`.
 
-The base APK contains the reviewed Documents and Telegram implementations from the exact provider revision pinned in `gradle.properties`. Local builds use composite substitution from an explicit or sibling checkout; CI checks out that revision before compilation. Provider entry points implement the small KMP `CodexMobileProvider` contract and exchange project-owned calls, contexts, descriptors, secret requirements, workspace resolution, mutation journal operations, and results. Android Keystore owns per-provider secret namespaces and providers receive only a read-only `ProviderSecrets` snapshot during execution. There is no runtime code download, Binder transport, child provider process, HTTP bridge, executable backend, second marketplace, or second enablement store.
+Before launch the Android runtime verifies the packaged identity and executable
+hash, creates a minimal allowlisted environment, builds a session certificate
+bundle, installs the common SQLite log privacy guard, and starts the binary
+with Java `ProcessBuilder`. Raw stdout bytes pass through the common bounded
+UTF-8 JSON-line framer. Stderr is drained without content logging. Shutdown
+closes stdin, waits for a bounded interval, forces termination if necessary,
+closes socket forwarding, and removes session certificate material.
 
-App Server configuration is the sole plugin-enablement authority. Provider lifecycle records track only activation/removal continuation. A generic dispatcher maps each descriptor's closed tool identifiers to the verified provider and rechecks enablement, cancellation, deadline, approval, and workspace authority immediately before execution.
+Outbound App Server traffic uses an authenticated loopback Java-socket CONNECT
+proxy. Common code parses and authorizes requests; Android resolves addresses
+and owns sockets. Only TLS port 443 and public destinations are accepted.
 
-Disabling commits App Server configuration under the global provider gate and retains its secret namespace and provider-owned data. Uninstall first revokes authority, lets the provider use its existing secrets for required remote cleanup, deletes that namespace only after confirmed preparation, removes the App Server registration, and deletes the activation record. Ambiguous cleanup stays retryable with bundled code inert and credentials retained but no agent authority. Durably prepared removals resume after `plugin/installed` returns.
+## Extensions
 
-New threads receive only the currently enabled schemas and plugin skills. Each thread stores its original provider set and last announced availability. Active threads receive a reserved hidden steer; idle or resumed threads receive a hidden injected snapshot. A race queues the update until turn completion. Stale schemas never restore authority because dispatch always fails closed.
-
-## Mutation and workspace authority
-
-The selected shared-storage path is each turn's starting `cwd` for the ordinary App Server shell, not a shell sandbox. Provider file operations receive a context whose workspace is enforced as a hard boundary.
-
-A SQLite journal covers provider mutations only. `(thread_id, turn_id, call_id)` is unique and bound to a canonical arguments hash. While a provider is installed, a terminal duplicate replays its exact result and a dispatched operation is reconciled or becomes indeterminate without another provider submission. Confirmed uninstall deletes undispatched rows and strips results and reconciliation evidence from the remaining replay-prevention tombstones. One mutex closes execution, disablement, deadline, and approval races.
-
-With App Server `0.145.0`, Never dispatches typed mutations directly; Ask me, Strict, and Auto review use a one-use approval permit because dynamic tools have no equivalent automatic-review bridge.
-
-## Portability
-
-Standard plugin manifests, skills, schemas, DTOs, validation, and routing can be shared with another Codex host. Platform execution cannot: each target supplies its own provider behind the same semantic contract. Regular Codex installations use the plugin's declared MCP provider; Android uses reviewed bundled code and disables that MCP entry. Adding another native Android provider therefore requires a host release.
-
-A full monolithic APK update removes legacy optional splits. On first launch, legacy lifecycle records for bundled providers are migrated without clearing authentication, secrets, or pending activation/removal state.
+The app uses the official App Server plugin and skill protocol for discovery,
+installation, enablement, removal, and MCP authentication. There is no mobile
+provider API, custom marketplace/source host, downloaded executable extension,
+or dependency on another repository.

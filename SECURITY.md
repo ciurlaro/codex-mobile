@@ -1,5 +1,12 @@
 # Security
 
-Report vulnerabilities through this repository's private GitHub Security Advisory flow. Do not open a public issue for signing-key exposure, authentication bypass, provider-source confusion, secret disclosure, path escape, or mutation replay.
+Report vulnerabilities through this repository's private GitHub Security
+Advisory flow. Do not open a public issue for signing-key exposure,
+authentication bypass, binary-integrity failure, proxy escape, path escape,
+protocol framing bypass, or credential disclosure.
 
-The production Android signing key never belongs in an issue, pull request, repository secret available to CI verification, or local build log. Provider packages are trusted only after canonical Git-origin, hash, package, version, split, ABI, signer, and schema verification.
+The production signing key must not appear in an issue, pull request,
+repository-accessible verification secret, or build log. Runtime binaries and
+archives are pinned and verified before execution. The Android CONNECT proxy
+binds loopback, requires per-runtime credentials, permits TLS port 443 only,
+and rejects private, local, reserved, and malformed destinations.

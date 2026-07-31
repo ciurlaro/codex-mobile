@@ -15,29 +15,74 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      started_at: ${{ steps.timing.outputs.started_at }}
     steps:
+      - id: timing
+        name: Start workflow timing
+        run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - id: protocol
+        name: Read the pinned upstream protocol revision
+        run: |
+          revision=$(jq -r .upstreamRevision modules/multiplatform/codex-shared/protocol/schema/provenance.json)
+          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          repository: ciurlaro/codex-mobile-plugins
-          ref: a40fefe7c3a60da14e65fef05106a07e1734afdf
-          path: codex-mobile-plugins
+          repository: openai/codex
+          ref: ${{ steps.protocol.outputs.revision }}
+          path: codex-upstream
+          sparse-checkout: |
+            codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
+            codex-rs/app-server-protocol/src/protocol/common.rs
+            codex-rs/app-server-protocol/src/protocol/v2/thread.rs
+            codex-rs/app-server-protocol/src/protocol/v2/turn.rs
+          sparse-checkout-cone-mode: false
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
-      - name: Install native build prerequisites
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes gperf libarchive-tools ninja-build patchelf ripgrep zip
-          sdkmanager "platforms;android-37.0" "build-tools;36.0.0" "ndk;29.0.14206865"
+      - run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
-      - name: Verify structure, tests, debug builds, and lint
+      - name: Regenerate the pinned protocol and reject drift
         run: |
-          export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/29.0.14206865"
-          bash scripts/verify-structure.sh
-          ./gradlew test assembleDebug assembleDebugAndroidTest lint --stacktrace
+          ./gradlew updateProtocol \
+            -PcodexProtocolSchema="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json" \
+            -PcodexProtocolCommon="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/src/protocol/common.rs" \
+            -PcodexProtocolThread="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/src/protocol/v2/thread.rs" \
+            -PcodexProtocolTurn="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/src/protocol/v2/turn.rs"
+          git diff --exit-code -- \
+            modules/multiplatform/codex-shared/protocol/schema \
+            modules/multiplatform/codex-shared/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/generated
+          test -z "$(git status --short --untracked-files=all -- \
+            modules/multiplatform/codex-shared/protocol/schema \
+            modules/multiplatform/codex-shared/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/generated)"
+      - name: Verify repository, tests, debug builds, and lint
+        run: |
+          ./gradlew \
+            :build-logic:test \
+            verifyRepository \
+            :tooling:protocol-generator:test \
+            :multiplatform:codex-shared:allTests \
+            :android:app:testDebugUnitTest \
+            :android:app:assembleDebug \
+            :android:app:assembleDebugAndroidTest \
+            :android:app:lint \
+            --stacktrace
+      - name: Upload runtime smoke APKs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-runtime-smoke
+          retention-days: 7
+          if-no-files-found: error
+          path: |
+            build/modules/android/app/outputs/apk/debug/app-debug.apk
+            build/modules/android/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            gradle.properties
+            scripts/run-android-device-smoke.sh
+            scripts/run-native-runtime-smoke.sh
       - name: Create ephemeral release key
         if: github.event_name == 'push'
         run: >-
@@ -52,9 +97,9 @@ jobs:
           CODEX_MOBILE_RELEASE_KEY_ALIAS: ci-release
           CODEX_MOBILE_RELEASE_KEY_PASSWORD: android
         run: |
-          ./gradlew assembleRelease bundleRelease --stacktrace
+          ./gradlew :android:app:assembleRelease :android:app:bundleRelease --stacktrace
           scripts/verify-release.sh
-          scripts/verify-reproducible-release.sh app/android/build/outputs/apk/release/android-release.apk
+          scripts/verify-reproducible-release.sh build/modules/android/app/outputs/apk/release/app-release.apk
           printf '%s\n' "$GITHUB_SHA" > source-revision.txt
       - name: Upload verified host candidate
         if: github.event_name == 'push'
@@ -64,11 +109,63 @@ jobs:
           retention-days: 14
           if-no-files-found: error
           path: |
-            app/android/build/outputs/apk/release/android-release.apk
-            app/android/build/outputs/mapping/release/mapping.txt
+            build/modules/android/app/outputs/apk/release/app-release.apk
+            build/modules/android/app/outputs/mapping/release/mapping.txt
             docs/sbom.cdx.json
             LICENSE
-            LICENSES/MLKIT-EXCEPTION.txt
             THIRD_PARTY_NOTICES.md
             release-signing-certificate.sha256
             source-revision.txt
+
+  android-device-smoke:
+    name: Android shell device smoke
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: android-runtime-smoke
+          path: device-tests
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+        with:
+          api-level: 35
+          # Google APIs accepts the ARM64-only APK; translated exec is not used.
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          emulator-build: 15261927 # 36.5.11
+          emulator-boot-timeout: 300
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: bash device-tests/scripts/run-android-device-smoke.sh device-tests platform
+
+  native-runtime-smoke:
+    name: Native ARM App Server runtime smoke
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: android-runtime-smoke
+          path: runtime-tests
+      - run: bash runtime-tests/scripts/run-native-runtime-smoke.sh runtime-tests
+
+  timing:
+    name: Complete verification timing
+    if: always()
+    needs: [build, android-device-smoke, native-runtime-smoke]
+    runs-on: ubuntu-slim
+    timeout-minutes: 2
+    steps:
+      - name: Record complete workflow timing
+        env:
+          STARTED_AT: ${{ needs.build.outputs.started_at }}
+        run: |
+          elapsed=$(($(date +%s) - STARTED_AT))
+          printf 'Post-refactor host, Android shell, and native runtime verification: %ss\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"

@@ -1,7 +1,15 @@
 # Contributing
 
-Open an issue or pull request against the default branch. Keep changes focused, preserve Codex App Server `0.145.0`, and run the repository verification commands when practical; GitHub Actions is the authoritative full build.
+Open an issue or pull request against the default branch. Keep changes focused,
+preserve the pinned Codex App Server protocol and runtime identity, and keep
+portable production behavior in
+`modules/multiplatform/codex-shared/src/commonMain`.
 
-Ordinary Codex plugins remain external. Android provider implementations are reviewed in `ciurlaro/codex-mobile-plugins`; this repository owns the generic host contract, provenance policy, lifecycle, authority checks, and thin base-app feature wrappers.
+Android code is reserved for concrete platform mechanisms. Do not add a remote
+runtime, provider framework, companion-repository dependency, snapshot process
+library, or alternative production source root.
 
-Contributions are licensed under `GPL-3.0-or-later`. Changes that touch ML Kit linkage must preserve or deliberately replace the narrow additional permission in `LICENSES/MLKIT-EXCEPTION.txt`.
+Run the repository structural check and the focused Gradle tasks when
+practical; GitHub Actions is the authoritative complete build.
+
+Contributions are licensed under `GPL-3.0-or-later`.

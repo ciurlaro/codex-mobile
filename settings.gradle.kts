@@ -1,5 +1,5 @@
 pluginManagement {
-    includeBuild("build-logic")
+    includeBuild("modules/tooling/build-logic")
     repositories {
         google()
         mavenCentral()
@@ -17,20 +17,17 @@ dependencyResolutionManagement {
 
 rootProject.name = "codex-mobile"
 
-includeBuild("app-server-client")
-includeBuild("provider-api")
-
-val providerBuild = providers.gradleProperty("codexMobile.providerBuild").orNull
-    ?: sequenceOf(file("codex-mobile-plugins"), file("../codex-mobile-plugins"))
-        .firstOrNull(File::isDirectory)?.absolutePath
-    ?: error("codex-mobile-plugins is required to build the bundled providers")
-includeBuild(providerBuild) { name = "codex-mobile-plugins" }
-
 include(
-    ":app:android",
-    ":core",
-    ":agent:codex",
-    ":platform:android",
-    ":runtime-host",
-    ":runtime-host:android",
+    ":android:app",
+    ":multiplatform:codex-shared",
+    ":tooling:protocol-generator",
 )
+
+project(":android:app").projectDir = file("modules/android/app")
+project(":android").projectDir = file("modules/android")
+project(":multiplatform:codex-shared").projectDir =
+    file("modules/multiplatform/codex-shared")
+project(":multiplatform").projectDir = file("modules/multiplatform")
+project(":tooling:protocol-generator").projectDir =
+    file("modules/tooling/protocol-generator")
+project(":tooling").projectDir = file("modules/tooling")
