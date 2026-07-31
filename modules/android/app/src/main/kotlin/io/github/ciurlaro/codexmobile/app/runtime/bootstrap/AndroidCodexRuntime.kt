@@ -231,7 +231,7 @@ internal class AndroidCodexRuntime(
     private companion object {
         const val CODEX_HOME_DIRECTORY = "codex"
         const val LOGS_DATABASE_FILE = "logs_2.sqlite"
-        const val LOG_DATABASE_TIMEOUT_MILLIS = 20_000L
+        const val LOG_DATABASE_TIMEOUT_MILLIS = 120_000L
         const val LOG_DATABASE_RETRY_MILLIS = 25L
         const val PROCESS_STOP_TIMEOUT_SECONDS = 2L
         const val STREAM_BUFFER_SIZE = 8 * 1024
