@@ -80,7 +80,9 @@ jobs:
           path: |
             build/modules/android/app/outputs/apk/debug/app-debug.apk
             build/modules/android/app/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            gradle.properties
             scripts/run-android-device-smoke.sh
+            scripts/run-native-runtime-smoke.sh
       - name: Create ephemeral release key
         if: github.event_name == 'push'
         run: >-
@@ -115,11 +117,11 @@ jobs:
             release-signing-certificate.sha256
             source-revision.txt
 
-  runtime-smoke:
-    name: Real App Server runtime smoke
+  android-device-smoke:
+    name: Android shell device smoke
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 20
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -133,18 +135,37 @@ jobs:
       - uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
         with:
           api-level: 35
-          # Google APIs enables native-bridge exec for the packaged ARM64 binary.
+          # Google APIs accepts the ARM64-only APK; translated exec is not used.
           arch: x86_64
           target: google_apis
           profile: pixel_6
           emulator-build: 15261927 # 36.5.11
-          emulator-boot-timeout: 900
+          emulator-boot-timeout: 300
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
-          script: bash device-tests/scripts/run-android-device-smoke.sh device-tests
+          script: bash device-tests/scripts/run-android-device-smoke.sh device-tests platform
+
+  native-runtime-smoke:
+    name: Native ARM App Server runtime smoke
+    needs: build
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: android-runtime-smoke
+          path: runtime-tests
+      - run: bash runtime-tests/scripts/run-native-runtime-smoke.sh runtime-tests
+
+  timing:
+    name: Complete verification timing
+    if: always()
+    needs: [build, android-device-smoke, native-runtime-smoke]
+    runs-on: ubuntu-slim
+    timeout-minutes: 2
+    steps:
       - name: Record complete workflow timing
-        if: always()
         env:
           STARTED_AT: ${{ needs.build.outputs.started_at }}
         run: |
           elapsed=$(($(date +%s) - STARTED_AT))
-          printf 'Post-refactor build and real runtime smoke: %ss\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"
+          printf 'Post-refactor host, Android shell, and native runtime verification: %ss\n' "$elapsed" >> "$GITHUB_STEP_SUMMARY"
