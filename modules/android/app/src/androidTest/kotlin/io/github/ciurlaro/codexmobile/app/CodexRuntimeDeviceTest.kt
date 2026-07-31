@@ -138,10 +138,9 @@ class CodexRuntimeDeviceTest {
                 original = ViewModelProvider(activity)[AppViewModel::class.java]
                 original.authenticate()
             }
-            withTimeout(60_000) { original.state.first { it.sessionId != null } }
-            original.updateDraft("Reply with three short lines.")
+            withTimeout(60_000) { original.state.first { it.isAuthenticated } }
+            original.updateDraft("Write a numbered list from 1 to 100, one item per line.")
             original.sendMessage()
-            assertTrue(original.state.value.isTurnActive)
             val serviceInstance = requireNotNull(original.serviceInstanceId)
             scenario.moveToState(androidx.lifecycle.Lifecycle.State.CREATED)
             SystemClock.sleep(500)

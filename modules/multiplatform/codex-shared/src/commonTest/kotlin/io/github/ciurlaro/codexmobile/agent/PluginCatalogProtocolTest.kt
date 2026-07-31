@@ -232,7 +232,7 @@ class PluginCatalogProtocolTest : SkillsPluginsProtocolTestBase() {
     }
 
     @Test
-    fun installedPluginRefreshKeepsLastKnownPluginsWhenAppServerReturnsEmpty(): Unit = runBlocking {
+    fun installedPluginRefreshAcceptsAnAuthoritativeEmptyResponse(): Unit = runBlocking {
         val cache = Files.createTempDirectory("installed-plugin-cache-").toFile()
         val populated = FakeCodexRuntime { message, server ->
             when (message.method) {
@@ -260,9 +260,9 @@ class PluginCatalogProtocolTest : SkillsPluginsProtocolTestBase() {
             pluginCacheDirectory = cache.absolutePath.toPath(),
         ).use { client ->
             val catalog = client.listInstalledPlugins("/workspace", forceRefresh = true)
-            assertEquals(AgentCatalogFreshness.STALE_CACHE, catalog.freshness)
-            assertTrue(catalog.plugins.single().installed)
-            assertTrue(catalog.errors.isNotEmpty())
+            assertEquals(AgentCatalogFreshness.LIVE, catalog.freshness)
+            assertTrue(catalog.plugins.isEmpty())
+            assertTrue(catalog.errors.isEmpty())
         }
         cache.deleteRecursively()
     }

@@ -63,7 +63,7 @@ class RuntimeBootstrapDeviceTest {
 
         val databasePath = File(codexHome, "logs_2.sqlite").absolutePath
         AndroidSQLiteDriver().open(databasePath).use { database ->
-            database.execSQL("DROP TRIGGER codex_mobile_drop_runtime_logs")
+            database.execSQL("DROP TRIGGER IF EXISTS codex_mobile_drop_runtime_logs")
             database.execSQL(
                 "INSERT INTO logs (ts, ts_nanos, level, target, feedback_log_body) " +
                     "VALUES (1, 0, 'INFO', 'privacy_test', 'existing sensitive log')",

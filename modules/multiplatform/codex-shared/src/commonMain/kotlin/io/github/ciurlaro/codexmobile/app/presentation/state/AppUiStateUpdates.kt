@@ -30,6 +30,7 @@ internal fun AppUiState.withSubmittedTurn(
         shellCommand = shellCommand,
     ),
     draft = "",
+    isTurnActive = true,
     selectedCapabilities = emptySet(),
     selectedInvocations = emptyList(),
     activeSelector = null,

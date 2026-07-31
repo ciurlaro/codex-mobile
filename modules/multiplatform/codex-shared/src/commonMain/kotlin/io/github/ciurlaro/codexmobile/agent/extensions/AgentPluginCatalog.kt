@@ -109,7 +109,7 @@ internal suspend fun CodexAgentClient.listInstalledPluginsAction(
         if (error is CancellationException) throw error
         return cached?.asStale(error.visibleMessage()) ?: throw error
     }.let { live ->
-        if ((live.plugins.isEmpty() || live.errors.isNotEmpty()) && cached?.plugins?.isNotEmpty() == true) {
+        if (live.errors.isNotEmpty() && cached?.plugins?.isNotEmpty() == true) {
             live.withCachedFallback(
                 cached,
                 "Installed plugins could not be fully verified; showing saved plugins.",

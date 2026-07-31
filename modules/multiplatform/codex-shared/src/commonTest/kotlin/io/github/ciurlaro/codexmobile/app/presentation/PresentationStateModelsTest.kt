@@ -39,6 +39,7 @@ class PresentationStateModelsTest {
 
         assertEquals(listOf("user-message", "assistant"), submitted.messages.map(ChatMessage::id))
         assertEquals("", submitted.draft)
+        assertTrue(submitted.isTurnActive)
 
         val removed = submitted.copy(sessionId = session).withoutConversation(session)
         assertEquals(emptyList(), removed.conversations)

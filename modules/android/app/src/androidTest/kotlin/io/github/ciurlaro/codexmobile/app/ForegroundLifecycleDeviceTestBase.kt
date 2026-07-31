@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.view.accessibility.AccessibilityNodeInfo
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.platform.app.InstrumentationRegistry
@@ -95,6 +96,20 @@ internal abstract class ForegroundLifecycleDeviceTestBase {
             "pm grant --user current ${context.packageName} ${Manifest.permission.POST_NOTIFICATIONS}",
             "cmd appops set ${context.packageName} POST_NOTIFICATION allow",
         ).forEach(::shell)
+        if (!notifications.areNotificationsEnabled()) {
+            ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+                scenario.onActivity {
+                    it.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 0)
+                }
+                await {
+                    val root = instrumentation.uiAutomation.rootInActiveWindow ?: return@await false
+                    root.findAccessibilityNodeInfosByViewId(
+                        "com.android.permissioncontroller:id/permission_allow_button",
+                    ).firstOrNull()?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true ||
+                        notifications.areNotificationsEnabled()
+                }
+            }
+        }
         await { notifications.areNotificationsEnabled() }
     }
 
