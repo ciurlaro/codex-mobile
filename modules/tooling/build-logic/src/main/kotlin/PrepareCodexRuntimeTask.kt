@@ -5,7 +5,6 @@ import org.gradle.api.provider.Property
 import org.gradle.api.tasks.CacheableTask
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputFile
-import org.gradle.api.tasks.Optional
 import org.gradle.api.tasks.OutputFile
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
@@ -25,10 +24,6 @@ abstract class PrepareCodexRuntimeTask @Inject constructor(
     @get:Input
     abstract val binarySha256: Property<String>
 
-    @get:Input
-    @get:Optional
-    abstract val target: Property<String>
-
     @get:InputFile
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val preparationScript: RegularFileProperty
@@ -46,7 +41,6 @@ abstract class PrepareCodexRuntimeTask @Inject constructor(
                 binarySha256.get(),
                 outputRuntime.get().asFile.absolutePath,
             )
-            target.orNull?.takeIf(String::isNotBlank)?.let { args(it) }
         }
     }
 }

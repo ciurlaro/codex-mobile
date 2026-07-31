@@ -56,7 +56,6 @@ internal class AndroidRuntimeBootstrap(
     private fun packagedRuntimeEnvironment(): RuntimeEnvironment {
         val architecture = when (Build.SUPPORTED_ABIS.firstOrNull()) {
             "arm64-v8a" -> RuntimeArchitecture.AARCH64
-            "x86_64" -> RuntimeArchitecture.X86_64
             else -> error("Codex App Server is unavailable for this Android ABI")
         }
         return RuntimeEnvironment(

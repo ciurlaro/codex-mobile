@@ -114,7 +114,7 @@ internal class AndroidCodexRuntime(
 
     private fun prepareAndVerifyRuntime() {
         configuration.packagedRuntimeEnvironment?.let { environment ->
-            val distribution = CodexMobileAppServerRuntime.distributionFor(environment.architecture)
+            val distribution = CodexMobileAppServerRuntime.DISTRIBUTION
             distribution.requireCompatible(
                 AppServerProtocolIdentity.APP_SERVER_VERSION,
                 AppServerProtocolIdentity.UPSTREAM_REVISION,

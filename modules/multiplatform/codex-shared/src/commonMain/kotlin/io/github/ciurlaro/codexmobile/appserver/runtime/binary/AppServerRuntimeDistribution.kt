@@ -2,7 +2,7 @@ package io.github.ciurlaro.codexmobile.appserver.runtime
 
 enum class RuntimeKernel { LINUX }
 
-enum class RuntimeArchitecture { AARCH64, X86_64 }
+enum class RuntimeArchitecture { AARCH64 }
 
 data class RuntimeEnvironment(
     val kernel: RuntimeKernel,
@@ -59,19 +59,4 @@ object CodexMobileAppServerRuntime {
         binarySha256 = "9c5954b50520b68d7d181804965b554f09add95cc8fb0db6a7750111a1296b60",
     )
 
-    val X86_64_DISTRIBUTION = AppServerRuntimeDistribution(
-        appServerVersion = "0.145.0",
-        upstreamRevision = "25af12f7e61572b0bc18ddb1008be543b91519b0",
-        schemaSha256 = "32b26f2ab3fb7a4a409db958f438f48b0ef106e3a01468f8618fdf65bc823cc4",
-        targetTriple = "x86_64-unknown-linux-musl",
-        architecture = RuntimeArchitecture.X86_64,
-        archiveSha256 = "07e9dbfae80c47d5b48a5be4fbf26143fdb5ff647d4afa76805d3a4b81d29877",
-        binarySha256 = "49dae43c3be16bc6fc0adb16859244f054a6382656738f1fc280ab3b390b1e49",
-    )
-
-    fun distributionFor(architecture: RuntimeArchitecture): AppServerRuntimeDistribution =
-        when (architecture) {
-            RuntimeArchitecture.AARCH64 -> DISTRIBUTION
-            RuntimeArchitecture.X86_64 -> X86_64_DISTRIBUTION
-        }
 }

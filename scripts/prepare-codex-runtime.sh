@@ -5,8 +5,7 @@ version=${1:?Codex version is required}
 archive_sha256=${2:?Archive SHA-256 is required}
 binary_sha256=${3:?Binary SHA-256 is required}
 output=${4:?Output path is required}
-target=${5:-aarch64-unknown-linux-musl}
-asset="codex-app-server-$target"
+asset="codex-app-server-aarch64-unknown-linux-musl"
 url="https://github.com/openai/codex/releases/download/rust-v${version}/${asset}.tar.gz"
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

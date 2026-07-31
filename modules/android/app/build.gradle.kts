@@ -27,7 +27,6 @@ val visualCheckRequested = "visualCheck" in requestedTaskNames
 val appVersionCode = providers.gradleProperty("codexMobile.versionCode").map(String::toInt)
 val appVersionName = providers.gradleProperty("codexMobile.versionName")
 val codexArm64RuntimeDirectory = layout.buildDirectory.dir("generated/codex-runtime/main")
-val codexX86RuntimeDirectory = layout.buildDirectory.dir("generated/codex-runtime/debug")
 val bundledSqliteTest = dependencies.create(libs.androidx.sqlite.bundled.get()) as ExternalModuleDependency
 bundledSqliteTest.attributes {
     attribute(KotlinPlatformType.attribute, KotlinPlatformType.jvm)
@@ -65,12 +64,7 @@ android {
     }
 
     buildTypes {
-        debug {
-            applicationIdSuffix = ".debug"
-            ndk {
-                abiFilters += "x86_64"
-            }
-        }
+        debug { applicationIdSuffix = ".debug" }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -89,9 +83,6 @@ android {
         }
     }
 
-    sourceSets.getByName("debug").jniLibs.directories.add(
-        codexX86RuntimeDirectory.get().asFile.absolutePath,
-    )
     sourceSets.getByName("main").jniLibs.directories.add(
         codexArm64RuntimeDirectory.get().asFile.absolutePath,
     )
@@ -105,10 +96,6 @@ android {
 
 tasks.named("preBuild").configure {
     dependsOn("prepareCodexRuntime")
-}
-
-tasks.matching { it.name == "preDebugBuild" }.configureEach {
-    dependsOn("prepareCodexX86Runtime")
 }
 
 val verifyReleaseSigning = tasks.register<VerifyReleaseSigningTask>("verifyReleaseSigning") {

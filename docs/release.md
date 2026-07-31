@@ -3,7 +3,6 @@
 ## Supported host
 
 - ARM64 (`arm64-v8a`) stock Android API 26–37.
-- x86_64 runtime packaging for debug/emulator verification.
 - One ChatGPT account through Codex-managed browser authentication.
 - Android **All files access** plus one selected workspace.
 - Official App Server plugins, skills, hooks, Plan mode, approvals, Markdown,
@@ -60,7 +59,7 @@ The command verifies and installs the signed release in place with
 
 | Input | Evidence |
 |---|---|
-| Codex App Server | Version and per-ABI archive/executable hashes in `gradle.properties` |
+| Codex App Server | Version and ARM64 archive/executable hashes in `gradle.properties` |
 | Protocol | Schema, descriptors, provenance, and deterministic generated declarations under `modules/multiplatform/codex-shared/protocol` and `commonMain` |
 | Gradle | Wrapper `9.4.1` and wrapper checksums |
 | Dependencies | Strict module lock files and `gradle/verification-metadata.xml` |
