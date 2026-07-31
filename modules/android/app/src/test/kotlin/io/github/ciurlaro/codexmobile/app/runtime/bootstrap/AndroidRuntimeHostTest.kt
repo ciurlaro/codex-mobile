@@ -31,13 +31,18 @@ class AndroidRuntimeHostTest {
         val certificate = directory / "system-ca.pem"
         val privateDirectory = directory / "private"
         val logsDatabase = privateDirectory / "codex" / "logs_2.sqlite"
+        val logsTemplate = directory / "logs-template.sqlite"
         FileSystem.SYSTEM.sink(executable).buffer().use {
-            it.writeUtf8("#!/bin/sh\nwhile IFS= read -r line; do printf '%s\\n' \"${'$'}line\"; done\n")
+            it.writeUtf8(
+                "#!/bin/sh\n" +
+                    "head -c 262144 /dev/zero >&2\n" +
+                    "cp \"$logsTemplate\" \"$logsDatabase\"\n" +
+                    "while IFS= read -r line; do printf '%s\\n' \"${'$'}line\"; done\n",
+            )
         }
         FileSystem.SYSTEM.sink(certificate).buffer().use { it.writeUtf8("test certificate") }
         assertTrue(File(executable.toString()).setExecutable(true))
-        FileSystem.SYSTEM.createDirectories(checkNotNull(logsDatabase.parent))
-        BundledSQLiteDriver().open(logsDatabase.toString()).close()
+        BundledSQLiteDriver().open(logsTemplate.toString()).close()
 
         val runtime = AndroidCodexRuntime(
             CodexRuntimeConfiguration(
