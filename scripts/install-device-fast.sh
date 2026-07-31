@@ -2,7 +2,6 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-provider_root=${CODEX_MOBILE_PROVIDER_ROOT:-"$root/../codex-mobile-plugins"}
 android_home=${ANDROID_HOME:-"$HOME/Library/Android/sdk"}
 java_home=${JAVA_HOME:-/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home}
 build_tools="$android_home/build-tools/36.0.0"
@@ -20,7 +19,6 @@ die() {
 }
 
 [[ $# -eq 0 ]] || die "usage: scripts/install-device-fast.sh"
-[[ -d $provider_root ]] || die "provider repository was not found at $provider_root"
 [[ -x $java_home/bin/java ]] || die "Java 17 was not found at $java_home"
 [[ -x $adb ]] || die "adb was not found at $adb"
 [[ -x $apksigner ]] || die "apksigner was not found at $apksigner"
@@ -71,10 +69,9 @@ cleanup() {
 trap cleanup EXIT
 
 "$root/gradlew" -p "$root" --no-daemon \
-    "-PcodexMobile.providerBuild=$provider_root" \
-    :app:android:assembleDebug
+    :android:app:assembleDebug
 
-source="$root/app/android/build/outputs/apk/debug/android-debug.apk"
+source="$root/build/modules/android/app/outputs/apk/debug/app-debug.apk"
 signed="$staging/codex-mobile.apk"
 expected=$(<"$root/release-signing-certificate.sha256")
 
@@ -96,9 +93,5 @@ echo "fast local install on ${model:-unknown} ($serial)"
 
 installed=$("$adb" -s "$serial" shell pm path "$package" | tr -d '\r')
 grep -q '/base\.apk$' <<<"$installed" || die "Android did not report the installed base APK"
-if grep -q '/split_provider_.*\.apk$' <<<"$installed"; then
-    die "legacy provider splits remain after the full APK update"
-fi
-
 "$adb" -s "$serial" shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null
 echo "Fast debug build installed without clearing app data. Full tests, lint, Android tests, and release shrinking were skipped."

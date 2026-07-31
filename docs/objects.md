@@ -1,19 +1,18 @@
 # Objects and responsibilities
 
-| Object | Responsibility | Truth / lifetime |
+| Object | Responsibility | Owner / lifetime |
 |---|---|---|
-| `AgentClient` | Authenticate, manage plugins, create sessions, and send or cancel turns | Process-local facade |
-| `CodexRuntime` | Carry JSON lines and typed runtime failures | One instance per App Server start |
-| `AndroidCodexRuntime` | Own App Server launch, environment, streams, exit, and shutdown | Sole Android child-process owner |
-| `AppServerConnection` | Own initialization, request IDs, framing, correlation, and timeouts | One per client; no Android/process imports |
-| `CodexAgentClient` | Map App Server authentication, plugins, turns, approvals, dynamic tools, and availability updates | Process-local |
-| `PluginProviderHost` | Coordinate optional provider installation/removal with the standard plugin lifecycle | Project-owned host contract |
-| `AndroidProviderPackageManager` | Validate marketplace metadata and activate or remove bundled providers around standard plugin lifecycle | Android provider authority |
-| `AndroidProviderRegistry` | Load only recorded, metadata-matched bundled providers and migrate legacy split records | Backup-excluded provider lifecycle state; never enablement |
-| `AndroidProviderSecretStore` | Encrypt and scope user-supplied configuration secrets for one installed plugin | Plugin-specific Android Keystore key; retained on disable and cleared after prepared removal |
-| `CodexMobileProvider` | Declare stable tools, execute typed calls, expose settings, and prepare removal | One instance per activated bundled provider per process |
-| `ProviderToolDispatcher` | Map closed tool identifiers to verified providers | Process-local derived state |
-| `ThreadProviderStateStore` | Preserve each thread's original provider schemas and last announced availability | Backup-excluded per-thread state |
-| `WorkspaceManager` | Validate all-files access and persist/select the shell `cwd` | Android permission plus selected path |
-| `BuiltInMutationJournal` | Bind mutation IDs to argument hashes, state, pre/post evidence, and exact results; compact removed providers to replay-prevention tombstones | Backup-excluded SQLite |
-| `CodexSessionController` | Keep one active client/session across UI visibility changes | Active foreground-service lifetime |
+| `AgentClient` | Existing controller-test seam for authentication, sessions, plugins, hooks, and turns | Shared process-local contract |
+| `CodexAgentClient` | Map generated App Server protocol into product behavior | Shared process-local implementation |
+| `AppServerConnection` | Initialization, request IDs, framing, correlation, timeouts, and event delivery | Shared, one per client |
+| `CodexRuntime` | Carry JSON lines and typed start/I/O/EOF/exit failures | Shared contract, one per App Server start |
+| `AndroidCodexRuntime` | Verify and launch the local process; own streams, proxy, SQLite bootstrap, and shutdown | Android mechanism |
+| `LoopbackConnectProxy` | Bind loopback and bridge authorized CONNECT requests to public TLS destinations | Android mechanism per runtime |
+| `ConnectProxyPolicy` | Parse/authenticate CONNECT requests and reject forbidden authority shapes | Shared policy |
+| `JsonLineFramer` | Bound raw bytes, validate UTF-8, and emit strict lines | Shared runtime policy |
+| `CodexSessionController` | Keep one active client/session across UI visibility changes | Shared controller held by foreground service |
+| `AppViewModel` | Coordinate common state, actions, persistence, and session gateway | Shared lifecycle ViewModel |
+| `AppPreferencesStore` | DataStore keys, defaults, validation, corruption recovery, and serialized updates | Shared app-lifetime store |
+| `AppPlatform` | Narrow workspace, permission, and erase-data boundary | Shared contract implemented by Android |
+| `AndroidSessionHost` | Adapt Android service binding/binder to common callbacks | Android app lifetime |
+| `WorkspaceManager` | Validate permission and persist/select the shell `cwd` | Android mechanism |
