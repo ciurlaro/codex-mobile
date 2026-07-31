@@ -225,12 +225,15 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
             "modules/android/app/src/main/kotlin/io/github/ciurlaro/codexmobile/app/runtime/bootstrap/AndroidCodexRuntime.kt"
         private const val WRAPPER_SHA256 = "55243ef57851f12b070ad14f7f5bb8302daceeebc5bce5ece5fa6edb23e1145c"
         private val REQUIRED_FILES = listOf(
-            "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "CONTRIBUTING.md", "SECURITY.md",
+            "README.md", "docs/project/LICENSES/LICENSE", "docs/project/THIRD_PARTY_NOTICES.md",
+            "docs/project/CONTRIBUTING.md", "docs/project/SECURITY.md",
             "release-signing-certificate.sha256", "settings.gradle.kts", "gradle.properties",
             "gradle/verification-metadata.xml", "gradle/wrapper/gradle-wrapper.jar",
-            "gradle/wrapper/gradle-wrapper.properties", "docs/requirements.md", "docs/architecture.md",
-            "docs/objects.md", "docs/decisions.md", "docs/security.md", "docs/privacy.md",
-            "docs/release.md", "docs/sbom.cdx.json", "settings-gradle.lockfile",
+            "gradle/wrapper/gradle-wrapper.properties", "docs/technical/requirements.md",
+            "docs/technical/architecture.md", "docs/technical/objects.md",
+            "docs/technical/decisions.md", "docs/technical/security.md",
+            "docs/technical/privacy.md", "docs/technical/release.md",
+            "docs/technical/sbom.cdx.json", "settings-gradle.lockfile",
             "modules/android/app/gradle.lockfile", "modules/multiplatform/codex-shared/gradle.lockfile",
             "modules/tooling/protocol-generator/gradle.lockfile", "modules/tooling/build-logic/gradle.lockfile",
             "modules/tooling/build-logic/settings-gradle.lockfile", "modules/android/app/build.gradle.kts",
@@ -276,7 +279,7 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
             "codexMobile.provider",
         )
         private val ROOT_TEXT_FILES = setOf(
-            "README.md", "CONTRIBUTING.md", "SECURITY.md", "THIRD_PARTY_NOTICES.md", ".gitignore",
+            "README.md", ".gitignore",
             "settings.gradle.kts", "build.gradle.kts", "gradle.properties", "gradle/libs.versions.toml",
         )
         private val TEXT_FILENAMES = setOf("README", "LICENSE", ".gitignore")

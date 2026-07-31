@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parent.parent
-OUTPUT = ROOT / "docs" / "sbom.cdx.json"
+OUTPUT = ROOT / "docs" / "technical" / "sbom.cdx.json"
 PROPERTIES = ROOT / "gradle.properties"
 APP_LOCK = ROOT / "modules" / "android" / "app" / "gradle.lockfile"
 
@@ -113,7 +113,7 @@ def main() -> None:
     generated = generate()
     if args.check:
         if not OUTPUT.is_file() or OUTPUT.read_text() != generated:
-            print("docs/sbom.cdx.json is stale; run scripts/generate-sbom.py", file=sys.stderr)
+            print("docs/technical/sbom.cdx.json is stale; run scripts/generate-sbom.py", file=sys.stderr)
             raise SystemExit(1)
     else:
         OUTPUT.write_text(generated)

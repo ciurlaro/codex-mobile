@@ -50,7 +50,7 @@ val verifySbom = tasks.register<Exec>("verifySbom") {
         sbomScript,
         layout.projectDirectory.file("gradle.properties"),
         layout.projectDirectory.file("modules/android/app/gradle.lockfile"),
-        layout.projectDirectory.file("docs/sbom.cdx.json"),
+        layout.projectDirectory.file("docs/technical/sbom.cdx.json"),
     ).withPathSensitivity(PathSensitivity.RELATIVE)
 }
 

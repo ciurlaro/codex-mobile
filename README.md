@@ -30,8 +30,10 @@ unavoidable mechanisms; portable behavior and policy remain shared.
 ```
 
 The checked-in wrapper pins Gradle 9.4.1. See
-[architecture](docs/architecture.md), [security](docs/security.md),
-[privacy](docs/privacy.md), and [release operations](docs/release.md).
+[architecture](docs/technical/architecture.md),
+[security](docs/technical/security.md),
+[privacy](docs/technical/privacy.md), and
+[release operations](docs/technical/release.md).
 
 ## Licence
 

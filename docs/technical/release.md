@@ -63,4 +63,4 @@ The command verifies and installs the signed release in place with
 | Protocol | Schema, descriptors, provenance, and deterministic generated declarations under `modules/multiplatform/codex-shared/protocol` and `commonMain` |
 | Gradle | Wrapper `9.4.1` and wrapper checksums |
 | Dependencies | Strict module lock files and `gradle/verification-metadata.xml` |
-| Inventory | Deterministic CycloneDX `docs/sbom.cdx.json` |
+| Inventory | Deterministic CycloneDX `docs/technical/sbom.cdx.json` |
