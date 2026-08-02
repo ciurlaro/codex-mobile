@@ -44,10 +44,7 @@ val verifySbom = tasks.register<VerifySbomTask>(CodexMobileAutomation.Tasks.VERI
 tasks.register(CodexMobileAutomation.Tasks.VERIFY_REPOSITORY) {
     group = "verification"
     description = "Runs all deterministic repository-state verification."
-    dependsOn(
-        verifyStructure, verifySourceSize, verifySbom,
-        ":multiplatform:codex-shared:verifyProtocolSource",
-    )
+    dependsOn(verifyStructure, verifySourceSize, verifySbom)
 }
 
 tasks.register<NativeRuntimeSmokeTask>(CodexMobileAutomation.Tasks.NATIVE_SMOKE) {
@@ -71,7 +68,6 @@ tasks.register(CodexMobileAutomation.Tasks.RELEASE_LOCAL) {
     gradle.includedBuilds.firstOrNull { it.name == "build-logic" }?.let { dependsOn(it.task(":test")) }
     dependsOn(
         CodexMobileAutomation.Tasks.VERIFY_REPOSITORY,
-        ":tooling:protocol-generator:test",
         ":multiplatform:codex-shared:allTests",
         ":android:app:testDebugUnitTest",
         ":android:app:assembleDebug",

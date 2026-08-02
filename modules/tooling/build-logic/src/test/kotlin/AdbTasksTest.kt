@@ -77,7 +77,7 @@ class AdbTasksTest {
             }
             val failure = assertFailsWith<IllegalStateException> { task.smoke() }
             assertTrue("diagnostic-marker" in failure.message!!)
-            assertTrue(AndroidSmokeCase.BOOTSTRAP_FAILURES.selector in failure.message!!)
+            assertTrue(AndroidSmokeCase.PACKAGING_CHECKSUM.selector in failure.message!!)
         } finally {
             root.deleteRecursively()
         }

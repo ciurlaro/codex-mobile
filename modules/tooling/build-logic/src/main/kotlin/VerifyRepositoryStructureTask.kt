@@ -52,7 +52,19 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
         requireRule(moduleBuild == null, "module-local build directory found: ${moduleBuild?.relativePathFrom(root)}")
         requireRule(
             !root.resolve("modules/android/app/src/main/jniLibs").exists(),
-            "native runtime must be generated under centralized build output",
+            "native runtime must come from the versioned runtime artifact",
+        )
+        requireRule(
+            !root.resolve("modules/multiplatform/codex-shared/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/agent").exists(),
+            "portable agent source must come from codex-agent-client",
+        )
+        requireRule(
+            !root.resolve("modules/multiplatform/codex-shared/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver").exists(),
+            "App Server source must come from codex-agent-client",
+        )
+        requireRule(
+            !root.resolve("modules/android/app/src/main/kotlin/io/github/ciurlaro/codexmobile/app/runtime/bootstrap").exists(),
+            "Android runtime source must come from codex-agent-runtime-android",
         )
 
         files.keys.filter { it.endsWith(".kt") && it.startsWith("modules/") }.forEach { path ->
@@ -75,8 +87,8 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
             Regex("""ProcessBuilder\(|java\.lang\.Process"""),
         )
         requireRule(
-            processOwners == listOf(EXPECTED_PROCESS_OWNER),
-            "AndroidCodexRuntime must be the sole child-process owner; found ${processOwners.joinToString()}",
+            processOwners.isEmpty(),
+            "child-process ownership must remain in codex-agent-runtime-android; found ${processOwners.joinToString()}",
         )
 
         rejectLines(
@@ -122,10 +134,16 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
         requireRule(payload == null, "unexpected source-tree runtime payload: $payload")
 
         requireLine(root, "gradle.properties", "${CodexMobileAutomation.Properties.CODEX_VERSION}=0.145.0")
-        requireText(
+        requireLine(root, "gradle/libs.versions.toml", "codex-agent = \"0.1.0\"")
+        requireLine(
             root,
-            "${COMMON_MAIN}io/github/ciurlaro/codexmobile/appserver/protocol/AppServerProtocolIdentity.kt",
-            "const val APP_SERVER_VERSION = \"0.145.0\"",
+            "gradle/libs.versions.toml",
+            "codex-agent-client = { module = \"io.github.ciurlaro:codex-agent-client\", version.ref = \"codex-agent\" }",
+        )
+        requireLine(
+            root,
+            "gradle/libs.versions.toml",
+            "codex-agent-runtime-android = { module = \"io.github.ciurlaro:codex-agent-runtime-android\", version.ref = \"codex-agent\" }",
         )
         requireRule(
             root.resolve("gradle/wrapper/gradle-wrapper.jar").sha256() == WRAPPER_SHA256,
@@ -221,8 +239,6 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
         private const val COMMON_MAIN = "modules/multiplatform/codex-shared/src/commonMain/kotlin/"
         private const val VERIFIER_PATH =
             "modules/tooling/build-logic/src/main/kotlin/VerifyRepositoryStructureTask.kt"
-        private const val EXPECTED_PROCESS_OWNER =
-            "modules/android/app/src/main/kotlin/io/github/ciurlaro/codexmobile/app/runtime/bootstrap/AndroidCodexRuntime.kt"
         private const val WRAPPER_SHA256 = "55243ef57851f12b070ad14f7f5bb8302daceeebc5bce5ece5fa6edb23e1145c"
         private val REQUIRED_FILES = listOf(
             "README.md", "docs/project/LICENSES/LICENSE", "docs/project/THIRD_PARTY_NOTICES.md",
@@ -235,25 +251,19 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
             "docs/technical/privacy.md", "docs/technical/release.md",
             "docs/technical/sbom.cdx.json", "settings-gradle.lockfile",
             "modules/android/app/gradle.lockfile", "modules/multiplatform/codex-shared/gradle.lockfile",
-            "modules/tooling/protocol-generator/gradle.lockfile", "modules/tooling/build-logic/gradle.lockfile",
+            "modules/tooling/build-logic/gradle.lockfile",
             "modules/tooling/build-logic/settings-gradle.lockfile", "modules/android/app/build.gradle.kts",
             "modules/android/app/src/main/AndroidManifest.xml",
-            "modules/android/app/src/main/kotlin/io/github/ciurlaro/codexmobile/app/runtime/bootstrap/AndroidCodexRuntime.kt",
+            "modules/android/app/src/main/kotlin/io/github/ciurlaro/codexmobile/app/composition/AndroidPlatform.kt",
             "modules/multiplatform/codex-shared/build.gradle.kts",
-            "modules/multiplatform/codex-shared/protocol/schema/provenance.json",
-            "modules/multiplatform/codex-shared/protocol/schema/codex_app_server_protocol.v2.schemas.json",
-            "${COMMON_MAIN}io/github/ciurlaro/codexmobile/appserver/protocol/AppServerProtocolIdentity.kt",
-            "${COMMON_MAIN}io/github/ciurlaro/codexmobile/agent/AgentClient.kt",
-            "${COMMON_MAIN}io/github/ciurlaro/codexmobile/agent/CodexAgentClient.kt",
             "modules/tooling/build-logic/build.gradle.kts", "modules/tooling/build-logic/settings.gradle.kts",
             VERIFIER_PATH, "modules/tooling/build-logic/src/main/kotlin/VerifySourceSizeTask.kt",
             "modules/tooling/build-logic/src/main/kotlin/codexmobile.repository-verification.gradle.kts",
             "modules/tooling/build-logic/src/main/kotlin/CodexMobileAutomation.kt",
-            "modules/tooling/protocol-generator/build.gradle.kts",
         )
         private val EXPECTED_MODULE_ROOTS = listOf(
             "modules/android/app/build.gradle.kts", "modules/multiplatform/codex-shared/build.gradle.kts",
-            "modules/tooling/build-logic/build.gradle.kts", "modules/tooling/protocol-generator/build.gradle.kts",
+            "modules/tooling/build-logic/build.gradle.kts",
         )
         private val LEGACY_ROOTS = listOf(
             "src", "core", "agent", "app", "app-server-client", "platform", "provider-api",
@@ -263,8 +273,7 @@ abstract class VerifyRepositoryStructureTask : DefaultTask() {
             COMMON_MAIN, "modules/multiplatform/codex-shared/src/commonTest/kotlin/",
             "modules/android/app/src/main/kotlin/", "modules/android/app/src/test/kotlin/",
             "modules/android/app/src/androidTest/kotlin/", "modules/tooling/build-logic/src/main/kotlin/",
-            "modules/tooling/build-logic/src/test/kotlin/", "modules/tooling/protocol-generator/src/main/kotlin/",
-            "modules/tooling/protocol-generator/src/test/kotlin/",
+            "modules/tooling/build-logic/src/test/kotlin/",
         )
         private val STALE_REFERENCES = listOf(
             "codex-mobile-plugins", "provider-api", "extension-provider-api", "agent/codex",

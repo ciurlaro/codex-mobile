@@ -18,7 +18,6 @@ export ANDROID_HOME=/absolute/path/to/android-sdk
 ./gradlew \
   :build-logic:test \
   verifyRepository \
-  :tooling:protocol-generator:test \
   :multiplatform:codex-shared:allTests \
   :android:app:testDebugUnitTest \
   :android:app:assembleDebug \
@@ -67,8 +66,9 @@ recursively invokes or cleans itself:
 
 | Input | Evidence |
 |---|---|
-| Codex App Server | Version and ARM64 archive/executable hashes in `gradle.properties` |
-| Protocol | Schema, descriptors, provenance, and deterministic generated declarations under `modules/multiplatform/codex-shared/protocol` and `commonMain` |
+| Codex agent | Fixed `io.github.ciurlaro` Maven coordinates and version in `gradle/libs.versions.toml` |
+| Codex App Server | Version and ARM64 archive/executable hashes in `gradle.properties`; binary rechecked in the packaged APK |
+| Protocol | Schema, descriptors, provenance, and drift gates in the released `codex-agent-client` source repository |
 | Gradle | Wrapper `9.4.1` and wrapper checksums |
 | Dependencies | Strict module lock files and `gradle/verification-metadata.xml` |
 | Inventory | Deterministic CycloneDX `docs/technical/sbom.cdx.json` |

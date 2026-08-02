@@ -25,23 +25,6 @@ jobs:
         name: Start workflow timing
         run: echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - id: protocol
-        name: Read the pinned upstream protocol revision
-        run: |
-          revision=$(jq -r .upstreamRevision modules/multiplatform/codex-shared/protocol/schema/provenance.json)
-          [[ "$revision" =~ ^[0-9a-f]{40}$ ]]
-          echo "revision=$revision" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          repository: openai/codex
-          ref: ${{ steps.protocol.outputs.revision }}
-          path: codex-upstream
-          sparse-checkout: |
-            codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json
-            codex-rs/app-server-protocol/src/protocol/common.rs
-            codex-rs/app-server-protocol/src/protocol/v2/thread.rs
-            codex-rs/app-server-protocol/src/protocol/v2/turn.rs
-          sparse-checkout-cone-mode: false
       - uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
         with:
           distribution: temurin
@@ -49,25 +32,11 @@ jobs:
       - uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
       - run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
       - uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
-      - name: Regenerate the pinned protocol and reject drift
-        run: |
-          ./gradlew updateProtocol \
-            -PcodexProtocolSchema="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/schema/json/codex_app_server_protocol.schemas.json" \
-            -PcodexProtocolCommon="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/src/protocol/common.rs" \
-            -PcodexProtocolThread="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/src/protocol/v2/thread.rs" \
-            -PcodexProtocolTurn="$GITHUB_WORKSPACE/codex-upstream/codex-rs/app-server-protocol/src/protocol/v2/turn.rs"
-          git diff --exit-code -- \
-            modules/multiplatform/codex-shared/protocol/schema \
-            modules/multiplatform/codex-shared/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/generated
-          test -z "$(git status --short --untracked-files=all -- \
-            modules/multiplatform/codex-shared/protocol/schema \
-            modules/multiplatform/codex-shared/src/commonMain/kotlin/io/github/ciurlaro/codexmobile/appserver/protocol/generated)"
       - name: Verify repository, tests, debug builds, and lint
         run: |
           ./gradlew \
             :build-logic:test \
             verifyRepository \
-            :tooling:protocol-generator:test \
             :multiplatform:codex-shared:allTests \
             :android:app:testDebugUnitTest \
             :android:app:assembleDebug \

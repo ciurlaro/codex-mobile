@@ -11,10 +11,10 @@
 | R5 | Support official App Server plugins, skills, connectors, install/uninstall, enablement, and MCP authentication. |
 | R6 | Preserve Plan mode, structured plan progress, approvals, elicitation, and trusted hooks. |
 | R7 | Render selectable Markdown, task lists, code, inline/display math, and complete final answers. |
-| R8 | Keep portable runtime, agent, application, persistence, and UI behavior in `commonMain`. |
-| R9 | Keep Android production code limited to unavoidable framework, process, stream, socket, storage, SQLite, ABI, certificate, and rendering mechanisms. |
+| R8 | Consume portable runtime and agent behavior from fixed `codex-agent-client` artifacts; keep portable product behavior in `commonMain`. |
+| R9 | Consume Android process/runtime mechanisms from `codex-agent-runtime-android`; keep host code limited to product-specific Android mechanisms. |
 | R10 | Keep App Server as the only standalone child process and provide no remote-runtime fallback. |
-| R11 | Build and release this repository independently of any companion repository. |
+| R11 | Build and release this repository without an adjacent `codex-agent` checkout or agent source build. |
 
 ## Constraints
 

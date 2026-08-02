@@ -3,20 +3,15 @@ package io.github.ciurlaro.codexmobile.app.composition
 import android.app.ActivityManager
 import android.content.Context
 import io.github.ciurlaro.codexmobile.app.presentation.viewmodel.AppPlatform
-import io.github.ciurlaro.codexmobile.app.runtime.bootstrap.AndroidRuntimeBootstrap
+import io.github.ciurlaro.codexmobile.app.runtime.bootstrap.AndroidCodexRuntimeFactory
 import io.github.ciurlaro.codexmobile.app.workspace.WorkspaceManager
 import io.github.ciurlaro.codexmobile.appserver.runtime.CodexRuntime
 import java.io.File
 
-class AndroidPlatform internal constructor(
-    context: Context,
-    runtimeOverride: File?,
-) : AppPlatform {
-    constructor(context: Context) : this(context, null)
-
+class AndroidPlatform(context: Context) : AppPlatform {
     private val appContext = context.applicationContext
     private val workspace = WorkspaceManager(appContext)
-    private val runtime = AndroidRuntimeBootstrap(context, runtimeOverride)
+    private val runtime = AndroidCodexRuntimeFactory(context)
 
     fun createCodexRuntime(): CodexRuntime = runtime.create()
 

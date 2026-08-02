@@ -3,7 +3,7 @@
   "components": [
     {
       "bom-ref": "pkg:generic/codex-mobile-shared@0.2.0-preview.3",
-      "description": "Portable App Server protocol, runtime policy, agent, application state, persistence, and UI.",
+      "description": "Portable application state, persistence, session orchestration, and UI.",
       "licenses": [
         {
           "license": {
@@ -18,7 +18,7 @@
     },
     {
       "bom-ref": "pkg:generic/codex-mobile-android-app@0.2.0-preview.3",
-      "description": "Android process, socket, lifecycle, workspace, rendering, and packaging mechanisms.",
+      "description": "Android lifecycle, workspace, rendering, and packaging mechanisms.",
       "licenses": [
         {
           "license": {
@@ -984,6 +984,30 @@
       "version": "3.16.2"
     },
     {
+      "bom-ref": "pkg:maven/io.github.ciurlaro/codex-agent-client@0.1.0",
+      "group": "io.github.ciurlaro",
+      "name": "codex-agent-client",
+      "purl": "pkg:maven/io.github.ciurlaro/codex-agent-client@0.1.0",
+      "type": "library",
+      "version": "0.1.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.github.ciurlaro/codex-agent-client-android@0.1.0",
+      "group": "io.github.ciurlaro",
+      "name": "codex-agent-client-android",
+      "purl": "pkg:maven/io.github.ciurlaro/codex-agent-client-android@0.1.0",
+      "type": "library",
+      "version": "0.1.0"
+    },
+    {
+      "bom-ref": "pkg:maven/io.github.ciurlaro/codex-agent-runtime-android@0.1.0",
+      "group": "io.github.ciurlaro",
+      "name": "codex-agent-runtime-android",
+      "purl": "pkg:maven/io.github.ciurlaro/codex-agent-runtime-android@0.1.0",
+      "type": "library",
+      "version": "0.1.0"
+    },
+    {
       "bom-ref": "pkg:maven/io.github.erweixin/ratex-android@0.1.13",
       "group": "io.github.erweixin",
       "name": "ratex-android",
@@ -1449,6 +1473,9 @@
         "pkg:maven/com.mikepenz/multiplatform-markdown-renderer@0.41.0",
         "pkg:maven/com.squareup.okio/okio-jvm@3.16.2",
         "pkg:maven/com.squareup.okio/okio@3.16.2",
+        "pkg:maven/io.github.ciurlaro/codex-agent-client-android@0.1.0",
+        "pkg:maven/io.github.ciurlaro/codex-agent-client@0.1.0",
+        "pkg:maven/io.github.ciurlaro/codex-agent-runtime-android@0.1.0",
         "pkg:maven/io.github.erweixin/ratex-android@0.1.13",
         "pkg:maven/org.jetbrains.androidx.lifecycle/lifecycle-common@2.10.0",
         "pkg:maven/org.jetbrains.androidx.lifecycle/lifecycle-runtime-compose@2.10.0",
@@ -1966,6 +1993,18 @@
     {
       "dependsOn": [],
       "ref": "pkg:maven/com.squareup.okio/okio@3.16.2"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.github.ciurlaro/codex-agent-client-android@0.1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.github.ciurlaro/codex-agent-client@0.1.0"
+    },
+    {
+      "dependsOn": [],
+      "ref": "pkg:maven/io.github.ciurlaro/codex-agent-runtime-android@0.1.0"
     },
     {
       "dependsOn": [],

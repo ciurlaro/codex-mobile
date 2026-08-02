@@ -5,7 +5,6 @@ import java.io.File
 
 plugins {
     id("codexmobile.android-application")
-    id("codexmobile.codex-runtime")
 }
 
 val releaseStorePath = providers.gradleProperty(CodexMobileAutomation.Properties.RELEASE_STORE_FILE)
@@ -71,7 +70,6 @@ extensions.configure<ApplicationExtension> {
     }
 }
 
-val prepareRuntime = tasks.named<PrepareCodexRuntimeTask>(CodexMobileAutomation.Tasks.PREPARE_RUNTIME)
 val verifyReleaseSigning = tasks.register<VerifyReleaseSigningTask>("verifyReleaseSigning") {
     configured.set(releaseSigningConfigured)
     storeFile.set(layout.file(releaseStorePath.map(::File)))
@@ -84,7 +82,6 @@ val androidComponents = extensions.getByType<ApplicationAndroidComponentsExtensi
 val aapt2 = androidComponents.sdkComponents.aapt2.flatMap { it.executable }
 val adb = androidComponents.sdkComponents.adb
 androidComponents.onVariants(androidComponents.selector().withBuildType("debug")) { variant ->
-    variant.sources.jniLibs?.addGeneratedSourceDirectory(prepareRuntime, PrepareCodexRuntimeTask::outputDirectory)
     val test = checkNotNull(variant.androidTest) { "debug variant must provide androidTest artifacts" }
     val stageSmoke = tasks.register<StageSmokeArtifactsTask>(CodexMobileAutomation.Tasks.STAGE_SMOKE) {
         appApkDirectory.set(variant.artifacts.get(SingleArtifact.APK))
@@ -105,7 +102,6 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("debug")
     }
 }
 androidComponents.onVariants(androidComponents.selector().withBuildType("release")) { variant ->
-    variant.sources.jniLibs?.addGeneratedSourceDirectory(prepareRuntime, PrepareCodexRuntimeTask::outputDirectory)
     val apkDirectory = variant.artifacts.get(SingleArtifact.APK)
     val verifyRelease = tasks.register<VerifyReleaseTask>(CodexMobileAutomation.Tasks.VERIFY_RELEASE) {
         dependsOn("assembleRelease", "bundleRelease", ":${CodexMobileAutomation.Tasks.VERIFY_SBOM}")
@@ -117,7 +113,6 @@ androidComponents.onVariants(androidComponents.selector().withBuildType("release
         lockfiles.from(listOf(
             "settings-gradle.lockfile", "modules/android/app/gradle.lockfile",
             "modules/multiplatform/codex-shared/gradle.lockfile",
-            "modules/tooling/protocol-generator/gradle.lockfile",
             "modules/tooling/build-logic/gradle.lockfile",
             "modules/tooling/build-logic/settings-gradle.lockfile",
         ).map(rootProject.layout.projectDirectory::file))

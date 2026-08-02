@@ -1,6 +1,5 @@
 import org.gradle.api.file.Directory
 import org.gradle.api.file.ProjectLayout
-import org.gradle.api.file.RegularFile
 import org.gradle.api.provider.Provider
 
 internal object CodexMobileAutomation {
@@ -32,10 +31,6 @@ internal object CodexMobileAutomation {
         const val SMOKE_DIRECTORY = "smoke-artifacts"
         const val SBOM = "docs/technical/sbom.cdx.json"
 
-        fun runtime(layout: ProjectLayout): Provider<RegularFile> = layout.buildDirectory.file(
-            "generated/codex-runtime/main/${App.ABI}/${App.RUNTIME_LIBRARY}",
-        )
-
         fun smoke(layout: ProjectLayout): Provider<Directory> =
             layout.buildDirectory.dir(SMOKE_DIRECTORY)
 
@@ -55,7 +50,6 @@ internal object CodexMobileAutomation {
         const val CODEX_VERSION = "codexMobile.codexVersion"
         const val CODEX_ARCHIVE_SHA256 = "codexMobile.codexArchiveSha256"
         const val CODEX_BINARY_SHA256 = "codexMobile.codexBinarySha256"
-        const val CODEX_ARCHIVE_FILE = "codexMobile.codexArchiveFile"
         const val RELEASE_STORE_FILE = "codexMobile.release.storeFile"
         const val RELEASE_STORE_PASSWORD = "codexMobile.release.storePassword"
         const val RELEASE_KEY_ALIAS = "codexMobile.release.keyAlias"
@@ -76,7 +70,6 @@ internal object CodexMobileAutomation {
         const val VERIFY_REPOSITORY = "verifyRepository"
         const val RELEASE_LOCAL = "releaseLocal"
         const val INSTALL_PHONE = "installPhone"
-        const val PREPARE_RUNTIME = "prepareCodexRuntime"
         const val STAGE_SMOKE = "stageSmokeArtifacts"
         const val ANDROID_SMOKE = "androidDeviceSmoke"
         const val NATIVE_SMOKE = "nativeRuntimeSmoke"
@@ -104,14 +97,6 @@ enum class AndroidSmokeCase(
     val selector: String,
     val modes: Set<AndroidSmokeMode>,
 ) {
-    BOOTSTRAP_FAILURES(
-        "io.github.ciurlaro.codexmobile.app.RuntimeBootstrapDeviceTest#missingNonExecutableAndCorruptOverridesFailClosed",
-        AndroidSmokeMode.entries.toSet(),
-    ),
-    BOOTSTRAP_POLICIES(
-        "io.github.ciurlaro.codexmobile.app.RuntimeBootstrapDeviceTest#successfulRuntimeInstallsCertificatePrivacyAndCleanupPolicies",
-        setOf(AndroidSmokeMode.FULL),
-    ),
     PACKAGING_CHECKSUM(
         "io.github.ciurlaro.codexmobile.app.CodexRuntimeDeviceTest#runtimePackagingPreparationAndChecksum",
         AndroidSmokeMode.entries.toSet(),

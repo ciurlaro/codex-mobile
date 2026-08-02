@@ -85,9 +85,9 @@ private fun Any.generateSbom(): String {
     val appRef = "pkg:generic/codex-mobile@$version?platform=android"
     val internal = listOf(
         "codex-mobile-shared" to
-            "Portable App Server protocol, runtime policy, agent, application state, persistence, and UI.",
+            "Portable application state, persistence, session orchestration, and UI.",
         "codex-mobile-android-app" to
-            "Android process, socket, lifecycle, workspace, rendering, and packaging mechanisms.",
+            "Android lifecycle, workspace, rendering, and packaging mechanisms.",
     ).map { (name, description) -> component(name, version, description) }
     val codexRef = "pkg:generic/openai/codex-app-server@$codexVersion?arch=arm64"
     val codex = sortedMapOf<String, Any>(

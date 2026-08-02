@@ -14,8 +14,6 @@ class AutomationIdentityTest {
         assertTrue(assertFailsWith<IllegalArgumentException> { AndroidSmokeMode.parse("quick") }.message!!.contains("full, platform"))
         assertEquals(
             setOf(
-                AndroidSmokeCase.BOOTSTRAP_FAILURES,
-                AndroidSmokeCase.BOOTSTRAP_POLICIES,
                 AndroidSmokeCase.PACKAGING_CHECKSUM,
                 AndroidSmokeCase.PROCESS_LIFECYCLE,
             ),
@@ -23,7 +21,6 @@ class AutomationIdentityTest {
         )
         assertEquals(
             setOf(
-                AndroidSmokeCase.BOOTSTRAP_FAILURES,
                 AndroidSmokeCase.PACKAGING_CHECKSUM,
                 AndroidSmokeCase.PLATFORM_PRIVACY,
             ),

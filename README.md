@@ -5,9 +5,9 @@ It supports ChatGPT authentication, conversations, streaming, Plan mode,
 approvals, hooks, official App Server plugins and skills, workspace selection,
 Markdown and native math rendering, and foreground execution.
 
-The repository builds independently. It does not require a companion
-repository, ship an extension-hosting framework, download executable
-extensions, or use a remote-runtime fallback.
+The repository builds independently from fixed Maven Central artifacts. It
+does not require a companion checkout, ship an extension-hosting framework,
+download executable extensions, or use a remote-runtime fallback.
 
 ## Modules
 
@@ -15,13 +15,12 @@ Every Gradle module is under the root [`modules`](modules) directory.
 
 | Gradle path | Location | Responsibility |
 |---|---|---|
-| `:multiplatform:codex-shared` | `modules/multiplatform/codex-shared` | Common protocol, runtime policy, agent, application state, persistence, and Compose UI |
-| `:android:app` | `modules/android/app` | Android entry points, permissions, paths, SQLite driver, Java process/socket mechanisms, service, and RaTeX bridge |
-| `:tooling:protocol-generator` | `modules/tooling/protocol-generator` | Deterministic protocol generation |
+| `:multiplatform:codex-shared` | `modules/multiplatform/codex-shared` | Product state, persistence, session orchestration, and Compose UI; consumes `codex-agent-client:0.1.0` |
+| `:android:app` | `modules/android/app` | Android entry points, permissions, workspace, service, packaging, and RaTeX bridge; consumes `codex-agent-runtime-android:0.1.0` |
 | included build | `modules/tooling/build-logic` | Convention plugins and typed build tasks |
 
-Production shared code is physically `commonMain`-only. Android supplies
-unavoidable mechanisms; portable behavior and policy remain shared.
+Production shared code is physically `commonMain`-only. The reusable agent,
+protocol, and Android runtime are published by `ciurlaro/codex-agent`.
 
 ## Verification
 
